@@ -1,0 +1,21 @@
+[project]
+name = "casos-analisis-financiero"
+version = "0.1.0"
+description = "Generador de casos empresariales ficticios para un curso de análisis económico-financiero de cuentas anuales (PGC)."
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.2",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["motor*"]

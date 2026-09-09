@@ -1,0 +1,232 @@
+arquetipo_a,nombre_a,arquetipo_b,nombre_b,solapamiento_jaccard,contradiccion_ejes,categoria
+1,Crecimiento con destrucción de caja,2,Beneficio sin cash flow suficiente,0.2,0,SOLAPAMIENTO_MODERADO
+1,Crecimiento con destrucción de caja,3,Aumento de NOF,0.4,0,SOLAPAMIENTO_MODERADO
+1,Crecimiento con destrucción de caja,4,Deterioro del ciclo de caja,0.2,0,SOLAPAMIENTO_MODERADO
+1,Crecimiento con destrucción de caja,5,Exceso de stock,0.25,0,SOLAPAMIENTO_MODERADO
+1,Crecimiento con destrucción de caja,6,Aumento de clientes (base),0.25,0,SOLAPAMIENTO_MODERADO
+1,Crecimiento con destrucción de caja,7,Dependencia de pocos clientes,0.0,0,COMPATIBLE
+1,Crecimiento con destrucción de caja,8,Refinanciación,0.0,0,COMPATIBLE
+1,Crecimiento con destrucción de caja,9,Apalancamiento,0.0,0,COMPATIBLE
+1,Crecimiento con destrucción de caja,10,Mejora de EBITDA,0.0,0,COMPATIBLE
+1,Crecimiento con destrucción de caja,11,Mejora de margen,0.0,0,COMPATIBLE
+1,Crecimiento con destrucción de caja,12,Resultado extraordinario,0.0,0,COMPATIBLE
+1,Crecimiento con destrucción de caja,13,Diferencias EBITDA/EBIT/beneficio/caja,0.167,0,SOLAPAMIENTO_MODERADO
+1,Crecimiento con destrucción de caja,14,ROE elevado por apalancamiento,0.0,0,COMPATIBLE
+1,Crecimiento con destrucción de caja,15,Riesgo de liquidez pese a beneficio,0.2,0,SOLAPAMIENTO_MODERADO
+1,Crecimiento con destrucción de caja,16,Riesgo de refinanciación,0.0,0,COMPATIBLE
+1,Crecimiento con destrucción de caja,17,Capex elevado,0.0,0,COMPATIBLE
+1,Crecimiento con destrucción de caja,18,Adquisición,0.2,0,SOLAPAMIENTO_MODERADO
+1,Crecimiento con destrucción de caja,19,Activo mantenido para la venta,0.0,0,COMPATIBLE
+1,Crecimiento con destrucción de caja,20,Operaciones vinculadas,0.0,0,COMPATIBLE
+1,Crecimiento con destrucción de caja,21,Coberturas,0.0,0,COMPATIBLE
+1,Crecimiento con destrucción de caja,22,Información relevante en memoria,0.0,0,COMPATIBLE
+2,Beneficio sin cash flow suficiente,3,Aumento de NOF,0.0,0,COMPATIBLE
+2,Beneficio sin cash flow suficiente,4,Deterioro del ciclo de caja,0.0,0,COMPATIBLE
+2,Beneficio sin cash flow suficiente,5,Exceso de stock,0.0,0,COMPATIBLE
+2,Beneficio sin cash flow suficiente,6,Aumento de clientes (base),0.0,0,COMPATIBLE
+2,Beneficio sin cash flow suficiente,7,Dependencia de pocos clientes,0.0,0,COMPATIBLE
+2,Beneficio sin cash flow suficiente,8,Refinanciación,0.0,0,COMPATIBLE
+2,Beneficio sin cash flow suficiente,9,Apalancamiento,0.0,0,COMPATIBLE
+2,Beneficio sin cash flow suficiente,10,Mejora de EBITDA,0.0,0,COMPATIBLE
+2,Beneficio sin cash flow suficiente,11,Mejora de margen,0.0,0,COMPATIBLE
+2,Beneficio sin cash flow suficiente,12,Resultado extraordinario,0.0,0,COMPATIBLE
+2,Beneficio sin cash flow suficiente,13,Diferencias EBITDA/EBIT/beneficio/caja,0.667,0,REDUNDANTE
+2,Beneficio sin cash flow suficiente,14,ROE elevado por apalancamiento,0.0,0,COMPATIBLE
+2,Beneficio sin cash flow suficiente,15,Riesgo de liquidez pese a beneficio,1.0,0,REDUNDANTE
+2,Beneficio sin cash flow suficiente,16,Riesgo de refinanciación,0.0,0,COMPATIBLE
+2,Beneficio sin cash flow suficiente,17,Capex elevado,0.0,0,COMPATIBLE
+2,Beneficio sin cash flow suficiente,18,Adquisición,0.0,0,COMPATIBLE
+2,Beneficio sin cash flow suficiente,19,Activo mantenido para la venta,0.0,0,COMPATIBLE
+2,Beneficio sin cash flow suficiente,20,Operaciones vinculadas,0.0,0,COMPATIBLE
+2,Beneficio sin cash flow suficiente,21,Coberturas,0.0,0,COMPATIBLE
+2,Beneficio sin cash flow suficiente,22,Información relevante en memoria,0.0,0,COMPATIBLE
+3,Aumento de NOF,4,Deterioro del ciclo de caja,0.667,0,REDUNDANTE
+3,Aumento de NOF,5,Exceso de stock,0.333,0,SOLAPAMIENTO_MODERADO
+3,Aumento de NOF,6,Aumento de clientes (base),0.333,0,SOLAPAMIENTO_MODERADO
+3,Aumento de NOF,7,Dependencia de pocos clientes,0.0,0,COMPATIBLE
+3,Aumento de NOF,8,Refinanciación,0.0,0,COMPATIBLE
+3,Aumento de NOF,9,Apalancamiento,0.0,0,COMPATIBLE
+3,Aumento de NOF,10,Mejora de EBITDA,0.0,0,COMPATIBLE
+3,Aumento de NOF,11,Mejora de margen,0.0,0,COMPATIBLE
+3,Aumento de NOF,12,Resultado extraordinario,0.0,0,COMPATIBLE
+3,Aumento de NOF,13,Diferencias EBITDA/EBIT/beneficio/caja,0.0,0,COMPATIBLE
+3,Aumento de NOF,14,ROE elevado por apalancamiento,0.0,0,COMPATIBLE
+3,Aumento de NOF,15,Riesgo de liquidez pese a beneficio,0.0,0,COMPATIBLE
+3,Aumento de NOF,16,Riesgo de refinanciación,0.0,0,COMPATIBLE
+3,Aumento de NOF,17,Capex elevado,0.0,0,COMPATIBLE
+3,Aumento de NOF,18,Adquisición,0.0,0,COMPATIBLE
+3,Aumento de NOF,19,Activo mantenido para la venta,0.0,0,COMPATIBLE
+3,Aumento de NOF,20,Operaciones vinculadas,0.0,0,COMPATIBLE
+3,Aumento de NOF,21,Coberturas,0.0,0,COMPATIBLE
+3,Aumento de NOF,22,Información relevante en memoria,0.0,0,COMPATIBLE
+4,Deterioro del ciclo de caja,5,Exceso de stock,0.0,0,COMPATIBLE
+4,Deterioro del ciclo de caja,6,Aumento de clientes (base),0.5,0,REDUNDANTE
+4,Deterioro del ciclo de caja,7,Dependencia de pocos clientes,0.0,0,COMPATIBLE
+4,Deterioro del ciclo de caja,8,Refinanciación,0.0,0,COMPATIBLE
+4,Deterioro del ciclo de caja,9,Apalancamiento,0.0,0,COMPATIBLE
+4,Deterioro del ciclo de caja,10,Mejora de EBITDA,0.0,0,COMPATIBLE
+4,Deterioro del ciclo de caja,11,Mejora de margen,0.0,0,COMPATIBLE
+4,Deterioro del ciclo de caja,12,Resultado extraordinario,0.0,0,COMPATIBLE
+4,Deterioro del ciclo de caja,13,Diferencias EBITDA/EBIT/beneficio/caja,0.0,0,COMPATIBLE
+4,Deterioro del ciclo de caja,14,ROE elevado por apalancamiento,0.0,0,COMPATIBLE
+4,Deterioro del ciclo de caja,15,Riesgo de liquidez pese a beneficio,0.0,0,COMPATIBLE
+4,Deterioro del ciclo de caja,16,Riesgo de refinanciación,0.0,0,COMPATIBLE
+4,Deterioro del ciclo de caja,17,Capex elevado,0.0,0,COMPATIBLE
+4,Deterioro del ciclo de caja,18,Adquisición,0.0,0,COMPATIBLE
+4,Deterioro del ciclo de caja,19,Activo mantenido para la venta,0.0,0,COMPATIBLE
+4,Deterioro del ciclo de caja,20,Operaciones vinculadas,0.0,0,COMPATIBLE
+4,Deterioro del ciclo de caja,21,Coberturas,0.0,0,COMPATIBLE
+4,Deterioro del ciclo de caja,22,Información relevante en memoria,0.0,0,COMPATIBLE
+5,Exceso de stock,6,Aumento de clientes (base),0.0,0,COMPATIBLE
+5,Exceso de stock,7,Dependencia de pocos clientes,0.0,0,COMPATIBLE
+5,Exceso de stock,8,Refinanciación,0.0,0,COMPATIBLE
+5,Exceso de stock,9,Apalancamiento,0.0,0,COMPATIBLE
+5,Exceso de stock,10,Mejora de EBITDA,0.0,0,COMPATIBLE
+5,Exceso de stock,11,Mejora de margen,0.0,0,COMPATIBLE
+5,Exceso de stock,12,Resultado extraordinario,0.0,0,COMPATIBLE
+5,Exceso de stock,13,Diferencias EBITDA/EBIT/beneficio/caja,0.0,0,COMPATIBLE
+5,Exceso de stock,14,ROE elevado por apalancamiento,0.0,0,COMPATIBLE
+5,Exceso de stock,15,Riesgo de liquidez pese a beneficio,0.0,0,COMPATIBLE
+5,Exceso de stock,16,Riesgo de refinanciación,0.0,0,COMPATIBLE
+5,Exceso de stock,17,Capex elevado,0.0,0,COMPATIBLE
+5,Exceso de stock,18,Adquisición,0.0,0,COMPATIBLE
+5,Exceso de stock,19,Activo mantenido para la venta,0.0,0,COMPATIBLE
+5,Exceso de stock,20,Operaciones vinculadas,0.0,0,COMPATIBLE
+5,Exceso de stock,21,Coberturas,0.0,0,COMPATIBLE
+5,Exceso de stock,22,Información relevante en memoria,0.0,0,COMPATIBLE
+6,Aumento de clientes (base),7,Dependencia de pocos clientes,0.0,0,COMPATIBLE
+6,Aumento de clientes (base),8,Refinanciación,0.0,0,COMPATIBLE
+6,Aumento de clientes (base),9,Apalancamiento,0.0,0,COMPATIBLE
+6,Aumento de clientes (base),10,Mejora de EBITDA,0.0,0,COMPATIBLE
+6,Aumento de clientes (base),11,Mejora de margen,0.0,0,COMPATIBLE
+6,Aumento de clientes (base),12,Resultado extraordinario,0.0,0,COMPATIBLE
+6,Aumento de clientes (base),13,Diferencias EBITDA/EBIT/beneficio/caja,0.0,0,COMPATIBLE
+6,Aumento de clientes (base),14,ROE elevado por apalancamiento,0.0,0,COMPATIBLE
+6,Aumento de clientes (base),15,Riesgo de liquidez pese a beneficio,0.0,0,COMPATIBLE
+6,Aumento de clientes (base),16,Riesgo de refinanciación,0.0,0,COMPATIBLE
+6,Aumento de clientes (base),17,Capex elevado,0.0,0,COMPATIBLE
+6,Aumento de clientes (base),18,Adquisición,0.0,0,COMPATIBLE
+6,Aumento de clientes (base),19,Activo mantenido para la venta,0.0,0,COMPATIBLE
+6,Aumento de clientes (base),20,Operaciones vinculadas,0.0,0,COMPATIBLE
+6,Aumento de clientes (base),21,Coberturas,0.0,0,COMPATIBLE
+6,Aumento de clientes (base),22,Información relevante en memoria,0.0,0,COMPATIBLE
+7,Dependencia de pocos clientes,8,Refinanciación,0.0,0,COMPATIBLE
+7,Dependencia de pocos clientes,9,Apalancamiento,0.0,0,COMPATIBLE
+7,Dependencia de pocos clientes,10,Mejora de EBITDA,0.0,0,COMPATIBLE
+7,Dependencia de pocos clientes,11,Mejora de margen,0.0,0,COMPATIBLE
+7,Dependencia de pocos clientes,12,Resultado extraordinario,0.0,0,COMPATIBLE
+7,Dependencia de pocos clientes,13,Diferencias EBITDA/EBIT/beneficio/caja,0.0,0,COMPATIBLE
+7,Dependencia de pocos clientes,14,ROE elevado por apalancamiento,0.0,0,COMPATIBLE
+7,Dependencia de pocos clientes,15,Riesgo de liquidez pese a beneficio,0.0,0,COMPATIBLE
+7,Dependencia de pocos clientes,16,Riesgo de refinanciación,0.0,0,COMPATIBLE
+7,Dependencia de pocos clientes,17,Capex elevado,0.0,0,COMPATIBLE
+7,Dependencia de pocos clientes,18,Adquisición,0.0,0,COMPATIBLE
+7,Dependencia de pocos clientes,19,Activo mantenido para la venta,0.0,0,COMPATIBLE
+7,Dependencia de pocos clientes,20,Operaciones vinculadas,0.0,0,COMPATIBLE
+7,Dependencia de pocos clientes,21,Coberturas,0.0,0,COMPATIBLE
+7,Dependencia de pocos clientes,22,Información relevante en memoria,0.0,0,COMPATIBLE
+8,Refinanciación,9,Apalancamiento,0.0,0,COMPATIBLE
+8,Refinanciación,10,Mejora de EBITDA,0.0,0,COMPATIBLE
+8,Refinanciación,11,Mejora de margen,0.0,0,COMPATIBLE
+8,Refinanciación,12,Resultado extraordinario,0.0,0,COMPATIBLE
+8,Refinanciación,13,Diferencias EBITDA/EBIT/beneficio/caja,0.0,0,COMPATIBLE
+8,Refinanciación,14,ROE elevado por apalancamiento,0.0,0,COMPATIBLE
+8,Refinanciación,15,Riesgo de liquidez pese a beneficio,0.0,0,COMPATIBLE
+8,Refinanciación,16,Riesgo de refinanciación,1.0,0,REDUNDANTE
+8,Refinanciación,17,Capex elevado,0.0,0,COMPATIBLE
+8,Refinanciación,18,Adquisición,0.0,0,COMPATIBLE
+8,Refinanciación,19,Activo mantenido para la venta,0.0,0,COMPATIBLE
+8,Refinanciación,20,Operaciones vinculadas,0.0,0,COMPATIBLE
+8,Refinanciación,21,Coberturas,0.0,0,COMPATIBLE
+8,Refinanciación,22,Información relevante en memoria,0.0,0,COMPATIBLE
+9,Apalancamiento,10,Mejora de EBITDA,0.0,0,COMPATIBLE
+9,Apalancamiento,11,Mejora de margen,0.0,0,COMPATIBLE
+9,Apalancamiento,12,Resultado extraordinario,0.0,0,COMPATIBLE
+9,Apalancamiento,13,Diferencias EBITDA/EBIT/beneficio/caja,0.0,0,COMPATIBLE
+9,Apalancamiento,14,ROE elevado por apalancamiento,0.667,0,REDUNDANTE
+9,Apalancamiento,15,Riesgo de liquidez pese a beneficio,0.0,0,COMPATIBLE
+9,Apalancamiento,16,Riesgo de refinanciación,0.0,0,COMPATIBLE
+9,Apalancamiento,17,Capex elevado,0.0,0,COMPATIBLE
+9,Apalancamiento,18,Adquisición,0.0,0,COMPATIBLE
+9,Apalancamiento,19,Activo mantenido para la venta,0.0,0,COMPATIBLE
+9,Apalancamiento,20,Operaciones vinculadas,0.0,0,COMPATIBLE
+9,Apalancamiento,21,Coberturas,1.0,0,REDUNDANTE
+9,Apalancamiento,22,Información relevante en memoria,0.0,0,COMPATIBLE
+10,Mejora de EBITDA,11,Mejora de margen,1.0,0,REDUNDANTE
+10,Mejora de EBITDA,12,Resultado extraordinario,0.0,0,COMPATIBLE
+10,Mejora de EBITDA,13,Diferencias EBITDA/EBIT/beneficio/caja,0.333,0,SOLAPAMIENTO_MODERADO
+10,Mejora de EBITDA,14,ROE elevado por apalancamiento,0.0,0,COMPATIBLE
+10,Mejora de EBITDA,15,Riesgo de liquidez pese a beneficio,0.0,0,COMPATIBLE
+10,Mejora de EBITDA,16,Riesgo de refinanciación,0.0,0,COMPATIBLE
+10,Mejora de EBITDA,17,Capex elevado,0.0,0,COMPATIBLE
+10,Mejora de EBITDA,18,Adquisición,0.0,0,COMPATIBLE
+10,Mejora de EBITDA,19,Activo mantenido para la venta,0.0,0,COMPATIBLE
+10,Mejora de EBITDA,20,Operaciones vinculadas,0.0,0,COMPATIBLE
+10,Mejora de EBITDA,21,Coberturas,0.0,0,COMPATIBLE
+10,Mejora de EBITDA,22,Información relevante en memoria,0.0,0,COMPATIBLE
+11,Mejora de margen,12,Resultado extraordinario,0.0,0,COMPATIBLE
+11,Mejora de margen,13,Diferencias EBITDA/EBIT/beneficio/caja,0.333,0,SOLAPAMIENTO_MODERADO
+11,Mejora de margen,14,ROE elevado por apalancamiento,0.0,0,COMPATIBLE
+11,Mejora de margen,15,Riesgo de liquidez pese a beneficio,0.0,0,COMPATIBLE
+11,Mejora de margen,16,Riesgo de refinanciación,0.0,0,COMPATIBLE
+11,Mejora de margen,17,Capex elevado,0.0,0,COMPATIBLE
+11,Mejora de margen,18,Adquisición,0.0,0,COMPATIBLE
+11,Mejora de margen,19,Activo mantenido para la venta,0.0,0,COMPATIBLE
+11,Mejora de margen,20,Operaciones vinculadas,0.0,0,COMPATIBLE
+11,Mejora de margen,21,Coberturas,0.0,0,COMPATIBLE
+11,Mejora de margen,22,Información relevante en memoria,0.0,0,COMPATIBLE
+12,Resultado extraordinario,13,Diferencias EBITDA/EBIT/beneficio/caja,0.0,0,COMPATIBLE
+12,Resultado extraordinario,14,ROE elevado por apalancamiento,0.0,0,COMPATIBLE
+12,Resultado extraordinario,15,Riesgo de liquidez pese a beneficio,0.0,0,COMPATIBLE
+12,Resultado extraordinario,16,Riesgo de refinanciación,0.0,0,COMPATIBLE
+12,Resultado extraordinario,17,Capex elevado,0.0,0,COMPATIBLE
+12,Resultado extraordinario,18,Adquisición,0.0,0,COMPATIBLE
+12,Resultado extraordinario,19,Activo mantenido para la venta,0.0,0,COMPATIBLE
+12,Resultado extraordinario,20,Operaciones vinculadas,0.0,0,COMPATIBLE
+12,Resultado extraordinario,21,Coberturas,0.0,0,COMPATIBLE
+12,Resultado extraordinario,22,Información relevante en memoria,0.0,0,COMPATIBLE
+13,Diferencias EBITDA/EBIT/beneficio/caja,14,ROE elevado por apalancamiento,0.0,0,COMPATIBLE
+13,Diferencias EBITDA/EBIT/beneficio/caja,15,Riesgo de liquidez pese a beneficio,0.667,0,REDUNDANTE
+13,Diferencias EBITDA/EBIT/beneficio/caja,16,Riesgo de refinanciación,0.0,0,COMPATIBLE
+13,Diferencias EBITDA/EBIT/beneficio/caja,17,Capex elevado,0.0,0,COMPATIBLE
+13,Diferencias EBITDA/EBIT/beneficio/caja,18,Adquisición,0.0,0,COMPATIBLE
+13,Diferencias EBITDA/EBIT/beneficio/caja,19,Activo mantenido para la venta,0.0,0,COMPATIBLE
+13,Diferencias EBITDA/EBIT/beneficio/caja,20,Operaciones vinculadas,0.0,0,COMPATIBLE
+13,Diferencias EBITDA/EBIT/beneficio/caja,21,Coberturas,0.0,0,COMPATIBLE
+13,Diferencias EBITDA/EBIT/beneficio/caja,22,Información relevante en memoria,0.0,0,COMPATIBLE
+14,ROE elevado por apalancamiento,15,Riesgo de liquidez pese a beneficio,0.0,0,COMPATIBLE
+14,ROE elevado por apalancamiento,16,Riesgo de refinanciación,0.0,0,COMPATIBLE
+14,ROE elevado por apalancamiento,17,Capex elevado,0.0,0,COMPATIBLE
+14,ROE elevado por apalancamiento,18,Adquisición,0.0,0,COMPATIBLE
+14,ROE elevado por apalancamiento,19,Activo mantenido para la venta,0.0,0,COMPATIBLE
+14,ROE elevado por apalancamiento,20,Operaciones vinculadas,0.0,0,COMPATIBLE
+14,ROE elevado por apalancamiento,21,Coberturas,0.667,0,REDUNDANTE
+14,ROE elevado por apalancamiento,22,Información relevante en memoria,0.0,0,COMPATIBLE
+15,Riesgo de liquidez pese a beneficio,16,Riesgo de refinanciación,0.0,0,COMPATIBLE
+15,Riesgo de liquidez pese a beneficio,17,Capex elevado,0.0,0,COMPATIBLE
+15,Riesgo de liquidez pese a beneficio,18,Adquisición,0.0,0,COMPATIBLE
+15,Riesgo de liquidez pese a beneficio,19,Activo mantenido para la venta,0.0,0,COMPATIBLE
+15,Riesgo de liquidez pese a beneficio,20,Operaciones vinculadas,0.0,0,COMPATIBLE
+15,Riesgo de liquidez pese a beneficio,21,Coberturas,0.0,0,COMPATIBLE
+15,Riesgo de liquidez pese a beneficio,22,Información relevante en memoria,0.0,0,COMPATIBLE
+16,Riesgo de refinanciación,17,Capex elevado,0.0,0,COMPATIBLE
+16,Riesgo de refinanciación,18,Adquisición,0.0,0,COMPATIBLE
+16,Riesgo de refinanciación,19,Activo mantenido para la venta,0.0,0,COMPATIBLE
+16,Riesgo de refinanciación,20,Operaciones vinculadas,0.0,0,COMPATIBLE
+16,Riesgo de refinanciación,21,Coberturas,0.0,0,COMPATIBLE
+16,Riesgo de refinanciación,22,Información relevante en memoria,0.0,0,COMPATIBLE
+17,Capex elevado,18,Adquisición,0.5,0,REDUNDANTE
+17,Capex elevado,19,Activo mantenido para la venta,1.0,1,INCOMPATIBLE
+17,Capex elevado,20,Operaciones vinculadas,0.0,0,COMPATIBLE
+17,Capex elevado,21,Coberturas,0.0,0,COMPATIBLE
+17,Capex elevado,22,Información relevante en memoria,0.0,0,COMPATIBLE
+18,Adquisición,19,Activo mantenido para la venta,0.5,1,INCOMPATIBLE
+18,Adquisición,20,Operaciones vinculadas,0.0,0,COMPATIBLE
+18,Adquisición,21,Coberturas,0.0,0,COMPATIBLE
+18,Adquisición,22,Información relevante en memoria,0.0,0,COMPATIBLE
+19,Activo mantenido para la venta,20,Operaciones vinculadas,0.0,0,COMPATIBLE
+19,Activo mantenido para la venta,21,Coberturas,0.0,0,COMPATIBLE
+19,Activo mantenido para la venta,22,Información relevante en memoria,0.0,0,COMPATIBLE
+20,Operaciones vinculadas,21,Coberturas,0.0,0,COMPATIBLE
+20,Operaciones vinculadas,22,Información relevante en memoria,0.0,0,COMPATIBLE
+21,Coberturas,22,Información relevante en memoria,0.0,0,COMPATIBLE
