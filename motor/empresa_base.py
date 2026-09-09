@@ -23,6 +23,8 @@ DESVIACIONES_ATIPICO = 3.0
 TOLERANCIA_CUADRE_EUR = 0.01
 SUELO_PORCENTAJE = 0.01
 SUELO_ROTACION_ACTIVO = 0.05
+SUELO_TIPO_INTERES = 0.01  # 1%: floor defensivo, evita coste de deuda nulo o negativo
+TECHO_TIPO_INTERES = 0.40  # 40%: techo defensivo frente a sectores con MAD grande
 
 # Nombre de salida -> nombre de variable en el catálogo (prefijo "balance.")
 MASAS_BALANCE = {
@@ -41,7 +43,9 @@ MASAS_BALANCE = {
     "otras_deudas_corto": "otras_deudas_corto_pct",
 }
 
-# Partidas primitivas de la PyG (ruido) -> nombre de variable en el catálogo (prefijo "pyg.")
+# Partidas primitivas de la PyG (ruido) -> nombre de variable en el catálogo (prefijo "pyg.").
+# "gastos_financieros" NO está aquí: se calcula (deuda financiera media x tipo de interés),
+# no se sortea como % independiente — ver _generar_pyg_hasta_baii/_completar_pyg_con_deuda.
 PRIMITIVAS_PYG = {
     "cifra_negocios": "cifra_negocios_pct",
     "otros_ingresos_explot": "otros_ingresos_explot_pct",
@@ -51,7 +55,6 @@ PRIMITIVAS_PYG = {
     "amortizaciones": "amortizaciones_pct",
     "resultado_extraordinario": "resultado_extraordinario_pct",
     "ingresos_financieros": "ingresos_financieros_pct",
-    "gastos_financieros": "gastos_financieros_pct",
     "impuesto_beneficios": "impuesto_beneficios_pct",
 }
 
@@ -95,6 +98,29 @@ def _mapa_codigo_sector(catalogo: pd.DataFrame) -> dict[str, str]:
     return mapa
 
 
+def resolver_fila_sector(catalogo: pd.DataFrame, sector_codigo: str, segmento: str) -> pd.Series:
+    """Resuelve la fila del catálogo (huber_9y, huber_scale_mad, ...) para un sector/segmento.
+
+    `sector_codigo` es el código entre paréntesis del catálogo (p. ej. "24.1", "4941").
+    """
+    if segmento not in SEGMENTOS_VALIDOS:
+        raise EmpresaBaseError(f"Segmento '{segmento}' no válido. Debe ser uno de: {sorted(SEGMENTOS_VALIDOS)}")
+
+    mapa_codigos = _mapa_codigo_sector(catalogo)
+    if sector_codigo not in mapa_codigos:
+        raise EmpresaBaseError(
+            f"Sector '{sector_codigo}' no reconocido. Códigos disponibles: {sorted(mapa_codigos)}"
+        )
+    sector_nombre = mapa_codigos[sector_codigo]
+
+    filas = catalogo[(catalogo["sector"] == sector_nombre) & (catalogo["segmento"] == segmento)]
+    if len(filas) != 1:
+        raise EmpresaBaseError(
+            f"Se esperaba exactamente 1 fila para ({sector_nombre!r}, {segmento!r}) y hay {len(filas)}."
+        )
+    return filas.iloc[0]
+
+
 def _normal_truncada(rng: np.random.Generator, max_desviaciones: float) -> float:
     while True:
         z = rng.normal()
@@ -107,6 +133,7 @@ def _generar_partida(
     huber_9y: float,
     huber_scale_mad: float,
     suelo: float | None = None,
+    techo: float | None = None,
 ) -> tuple[float, str]:
     atipico = rng.random() < PROB_ATIPICO
     max_desviaciones = DESVIACIONES_ATIPICO if atipico else DESVIACIONES_TIPICO
@@ -114,6 +141,8 @@ def _generar_partida(
     valor = huber_9y + z * huber_scale_mad
     if suelo is not None:
         valor = max(valor, suelo)
+    if techo is not None:
+        valor = min(valor, techo)
     return valor, ("atipico" if atipico else "tipico")
 
 
@@ -164,9 +193,33 @@ def _generar_balance_pct(
     return balance_pct, modos
 
 
-def _generar_pyg(
-    rng: np.random.Generator, fila: pd.Series, ventas_objetivo: float
-) -> tuple[dict[str, float], dict[str, float], dict[str, str]]:
+@dataclass(frozen=True)
+class _PygParcial:
+    """Cascada de PyG calculada hasta BAII (no depende de la deuda financiera)."""
+
+    ingresos_explotacion_eur: float
+    cifra_negocios_eur: float
+    otros_ingresos_explot_eur: float
+    consumos_explotacion_eur: float
+    margen_bruto_eur: float
+    otros_gastos_explot_eur: float
+    valor_añadido_eur: float
+    gastos_personal_eur: float
+    amortizaciones_eur: float
+    resultado_extraordinario_eur: float
+    baii_eur: float
+    ingresos_financieros_eur: float
+    impuesto_beneficios_eur: float
+    tipo_interes: float
+    modos: dict[str, str]
+
+
+def _generar_pyg_hasta_baii(rng: np.random.Generator, fila: pd.Series, ventas_objetivo: float) -> _PygParcial:
+    """Sortea las primitivas de la PyG que no dependen de deuda, y el tipo de interés del
+    ejercicio (mismo mecanismo típico/atípico que el resto de partidas, anclado a
+    ratios.coste_deuda del sector). No calcula gastos financieros ni nada de BAI en adelante:
+    eso depende de la deuda financiera media del ejercicio, que en `evolucion_arquetipo` no se
+    conoce hasta después de decidir si hay contención de endeudamiento."""
     brutos: dict[str, float] = {}
     modos: dict[str, str] = {}
     for nombre_salida, variable in PRIMITIVAS_PYG.items():
@@ -176,6 +229,15 @@ def _generar_pyg(
         valor, modo = _generar_partida(rng, huber, mad, suelo=suelo)
         brutos[nombre_salida] = valor
         modos[f"pyg.{nombre_salida}"] = modo
+
+    tipo_interes, modo_tipo_interes = _generar_partida(
+        rng,
+        fila["ratios.coste_deuda.huber_9y"],
+        fila["ratios.coste_deuda.huber_scale_mad"],
+        suelo=SUELO_TIPO_INTERES,
+        techo=TECHO_TIPO_INTERES,
+    )
+    modos["pyg.tipo_interes"] = modo_tipo_interes
 
     cifra_negocios_eur = ventas_objetivo
     otros_ingresos_explot_eur = cifra_negocios_eur * (
@@ -189,35 +251,61 @@ def _generar_pyg(
     amortizaciones_eur = brutos["amortizaciones"] / 100 * ingresos_explotacion_eur
     resultado_extraordinario_eur = brutos["resultado_extraordinario"] / 100 * ingresos_explotacion_eur
     ingresos_financieros_eur = brutos["ingresos_financieros"] / 100 * ingresos_explotacion_eur
-    gastos_financieros_eur = brutos["gastos_financieros"] / 100 * ingresos_explotacion_eur
     impuesto_beneficios_eur = brutos["impuesto_beneficios"] / 100 * ingresos_explotacion_eur
 
     margen_bruto_eur = ingresos_explotacion_eur - consumos_explotacion_eur
     valor_añadido_eur = margen_bruto_eur - otros_gastos_explot_eur
     baii_eur = valor_añadido_eur - gastos_personal_eur - amortizaciones_eur + resultado_extraordinario_eur
-    bai_eur = baii_eur + ingresos_financieros_eur - gastos_financieros_eur
-    resultado_ejercicio_eur = bai_eur - impuesto_beneficios_eur
+
+    return _PygParcial(
+        ingresos_explotacion_eur=ingresos_explotacion_eur,
+        cifra_negocios_eur=cifra_negocios_eur,
+        otros_ingresos_explot_eur=otros_ingresos_explot_eur,
+        consumos_explotacion_eur=consumos_explotacion_eur,
+        margen_bruto_eur=margen_bruto_eur,
+        otros_gastos_explot_eur=otros_gastos_explot_eur,
+        valor_añadido_eur=valor_añadido_eur,
+        gastos_personal_eur=gastos_personal_eur,
+        amortizaciones_eur=amortizaciones_eur,
+        resultado_extraordinario_eur=resultado_extraordinario_eur,
+        baii_eur=baii_eur,
+        ingresos_financieros_eur=ingresos_financieros_eur,
+        impuesto_beneficios_eur=impuesto_beneficios_eur,
+        tipo_interes=tipo_interes,
+        modos=modos,
+    )
+
+
+def _completar_pyg_con_deuda(
+    parcial: _PygParcial, deuda_financiera_media_eur: float
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Termina la cascada (BAI y resultado del ejercicio) usando la deuda financiera media
+    (largo + corto plazo, promedio inicio/fin del ejercicio) para calcular gastos financieros
+    = deuda financiera media x tipo de interés del sector."""
+    gastos_financieros_eur = deuda_financiera_media_eur * parcial.tipo_interes
+    bai_eur = parcial.baii_eur + parcial.ingresos_financieros_eur - gastos_financieros_eur
+    resultado_ejercicio_eur = bai_eur - parcial.impuesto_beneficios_eur
 
     pyg_eur = {
-        "cifra_negocios": cifra_negocios_eur,
-        "otros_ingresos_explot": otros_ingresos_explot_eur,
-        "ingresos_explotacion": ingresos_explotacion_eur,
-        "consumos_explotacion": consumos_explotacion_eur,
-        "margen_bruto": margen_bruto_eur,
-        "otros_gastos_explot": otros_gastos_explot_eur,
-        "valor_añadido": valor_añadido_eur,
-        "gastos_personal": gastos_personal_eur,
-        "amortizaciones": amortizaciones_eur,
-        "resultado_extraordinario": resultado_extraordinario_eur,
-        "baii": baii_eur,
-        "ingresos_financieros": ingresos_financieros_eur,
+        "cifra_negocios": parcial.cifra_negocios_eur,
+        "otros_ingresos_explot": parcial.otros_ingresos_explot_eur,
+        "ingresos_explotacion": parcial.ingresos_explotacion_eur,
+        "consumos_explotacion": parcial.consumos_explotacion_eur,
+        "margen_bruto": parcial.margen_bruto_eur,
+        "otros_gastos_explot": parcial.otros_gastos_explot_eur,
+        "valor_añadido": parcial.valor_añadido_eur,
+        "gastos_personal": parcial.gastos_personal_eur,
+        "amortizaciones": parcial.amortizaciones_eur,
+        "resultado_extraordinario": parcial.resultado_extraordinario_eur,
+        "baii": parcial.baii_eur,
+        "ingresos_financieros": parcial.ingresos_financieros_eur,
         "gastos_financieros": gastos_financieros_eur,
         "bai": bai_eur,
-        "impuesto_beneficios": impuesto_beneficios_eur,
+        "impuesto_beneficios": parcial.impuesto_beneficios_eur,
         "resultado_ejercicio": resultado_ejercicio_eur,
     }
-    pyg_pct = {k: v / ingresos_explotacion_eur * 100 for k, v in pyg_eur.items()}
-    return pyg_pct, pyg_eur, modos
+    pyg_pct = {k: v / parcial.ingresos_explotacion_eur * 100 for k, v in pyg_eur.items()}
+    return pyg_pct, pyg_eur
 
 
 def generar_empresa_base(
@@ -240,19 +328,8 @@ def generar_empresa_base(
     if catalogo is None:
         catalogo = cargar_y_validar_catalogo()
 
-    mapa_codigos = _mapa_codigo_sector(catalogo)
-    if sector not in mapa_codigos:
-        raise EmpresaBaseError(
-            f"Sector '{sector}' no reconocido. Códigos disponibles: {sorted(mapa_codigos)}"
-        )
-    sector_nombre = mapa_codigos[sector]
-
-    filas = catalogo[(catalogo["sector"] == sector_nombre) & (catalogo["segmento"] == segmento)]
-    if len(filas) != 1:
-        raise EmpresaBaseError(
-            f"Se esperaba exactamente 1 fila para ({sector_nombre!r}, {segmento!r}) y hay {len(filas)}."
-        )
-    fila = filas.iloc[0]
+    fila = resolver_fila_sector(catalogo, sector, segmento)
+    sector_nombre = fila["sector"]
 
     rng = np.random.default_rng(semilla)
 
@@ -279,9 +356,15 @@ def generar_empresa_base(
         balance_pct["otras_deudas_corto"] = balance_eur["otras_deudas_corto"] / activo_total_eur * 100
         ajuste_cuadre_eur = diferencia_cuadre
 
-    pyg_pct, pyg_eur, modos_pyg = _generar_pyg(rng, fila, ventas_objetivo)
+    # Gastos financieros = deuda financiera media del ejercicio x tipo de interés del sector.
+    # Este módulo no modela una serie temporal (no hay "ejercicio anterior"): se asume que la
+    # deuda financiera se mantuvo estable durante el año, es decir inicio = fin = la del propio
+    # balance ya generado. En `evolucion_arquetipo` sí hay inicio/fin distintos (ver ese módulo).
+    deuda_financiera_eur = balance_eur["deudas_fin_largo"] + balance_eur["deudas_fin_corto"]
+    parcial_pyg = _generar_pyg_hasta_baii(rng, fila, ventas_objetivo)
+    pyg_pct, pyg_eur = _completar_pyg_con_deuda(parcial_pyg, deuda_financiera_eur)
 
-    modos = {**modos_balance, "rotacion_activo": modo_rotacion, **modos_pyg}
+    modos = {**modos_balance, "rotacion_activo": modo_rotacion, **parcial_pyg.modos}
 
     return EmpresaBase(
         sector_codigo=sector,

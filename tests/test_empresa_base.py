@@ -4,8 +4,11 @@ from motor.catalogo import cargar_y_validar_catalogo
 from motor.empresa_base import (
     MASAS_BALANCE,
     PRIMITIVAS_PYG_NO_NEGATIVAS,
+    SUELO_TIPO_INTERES,
+    TECHO_TIPO_INTERES,
     EmpresaBaseError,
     generar_empresa_base,
+    resolver_fila_sector,
 )
 
 TOLERANCIA = 1e-6
@@ -84,6 +87,26 @@ def test_cascada_pyg_consistente_con_formula(catalogo, sector):
         )
         assert eur["resultado_ejercicio"] == pytest.approx(eur["bai"] - eur["impuesto_beneficios"], abs=0.01)
         assert eur["cifra_negocios"] == pytest.approx(VENTAS_OBJETIVO, abs=0.01)
+
+
+@pytest.mark.parametrize("sector", SECTORES_A_PROBAR)
+def test_gastos_financieros_derivan_de_la_deuda_financiera(catalogo, sector):
+    # Los gastos financieros ya no son un % de PyG sorteado de forma independiente: deben
+    # coincidir con deuda financiera (largo+corto) x tipo de interés del sector, dentro de las
+    # cotas que aplica _generar_pyg_hasta_baii al sortear ese tipo de interés.
+    fila = resolver_fila_sector(catalogo, sector, "grandes_medianas")
+    huber_coste_deuda = fila["ratios.coste_deuda.huber_9y"]
+    mad_coste_deuda = fila["ratios.coste_deuda.huber_scale_mad"]
+    cota_inferior = max(SUELO_TIPO_INTERES, huber_coste_deuda - 3 * mad_coste_deuda) - 1e-6
+    cota_superior = min(TECHO_TIPO_INTERES, huber_coste_deuda + 3 * mad_coste_deuda) + 1e-6
+
+    for empresa in _generar_lote(catalogo, sector):
+        deuda_financiera_eur = empresa.balance_eur["deudas_fin_largo"] + empresa.balance_eur["deudas_fin_corto"]
+        tipo_implicito = empresa.pyg_eur["gastos_financieros"] / deuda_financiera_eur
+        assert cota_inferior <= tipo_implicito <= cota_superior, (
+            f"semilla {empresa.semilla}: tipo implícito {tipo_implicito:.4f} fuera de "
+            f"[{cota_inferior:.4f}, {cota_superior:.4f}]"
+        )
 
 
 @pytest.mark.parametrize("sector", SECTORES_A_PROBAR)
