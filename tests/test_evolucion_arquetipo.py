@@ -1,10 +1,12 @@
 import pytest
 
-from motor.catalogo import cargar_y_validar_catalogo
+from motor.catalogo import cargar_y_validar_catalogo, version_catalogo
 from motor.empresa_base import SUELO_TIPO_INTERES, TECHO_TIPO_INTERES, resolver_fila_sector
 from motor.evolucion_arquetipo import (
+    ARQUETIPO_ID,
     AÑO_BASE,
     N_DESVIACIONES_TECHO_ENDEUDAMIENTO,
+    PGC_VERSION,
     TECHO_ENDEUDAMIENTO_MAXIMO_ABSOLUTO,
     EvolucionArquetipoError,
     generar_evolucion_arquetipo,
@@ -301,3 +303,25 @@ def test_intensidad_invalida_lanza_error(catalogo):
         generar_evolucion_arquetipo(
             "24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=1, intensidad="extrema", catalogo=catalogo
         )
+
+
+def test_metadatos_de_trazabilidad_presentes(catalogo):
+    # Sección 2.15: cada caso debe poder reconstruirse y defenderse, lo que exige guardar qué
+    # arquetipo/intensidad/semilla lo generaron y contra qué versión del catálogo y del PGC.
+    evolucion = generar_evolucion_arquetipo(
+        "24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=3, intensidad="fuerte", catalogo=catalogo
+    )
+    assert evolucion.arquetipo == ARQUETIPO_ID
+    assert evolucion.intensidad == "fuerte"
+    assert evolucion.semilla == 3
+    assert evolucion.catalogo_version == version_catalogo()
+    assert evolucion.pgc_version == PGC_VERSION == "PGC RD 1514/2007"
+
+
+def test_catalogo_version_es_la_del_catalogo_pasado_explicitamente(catalogo):
+    # No debe depender de recargar el catálogo por defecto: tiene que venir del propio
+    # DataFrame recibido, para que sea fiel a lo que realmente se usó en esa llamada.
+    evolucion = generar_evolucion_arquetipo(
+        "24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=1, intensidad="moderado", catalogo=catalogo
+    )
+    assert evolucion.catalogo_version == catalogo.attrs["catalogo_version"]

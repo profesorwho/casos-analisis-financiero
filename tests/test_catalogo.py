@@ -8,6 +8,7 @@ from motor.catalogo import (
     CatalogoInvalidoError,
     cargar_catalogo,
     validar_catalogo,
+    version_catalogo,
 )
 
 
@@ -61,3 +62,29 @@ def test_detecta_valor_no_numerico():
 def test_cargar_catalogo_ruta_inexistente():
     with pytest.raises(FileNotFoundError):
         cargar_catalogo("data/no_existe.csv")
+
+
+def test_version_catalogo_es_estable_y_deriva_del_contenido():
+    v1 = version_catalogo(RUTA_CATALOGO_POR_DEFECTO)
+    v2 = version_catalogo(RUTA_CATALOGO_POR_DEFECTO)
+    assert v1 == v2
+    assert len(v1) == 12
+    assert v1.isalnum()
+
+
+def test_version_catalogo_cambia_con_el_contenido(tmp_path):
+    archivo_a = tmp_path / "a.csv"
+    archivo_b = tmp_path / "b.csv"
+    archivo_a.write_text("sector,segmento\nX,grandes_medianas\n", encoding="utf-8")
+    archivo_b.write_text("sector,segmento\nY,grandes_medianas\n", encoding="utf-8")
+    assert version_catalogo(archivo_a) != version_catalogo(archivo_b)
+
+
+def test_version_catalogo_ruta_inexistente():
+    with pytest.raises(FileNotFoundError):
+        version_catalogo("data/no_existe.csv")
+
+
+def test_cargar_catalogo_adjunta_version_en_attrs():
+    df = cargar_catalogo(RUTA_CATALOGO_POR_DEFECTO)
+    assert df.attrs["catalogo_version"] == version_catalogo(RUTA_CATALOGO_POR_DEFECTO)

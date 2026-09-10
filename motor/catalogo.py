@@ -6,6 +6,7 @@ referencia (27 sectores x 2 segmentos, estimador de Huber a 9 años) es utilizab
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pandas as pd
@@ -24,12 +25,31 @@ class CatalogoInvalidoError(ValueError):
     """El catálogo no cumple la estructura o integridad esperadas."""
 
 
-def cargar_catalogo(ruta: str | Path = RUTA_CATALOGO_POR_DEFECTO) -> pd.DataFrame:
-    """Lee el CSV del catálogo de ratios sectoriales."""
+def version_catalogo(ruta: str | Path = RUTA_CATALOGO_POR_DEFECTO) -> str:
+    """Identificador corto (SHA-256, 12 caracteres) del contenido del CSV del catálogo.
+
+    Se deriva del propio archivo, no de un número de versión mantenido a mano, para que no
+    se pueda desincronizar si el catálogo cambia sin actualizar ese número (trazabilidad de
+    cada caso generado, sección 2.15 de la especificación).
+    """
     ruta = Path(ruta)
     if not ruta.exists():
         raise FileNotFoundError(f"No se encuentra el catálogo de ratios en: {ruta}")
-    return pd.read_csv(ruta, encoding="utf-8-sig")
+    return hashlib.sha256(ruta.read_bytes()).hexdigest()[:12]
+
+
+def cargar_catalogo(ruta: str | Path = RUTA_CATALOGO_POR_DEFECTO) -> pd.DataFrame:
+    """Lee el CSV del catálogo de ratios sectoriales.
+
+    Adjunta la versión del catálogo (ver `version_catalogo`) en `df.attrs["catalogo_version"]`,
+    para que viaje junto con el DataFrame sin tener que volver a tocar el archivo.
+    """
+    ruta = Path(ruta)
+    if not ruta.exists():
+        raise FileNotFoundError(f"No se encuentra el catálogo de ratios en: {ruta}")
+    df = pd.read_csv(ruta, encoding="utf-8-sig")
+    df.attrs["catalogo_version"] = version_catalogo(ruta)
+    return df
 
 
 def validar_catalogo(df: pd.DataFrame) -> None:
@@ -98,4 +118,7 @@ def cargar_y_validar_catalogo(ruta: str | Path = RUTA_CATALOGO_POR_DEFECTO) -> p
 
 if __name__ == "__main__":
     catalogo = cargar_y_validar_catalogo()
-    print(f"Catálogo válido: {len(catalogo)} filas, {catalogo['sector'].nunique()} sectores.")
+    print(
+        f"Catálogo válido: {len(catalogo)} filas, {catalogo['sector'].nunique()} sectores. "
+        f"Versión: {catalogo.attrs['catalogo_version']}"
+    )

@@ -90,6 +90,13 @@ había que fijar para poder implementar):
   segundo orden — el efecto de "menos deuda → menos interés → más beneficio → más PN" sobre el
   propio importe de contención es pequeño frente al efecto principal del arquetipo, y aceptarlo
   evita convertir esto en un solver iterativo.
+
+- **Trazabilidad (sección 2.15).** `EvolucionArquetipo` guarda `arquetipo`, `intensidad`,
+  `semilla`, `catalogo_version` (hash del CSV del catálogo usado — se deriva del propio
+  archivo, no de un número mantenido a mano, para que no se desincronice si el catálogo
+  cambia sin querer) y `pgc_version` (fijo por ahora: solo hay una versión normativa en
+  juego). Falta la versión normativa "de verdad" variable y el ID del caso/variante — se
+  añadirán cuando exista un repositorio de casos.
 """
 
 from __future__ import annotations
@@ -112,6 +119,9 @@ from motor.empresa_base import _completar_pyg_con_deuda, _generar_pyg_hasta_baii
 ARQUETIPO_ID = "crecimiento_destruccion_caja"
 AÑOS = (2023, 2024, 2025)
 AÑO_BASE = 2023
+
+# Trazabilidad (sección 2.15): única versión normativa en juego por ahora.
+PGC_VERSION = "PGC RD 1514/2007"
 
 INTENSIDADES_VALIDAS = frozenset({"leve", "moderado", "fuerte"})
 INTENSIDAD_BASE = {"leve": 0.15, "moderado": 0.30, "fuerte": 0.50}
@@ -177,6 +187,8 @@ class EvolucionArquetipo:
     semilla: int
     crecimiento_pleno_objetivo: float
     ejercicios: dict[int, EjercicioEmpresa]
+    catalogo_version: str  # hash del CSV del catálogo usado para generar el caso (sección 2.15)
+    pgc_version: str = PGC_VERSION
 
 
 def _rotacion_existencias(ventas: float, existencias_eur: float) -> float:
@@ -486,4 +498,5 @@ def generar_evolucion_arquetipo(
         semilla=semilla,
         crecimiento_pleno_objetivo=crecimiento_pleno_objetivo,
         ejercicios=ejercicios,
+        catalogo_version=catalogo.attrs.get("catalogo_version", "desconocida"),
     )
