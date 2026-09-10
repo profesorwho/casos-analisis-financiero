@@ -20,7 +20,15 @@ from pathlib import Path
 RUTA_ARQUETIPOS_POR_DEFECTO = Path(__file__).resolve().parent.parent / "data" / "arquetipos.json"
 
 TIPOS_EFECTO_VALIDOS = frozenset(
-    {"masa_circulante", "pyg_primitiva", "apalancamiento", "tesoreria", "reclasificacion_deuda"}
+    {
+        "masa_circulante",
+        "pyg_primitiva",
+        "apalancamiento",
+        "tesoreria",
+        "reclasificacion_deuda",
+        "evento_puntual",
+        "capex",
+    }
 )
 FORMULAS_MASA_CIRCULANTE_VALIDAS = frozenset({"rotacion", "dias"})
 VARIABLES_MASA_CIRCULANTE_VALIDAS = frozenset({"existencias", "realizable", "acreedores_comerciales"})
@@ -90,12 +98,40 @@ class EfectoReclasificacionDeuda:
     direccion: int
 
 
+@dataclass(frozen=True)
+class EfectoEventoPuntual:
+    """Fuerza una primitiva de la PyG a un valor no nulo en UN SOLO ejercicio (2024 o 2025,
+    sorteado — ver motor/evolucion_arquetipo.py), volviendo a su comportamiento normal (ruido de
+    sector) al año siguiente. Distinto de EfectoPygPrimitiva: ese modela una TENDENCIA progresiva
+    (intensidad creciente año a año); este modela un SUCESO puntual y no recurrente, que por
+    definición no tiene sentido tratar con el patrón de intensidad progresiva de los demás
+    efectos (arquetipo 12, "Resultado extraordinario")."""
+
+    primitiva: str
+    ratio_catalogo: str
+    direccion: int
+
+
+@dataclass(frozen=True)
+class EfectoCapex:
+    """Desvía activo_no_corriente al alza vía continuidad sobre su propia rotación
+    (ratios.rotacion_activo_no_corriente), igual mecanismo de forma que EfectoMasaCirculante
+    (formula "rotacion") pero en el otro lado del balance — financiado con deuda a largo plazo
+    nueva, no con el circulante (arquetipo 17, "Capex elevado"). Ver motor/evolucion_arquetipo.py
+    para la justificación de por qué no se reutiliza directamente masa_circulante."""
+
+    ratio_catalogo: str
+    direccion: int
+
+
 Efecto = (
     EfectoMasaCirculante
     | EfectoPygPrimitiva
     | EfectoApalancamiento
     | EfectoTesoreria
     | EfectoReclasificacionDeuda
+    | EfectoEventoPuntual
+    | EfectoCapex
 )
 
 
@@ -143,7 +179,16 @@ def _construir_efecto(bruto: dict, arquetipo_id: str, indice: int) -> Efecto:
     if tipo == "tesoreria":
         return EfectoTesoreria(ratio_catalogo=ratio_catalogo, direccion=direccion)
 
-    return EfectoReclasificacionDeuda(ratio_catalogo=ratio_catalogo, direccion=direccion)
+    if tipo == "reclasificacion_deuda":
+        return EfectoReclasificacionDeuda(ratio_catalogo=ratio_catalogo, direccion=direccion)
+
+    if tipo == "evento_puntual":
+        primitiva = bruto.get("primitiva")
+        if not primitiva:
+            raise ArquetipoInvalidoError(f"{arquetipo_id}: efecto #{indice} no tiene 'primitiva'")
+        return EfectoEventoPuntual(primitiva=primitiva, ratio_catalogo=ratio_catalogo, direccion=direccion)
+
+    return EfectoCapex(ratio_catalogo=ratio_catalogo, direccion=direccion)
 
 
 def cargar_arquetipos(ruta: str | Path = RUTA_ARQUETIPOS_POR_DEFECTO) -> dict[str, DefinicionArquetipo]:

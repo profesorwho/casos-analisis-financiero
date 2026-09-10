@@ -10,11 +10,12 @@ Motor GENÉRICO: qué arquetipo se aplica es un dato (`data/arquetipos.json`, ca
 - **Lo específico de cada arquetipo**: qué variable mueve, en qué dirección y contra qué
   ratio ancla — vive SOLO en `data/arquetipos.json`, no en código.
 
-No todos los arquetipos cuantitativos de la sección 2.24 encajan en las 5 formas ya
-implementadas (masa_circulante, pyg_primitiva, apalancamiento, tesoreria, reclasificacion_deuda)
-— ver el informe de clasificación en el mensaje que acompaña a este commit para el detalle de
-cuáles sí y cuáles necesitarían una forma nueva. Los arquetipos cualitativos puros (7, 19, 20,
-21, 22) no pasan por este mecanismo en absoluto.
+No todos los arquetipos cuantitativos de la sección 2.24 encajan en las 7 formas ya
+implementadas (masa_circulante, pyg_primitiva, apalancamiento, tesoreria, reclasificacion_deuda,
+evento_puntual, capex) — ver el informe de clasificación en el mensaje que acompaña a cada
+commit para el detalle de cuáles sí y cuáles necesitarían una forma nueva (o no aplican al
+motor en absoluto, como el arquetipo 13). Los arquetipos cualitativos puros (7, 19, 20, 21, 22)
+no pasan por este mecanismo en absoluto.
 
 Sin matriz de compatibilidad (combinación de varios arquetipos a la vez), sin EFE/ECPN
 completos, sin dividendos.
@@ -238,6 +239,126 @@ había que fijar para poder implementar):
   baii a la vez cuando el propio ruido de la base ya lo rebasa sin ayuda del arquetipo —
   `pyg_contencion_al_limite` señaliza con precisión quién queda en ese caso.
 
+- **Tercer lote (arquetipos 2, 12, 14, 16, 17).**
+
+  **Arquetipo 2 (beneficio sin cash flow suficiente)** reutiliza EXACTAMENTE el mecanismo del
+  arquetipo 15 (`EfectoTesoreria`): comprobado en el código que este efecto NO consume el Huber
+  de `ratio_catalogo` para nada (`_disponible_proporcional_con_efecto` es un simple factor
+  `(1 ± intensidad)` sobre la tesorería proporcional, sin referencia al catálogo) — así que
+  declarar un `ratio_catalogo` distinto (`ratios.flujo_caja_activo`, el más directo de los dos
+  anclas de la sección 2.24 para este arquetipo; `roe` queda implícito porque la PyG no se toca)
+  es puramente una etiqueta de trazabilidad, no cambia el comportamiento. Mismo mecanismo, sin
+  código nuevo — verificado en pruebas de estrés (972 ejercicios): 0 descuadres, disponible
+  nunca negativo, igual que el 15.
+
+  **Arquetipo 12 (resultado extraordinario) — mecanismo nuevo, `EfectoEventoPuntual`, porque su
+  naturaleza (suceso puntual y no recurrente, por definición) es incompatible con el patrón de
+  intensidad progresiva (leve en 2024 → fuerte en 2025) de todos los demás efectos.** Decisiones:
+  (a) el año del suceso se sortea 50/50 entre 2024 y 2025 con `rng_tendencia` (ya independiente
+  por sector+segmento, NO por intensidad — el año en que ocurrió el suceso es un hecho de la
+  empresa, no debe variar solo por pedir una intensidad distinta del mismo caso); (b) la
+  magnitud NO se ancla al Huber de la propia primitiva (`pyg.resultado_extraordinario_pct` es
+  ~0 con MAD pequeño en casi todos los sectores del catálogo — un techo/suelo ahí daría un
+  "extraordinario" imperceptible, lo contrario de lo que pide el arquetipo): se ancla en su
+  lugar al Huber de `pyg.baii_pct` (siempre positivo en los 27 sectores, representa la escala
+  de "beneficio operativo típico" del sector) — decisión estructural del mecanismo
+  (`_evento_puntual_valor`), no un dato de arquetipo; (c) deliberadamente SIN techo/suelo de
+  plausibilidad sectorial sobre baii/resultado ese año — la propia esencia del arquetipo es que
+  ESE año se salga de lo plausible, limitarlo anularía el efecto. El año SIN suceso vuelve solo
+  al ruido normal de sector (huber~0): no hace falta código adicional, basta con no forzar la
+  primitiva ese año. Verificado en pruebas de estrés (972 ejercicios, 324 casos): 0 descuadres;
+  distribución del año 138/186 (42,6%/57,4% — comprobado que no es sesgo tipo nota_memoria: solo
+  hay 108 sorteos realmente independientes, uno por sector×semilla, ya que no depende de la
+  intensidad; 138/186 replicado x3 por intensidad da 46/62 sobre 108, a 1,5 desviaciones típicas
+  de 54/54, dentro de la variabilidad normal de muestra); magnitud de
+  |resultado_extraordinario_pct| entre 0,03 y 9,45 puntos (media 2,59); riesgo_endeudamiento se
+  activó solo 3 veces de 972, las 3 correctamente señalizadas por el chequeo incondicional ya
+  existente (sin necesidad de ningún mecanismo de contención propio para este arquetipo).
+
+  **Arquetipo 13 (diferencias EBITDA/EBIT/beneficio/caja) — NO IMPLEMENTADO, no aplica al
+  motor.** Confirmado por inspección: su huella (BAII, BAII+amortizaciones ≈ EBITDA, BAI,
+  resultado del ejercicio, caja) son magnitudes que CUALQUIER empresa generada ya tiene en
+  `pyg_eur` sin necesidad de ningún efecto — es una comparación de síntesis para el análisis
+  posterior, no una desviación que generar. Pertenece a la futura capa de análisis/diagnóstico,
+  no a este motor de generación (backlog de esa fase).
+
+  **Arquetipo 14 (ROE elevado por apalancamiento) — declarado como variante exacta del
+  arquetipo 9 (`EfectoApalancamiento`, mismo `ratio_catalogo` y `direccion`), sin lógica nueva.**
+  Confirmado que la reducción de PN que ya hace el mecanismo de apalancamiento sube el ROE de
+  forma mecánica (ROE = resultado/PN, denominador menor). Verificado en pruebas de estrés (972
+  ejercicios, 324 casos): 0 descuadres; deuda y endeudamiento IDÉNTICOS a los del arquetipo 9
+  para el mismo caso (mismo efecto, mismos parámetros). **Matiz honesto sobre el "+ROE" de la
+  huella, investigado a fondo antes de aceptarlo:** el ROE HEADLINE (no descompuesto) solo sale
+  más alto en 2025 que en el 2023 base en el 53,3% de los 324 casos — apenas por encima del azar.
+
+  Se probó primero la hipótesis de que el ruido operativo (ajeno al arquetipo) enmascaraba el
+  efecto de apalancamiento: se implementó un factor de amortiguación del MAD de las primitivas
+  de PyG NO forzadas (`tipo_interes` excluido, por ser parte de la propia huella) y se midió en
+  varios niveles (1,0 / 0,5 / 0,3 / 0,15 / 0,0). **La hipótesis quedó descartada**: incluso
+  eliminando el ruido operativo por completo (factor 0,0 — todas las primitivas no forzadas
+  exactamente en su Huber sectorial, sin varianza) el porcentaje NO mejoró (49,7%, dentro del
+  mismo rango). El cambio se revirtió — no queda ningún `factor_ruido_operativo` en el motor.
+
+  **La causa real: el efecto se diluye en el segundo año por el propio coste de la deuda
+  acumulada — la misma dinámica de "espiral de deuda" ya documentada más arriba para el
+  arquetipo 9, aplicada aquí al ROE.** Medido por transición: ROE 2024 vs. 2023 (año en que se
+  añade la deuda; el interés nuevo solo pesa "media dosis" ese ejercicio, por la media
+  inicio/fin) sube en el **61,7%** de los 324 casos; ROE 2025 vs. 2024 (el interés ya pesa el año
+  completo sobre la deuda ya acumulada, y la contención de endeudamiento limita cuánta deuda
+  nueva cabe ese año) sube solo en el **35,0%** — baja la mayoría de las veces. ROE por encima de
+  la base 2023 en **al menos uno** de los dos años (2024 o 2025) — el criterio que de verdad
+  importa para un caso leído como un arco de 3 ejercicios, no solo comparado en el punto final —:
+  **78,1%**, consistente entre las tres intensidades (76,9% leve, 78,7% moderado, 78,7% fuerte).
+
+  **Decisión (discutida y acordada): no se toca el motor.** Forzar la monotonía del ROE habría
+  exigido tocar la rentabilidad operativa, ajena a la huella declarada del arquetipo (deuda, ROE,
+  ROI) — confundiría dos arquetipos distintos, y ya se comprobó que ni siquiera con ruido cero se
+  resuelve, porque la causa no es el ruido. El 78,1% de casos con el efecto visible en al menos un
+  año ya es claramente mayoritario y consistente por intensidad: la ficha docente de este
+  arquetipo es la que debe matizarse (pendiente, fuera del motor) para dejar explícito que el ROE
+  elevado se observa típicamente en el ejercicio en que se contrae la deuda nueva, y que puede
+  diluirse el año siguiente por el coste financiero acumulado sobre la deuda ya existente —
+  coherente con la "espiral de deuda" del arquetipo 9, no un defecto de haber reutilizado su
+  mecanismo tal cual.
+
+  **Arquetipo 16 (riesgo de refinanciación) — mismo mecanismo `reclasificacion_deuda` del
+  arquetipo 8, con `direccion=-1` (en vez de +1: concentra a corto en vez de reequilibrar a
+  largo), más `nota_memoria` (redactada directamente para este arquetipo, sin partir de texto
+  dado — ver `NOTAS_MEMORIA_RIESGO_REFINANCIACION`).** A diferencia del caso límite raro del
+  arquetipo 10, la nota se activa cada año en que el efecto actúa (es la huella habitual del
+  propio arquetipo, no una excepción) — reutiliza `rngs_nota` (ya independiente por
+  sector+segmento+intensidad+año, sin necesidad de una secuencia dedicada nueva: los arquetipos
+  10 y 16 nunca coinciden en el mismo caso, sin riesgo de colisión). Verificado en pruebas de
+  estrés (648 transiciones, 324 casos): 0 descuadres, deuda financiera TOTAL nunca desviada de
+  lo proporcional (confirma que el mecanismo es "seguro" por construcción, igual que el 8),
+  `nota_memoria` presente en el 100% de los casos, las 5 redacciones aparecen todas, reproducible
+  por semilla.
+
+  **Arquetipo 17 (capex elevado) — mecanismo nuevo, `EfectoCapex`, estructuralmente el
+  equivalente en el lado del activo de `masa_circulante`, pero NO reutiliza ese tipo de efecto.**
+  Objetivo de `activo_no_corriente` vía el mismo patrón de continuidad "rotación" que
+  `_masa_circulante_objetivo` (ancla `ratios.rotacion_activo_no_corriente`, no circular: se
+  calcula solo a partir de ventas, sin depender de ningún total de balance aún sin construir) —
+  pero NO se declara como una variable más de `masa_circulante` porque esa vía alimenta el
+  mecanismo de déficit de NOF/circulante (financiaría el exceso con tesorería y DEUDA A CORTO,
+  la fuente típica de financiación de circulante) y capex no es circulante: la fuente típica de
+  financiación de una inversión en inmovilizado es DEUDA A LARGO plazo (decisión razonada, no
+  dato de la sección 2.24, que no especifica la fuente). El exceso de activo_no_corriente sobre
+  su crecimiento proporcional a ventas se añade directamente a `deudas_fin_largo_proporcional_eur`
+  — a diferencia de "apalancamiento", esta deuda nueva NO resta nada de patrimonio_neto (financia
+  la compra del propio activo, no una distribución: activo y pasivo suben lo mismo, sin romper
+  el cuadre ni necesitar ningún cálculo en forma cerrada). Verificado en pruebas de estrés (972
+  ejercicios, 324 casos): 0 descuadres, 0 valores negativos indebidos, exceso de
+  activo_no_corriente financiado exactamente por el exceso de deudas_fin_largo (dentro de
+  tolerancia). El chequeo incondicional de endeudamiento se activó en 152/972 ejercicios (15,6%)
+  — todas correctamente señalizadas (0 sin señalizar) — y el 100% de esas activaciones quedan en
+  `contencion_al_limite=True`: el arquetipo no toca circulante, así que no tiene ninguna palanca
+  de amortiguación disponible, exactamente el mismo patrón ya aceptado para 9/11/15/16 (señal
+  honesta sin corrección posible, no un intento fallido de arreglarlo en silencio) — no se ha
+  añadido ninguna palanca de autofinanciación parcial (capex financiado en parte con caja propia)
+  porque no estaba pedida y añadiría una capa de ingeniería no solicitada; queda como posible
+  mejora futura si el caso de uso lo requiere.
+
 - **Trazabilidad (sección 2.15).** `EvolucionArquetipo` guarda `arquetipo`, `intensidad`,
   `semilla`, `catalogo_version` (hash del CSV del catálogo usado — se deriva del propio
   archivo, no de un número mantenido a mano) y `pgc_version` (fijo por ahora: solo hay una
@@ -279,6 +400,8 @@ import pandas as pd
 from motor.arquetipos import (
     DefinicionArquetipo,
     EfectoApalancamiento,
+    EfectoCapex,
+    EfectoEventoPuntual,
     EfectoMasaCirculante,
     EfectoPygPrimitiva,
     EfectoReclasificacionDeuda,
@@ -401,6 +524,34 @@ NOTAS_MEMORIA_GASTOS_PERSONAL_AL_LIMITE = (
     "Se liquidaron durante el ejercicio complementos e incentivos variables ligados al "
     "cumplimiento de objetivos del ejercicio anterior, lo que elevó puntualmente los gastos de "
     "personal.",
+)
+
+# Redacciones alternativas para `nota_memoria` del arquetipo 16 ("Riesgo de refinanciación"):
+# se activan cada año en que el efecto reclasificacion_deuda empeora la calidad de la deuda
+# (dirección -1, más concentración a corto plazo) — a diferencia del arquetipo 10, no es un caso
+# límite raro, es la huella habitual del propio arquetipo cada año que actúa. Mismo patrón que
+# NOTAS_MEMORIA_GASTOS_PERSONAL_AL_LIMITE (selección reproducible con `rngs_nota`, redactadas
+# aquí — a diferencia de las del arquetipo 10, no las dio el usuario, se escribieron directamente
+# para este arquetipo): cada una apunta a una causa de negocio distinta y verificable para tener
+# deuda relevante con vencimiento próximo (póliza sindicada pendiente de renovar, endurecimiento
+# de condiciones de financiación, incumplimiento de covenants, sustitución de financiación a
+# largo por líneas a corto, refinanciación en curso no formalizada).
+NOTAS_MEMORIA_RIESGO_REFINANCIACION = (
+    "Durante el ejercicio venció y se reclasificó a corto plazo una póliza de crédito sindicada "
+    "que la sociedad tiene previsto renovar en los próximos meses, sin que a la fecha de "
+    "formulación de las cuentas se haya formalizado la renovación.",
+    "El endurecimiento de las condiciones de financiación bancaria ha llevado a la entidad a "
+    "priorizar líneas de crédito a corto plazo frente a la refinanciación a largo, lo que "
+    "concentra vencimientos relevantes en los próximos doce meses.",
+    "Parte de la deuda a largo plazo se ha reclasificado a corto plazo al no cumplirse "
+    "determinados ratios financieros (covenants) exigidos por las entidades acreedoras, que "
+    "otorgan a estas el derecho a exigir el vencimiento anticipado.",
+    "La sociedad ha optado por un mayor uso de financiación a corto plazo (pólizas y descuento "
+    "comercial) para cubrir necesidades puntuales de circulante, en sustitución de la "
+    "financiación a largo plazo históricamente empleada.",
+    "Está en curso un proceso de refinanciación con el pool bancario que, a la fecha de cierre "
+    "del ejercicio, aún no se ha formalizado, por lo que la deuda afectada permanece "
+    "clasificada a corto plazo hasta la firma del nuevo acuerdo.",
 )
 
 # Mapeo ESTRUCTURAL (no específico de ningún arquetipo): qué masas de circulante puede tocar un
@@ -528,6 +679,34 @@ def _masa_circulante_objetivo(
     return nuevo_ratio / DIAS_AÑO * ventas
 
 
+def _activo_no_corriente_objetivo(
+    efecto: EfectoCapex, anterior: EjercicioEmpresa, ventas: float, fila: pd.Series, intensidad_efectiva: float
+) -> float:
+    """Mismo mecanismo que `_masa_circulante_objetivo` con formula="rotacion" (continuidad sobre
+    ventas/activo_no_corriente, ancla ratios.rotacion_activo_no_corriente, no circular: no
+    depende de ningún total de balance todavía sin construir) — pero es una función aparte, no
+    una reutilización de EfectoMasaCirculante, porque activo_no_corriente NO participa en el
+    mecanismo de déficit de NOF/circulante (ver docstring del módulo, sección "Arquetipo 17")."""
+    huber = fila[f"{efecto.ratio_catalogo}.huber_9y"]
+    ratio_anterior = anterior.ventas / anterior.balance_eur["activo_no_corriente"]
+    nuevo_ratio = _mover_ratio_continuo(ratio_anterior, efecto.direccion, intensidad_efectiva, huber)
+    return ventas / nuevo_ratio
+
+
+def _evento_puntual_valor(efecto: EfectoEventoPuntual, fila: pd.Series, intensidad_base: float) -> float:
+    """Magnitud del suceso puntual (arquetipo 12, "Resultado extraordinario"): NO se ancla al
+    Huber de la propia primitiva (`pyg.resultado_extraordinario_pct` es ~0 con MAD pequeño en
+    casi todos los sectores del catálogo — anclar ahí daría un "extraordinario" imperceptible,
+    justo lo contrario de lo que pide el arquetipo). Se ancla en su lugar al Huber de
+    `pyg.baii_pct` (siempre positivo en los 27 sectores del catálogo, y representa la escala de
+    "beneficio operativo típico" de ese sector) — decisión estructural del mecanismo, no un dato
+    de arquetipo, documentada aquí igual que SUBTOTAL_PYG_DE_PRIMITIVA. `intensidad_base` (NO
+    intensidad_efectiva: sin escalar por fracción del año — ver docstring del módulo) determina
+    qué fracción del BAII típico del sector representa el suceso puntual."""
+    huber_baii = fila["pyg.baii_pct.huber_9y"]
+    return efecto.direccion * intensidad_base * huber_baii
+
+
 def _pyg_primitiva_objetivo(
     efecto: EfectoPygPrimitiva, anterior: EjercicioEmpresa, fila: pd.Series, intensidad_efectiva: float
 ) -> float:
@@ -646,6 +825,8 @@ def _evolucionar_un_año(
     rng_nota: np.random.Generator,
     crecimiento_ventas: float,
     intensidad_efectiva: float,
+    intensidad_base: float,
+    año_evento_puntual: int | None,
     definicion: DefinicionArquetipo,
 ) -> EjercicioEmpresa:
     ventas = anterior.ventas * (1 + crecimiento_ventas)
@@ -656,6 +837,9 @@ def _evolucionar_un_año(
     efectos_tesoreria = [e for e in definicion.efectos if isinstance(e, EfectoTesoreria)]
     efecto_tesoreria = efectos_tesoreria[0] if efectos_tesoreria else None
     efectos_reclasificacion_deuda = [e for e in definicion.efectos if isinstance(e, EfectoReclasificacionDeuda)]
+    efectos_evento_puntual = [e for e in definicion.efectos if isinstance(e, EfectoEventoPuntual)]
+    efectos_capex = [e for e in definicion.efectos if isinstance(e, EfectoCapex)]
+    nota_memoria: str | None = None
 
     # --- Masas de circulante: proporcional a ventas por defecto, desviadas si el arquetipo
     # las toca. Las tres variables soportadas (SIGNO_NOF_MASA_CIRCULANTE) se tratan siempre
@@ -676,7 +860,12 @@ def _evolucionar_un_año(
     acreedores_comerciales_proporcional_eur = proporcional_circulante["acreedores_comerciales"]
 
     # --- Resto de masas: crecen en línea con las ventas (patrimonio neto se trata aparte) ---
-    activo_no_corriente_eur = anterior.balance_eur["activo_no_corriente"] * (1 + crecimiento_ventas)
+    activo_no_corriente_proporcional_eur = anterior.balance_eur["activo_no_corriente"] * (1 + crecimiento_ventas)
+    activo_no_corriente_eur = activo_no_corriente_proporcional_eur
+    if efectos_capex:
+        activo_no_corriente_eur = _activo_no_corriente_objetivo(
+            efectos_capex[0], anterior, ventas, fila, intensidad_efectiva
+        )
     deudas_fin_largo_proporcional_eur = anterior.balance_eur["deudas_fin_largo"] * (1 + crecimiento_ventas)
     otras_deudas_largo_eur = anterior.balance_eur["otras_deudas_largo"] * (1 + crecimiento_ventas)
     otras_deudas_corto_eur = anterior.balance_eur["otras_deudas_corto"] * (1 + crecimiento_ventas)
@@ -707,6 +896,28 @@ def _evolucionar_un_año(
         deudas_fin_largo_proporcional_eur = calidad_deuda_objetivo * deuda_financiera_total_proporcional_eur
         deudas_fin_corto_proporcional_eur = deuda_financiera_total_proporcional_eur - deudas_fin_largo_proporcional_eur
 
+        if efecto_reclas.direccion < 0:
+            # Arquetipo 16 ("riesgo de refinanciación"): empeora la calidad de la deuda cada año
+            # que actúa (no es un caso límite raro como en el arquetipo 10 — es la huella
+            # habitual del propio arquetipo) — cobertura narrativa reproducible, mismo patrón que
+            # NOTAS_MEMORIA_GASTOS_PERSONAL_AL_LIMITE (rng_nota dedicado, ver ahí por qué no
+            # basta con reutilizar rng_pyg).
+            indice_nota = rng_nota.integers(len(NOTAS_MEMORIA_RIESGO_REFINANCIACION))
+            nota_memoria = NOTAS_MEMORIA_RIESGO_REFINANCIACION[indice_nota]
+
+    # --- Capex (arquetipo 17, "capex elevado"): el exceso de activo_no_corriente sobre su
+    # crecimiento proporcional a ventas se financia con deuda a largo plazo NUEVA, no con el
+    # circulante — a diferencia de una masa_circulante, invertir en inmovilizado no genera un
+    # déficit de caja del ejercicio que haya que cubrir con tesorería o deuda a CORTO (esa es la
+    # fuente típica de financiación de circulante, no de capex); la fuente típica de financiación
+    # de capex es deuda a LARGO plazo (o ampliación de capital/autofinanciación, no modeladas
+    # aquí). A diferencia del efecto "apalancamiento" (arquetipo 9), esta deuda nueva NO financia
+    # una distribución a PN: financia la COMPRA del propio activo, así que no se resta nada de
+    # patrimonio_neto — el activo y el pasivo suben exactamente lo mismo, sin romper el cuadre.
+    if efectos_capex:
+        exceso_capex_eur = max(0.0, activo_no_corriente_eur - activo_no_corriente_proporcional_eur)
+        deudas_fin_largo_proporcional_eur += exceso_capex_eur
+
     # --- PyG: primitivas no financieras + tipo de interés, sorteadas UNA sola vez. Las que el
     # arquetipo toca (efecto pyg_primitiva) se fuerzan por continuidad en vez de sortearse, y
     # además se topan para que el subtotal que alimentan no rebase su propio techo/suelo de
@@ -715,6 +926,15 @@ def _evolucionar_un_año(
     riesgo_plausibilidad_pyg = False
     pyg_contencion_al_limite = False
     pyg_subtotales_sin_contener: dict[str, float] = {}
+    # --- Suceso puntual (arquetipo 12, "resultado extraordinario"): SOLO se fuerza en el año
+    # sorteado como año_evento_puntual — el otro año (y 2023) no se toca, así que
+    # resultado_extraordinario vuelve a su ruido de sector normal (huber ~0) automáticamente, sin
+    # código adicional. No pasa por _limitar_por_subtotal (sin techo/suelo de plausibilidad): la
+    # propia naturaleza del arquetipo es que ESE año se salga de lo plausible — limitarlo
+    # anularía el efecto que se pide generar. Ver _evento_puntual_valor y docstring del módulo. ---
+    for efecto in efectos_evento_puntual:
+        if año == año_evento_puntual:
+            primitivas_forzadas[efecto.primitiva] = _evento_puntual_valor(efecto, fila, intensidad_base)
     efectos_pyg_base_dinamica = []
     for efecto in efectos_pyg:
         objetivo = _pyg_primitiva_objetivo(efecto, anterior, fila, intensidad_efectiva)
@@ -733,7 +953,6 @@ def _evolucionar_un_año(
             riesgo_plausibilidad_pyg = True
             pyg_subtotales_sin_contener[subtotal_topado] = subtotal_sin_contener
     parcial_pyg = _generar_pyg_hasta_baii(rng_pyg, fila, ventas, primitivas_forzadas=primitivas_forzadas)
-    nota_memoria: str | None = None
     for efecto in efectos_pyg_base_dinamica:
         subtotal = SUBTOTAL_PYG_BASE_DINAMICA_DE_PRIMITIVA[efecto.primitiva]
         gastos_personal_pct_sin_empuje = anterior.pyg_pct[efecto.primitiva]
@@ -1088,15 +1307,35 @@ def generar_evolucion_arquetipo(
         bajo, alto = RANGO_CRECIMIENTO_ORGANICO
         crecimiento_pleno_objetivo = bajo + rng_tendencia.random() * (alto - bajo)
 
+    # Año único del suceso puntual (arquetipo 12, "resultado extraordinario"): sorteado 50/50
+    # entre 2024 y 2025 con rng_tendencia — mismo generador ya independiente por sector+segmento,
+    # NO por intensidad (el año en que ocurrió el suceso es un hecho de la propia empresa: no
+    # debe cambiar solo porque se pida una intensidad distinta del mismo caso, igual que
+    # crecimiento_pleno_objetivo). Solo se consume si el arquetipo tiene un EfectoEventoPuntual,
+    # así que no afecta al estado de rng_tendencia para el resto de arquetipos.
+    año_evento_puntual: int | None = None
+    if any(isinstance(e, EfectoEventoPuntual) for e in definicion.efectos):
+        año_evento_puntual = 2024 if rng_tendencia.integers(2) == 0 else 2025
+
+    intensidad_base = INTENSIDAD_BASE[intensidad]
     anterior = ejercicios[AÑO_BASE]
     for año in (2024, 2025):
         fraccion = FRACCION_AÑO[año]
-        intensidad_efectiva = INTENSIDAD_BASE[intensidad] * fraccion
+        intensidad_efectiva = intensidad_base * fraccion
         crecimiento_ventas = (
             crecimiento_pleno_objetivo * fraccion if definicion.rango_crecimiento_pleno is not None else crecimiento_pleno_objetivo
         )
         ejercicio = _evolucionar_un_año(
-            año, anterior, fila, rngs_pyg[año], rngs_nota[año], crecimiento_ventas, intensidad_efectiva, definicion
+            año,
+            anterior,
+            fila,
+            rngs_pyg[año],
+            rngs_nota[año],
+            crecimiento_ventas,
+            intensidad_efectiva,
+            intensidad_base,
+            año_evento_puntual,
+            definicion,
         )
         ejercicios[año] = ejercicio
         anterior = ejercicio

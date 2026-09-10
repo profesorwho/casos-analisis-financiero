@@ -5,6 +5,8 @@ import pytest
 from motor.arquetipos import (
     ArquetipoInvalidoError,
     EfectoApalancamiento,
+    EfectoCapex,
+    EfectoEventoPuntual,
     EfectoMasaCirculante,
     EfectoPygPrimitiva,
     EfectoReclasificacionDeuda,
@@ -24,15 +26,35 @@ IDS_ESPERADOS = {
     "aumento_clientes": 6,
     "refinanciacion": 8,
     "mejora_ebitda": 10,
+    "beneficio_sin_cash_flow": 2,
+    "resultado_extraordinario": 12,
+    "roe_elevado_apalancamiento": 14,
+    "riesgo_refinanciacion": 16,
+    "capex_elevado": 17,
 }
 
 
-def test_carga_los_10_arquetipos_implementados():
+def test_carga_los_15_arquetipos_implementados():
     arquetipos = cargar_arquetipos()
     assert set(arquetipos) == set(IDS_ESPERADOS)
     for id_, numero in IDS_ESPERADOS.items():
         assert arquetipos[id_].numero == numero
         assert len(arquetipos[id_].efectos) >= 1
+
+
+def test_tipos_de_efecto_del_tercer_lote():
+    arquetipos = cargar_arquetipos()
+    assert all(isinstance(e, EfectoTesoreria) for e in arquetipos["beneficio_sin_cash_flow"].efectos)
+    assert all(isinstance(e, EfectoEventoPuntual) for e in arquetipos["resultado_extraordinario"].efectos)
+    assert all(isinstance(e, EfectoApalancamiento) for e in arquetipos["roe_elevado_apalancamiento"].efectos)
+    assert all(isinstance(e, EfectoReclasificacionDeuda) for e in arquetipos["riesgo_refinanciacion"].efectos)
+    assert all(isinstance(e, EfectoCapex) for e in arquetipos["capex_elevado"].efectos)
+
+
+def test_riesgo_refinanciacion_direccion_es_opuesta_a_refinanciacion():
+    arquetipos = cargar_arquetipos()
+    assert arquetipos["refinanciacion"].efectos[0].direccion == 1
+    assert arquetipos["riesgo_refinanciacion"].efectos[0].direccion == -1
 
 
 def test_tipos_de_efecto_del_segundo_lote():

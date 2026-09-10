@@ -159,6 +159,67 @@
           "direccion": -1
         }
       ]
+    },
+    {
+      "id": "beneficio_sin_cash_flow",
+      "numero": 2,
+      "nombre": "Beneficio sin cash flow suficiente",
+      "efectos": [
+        {
+          "tipo": "tesoreria",
+          "ratio_catalogo": "ratios.flujo_caja_activo",
+          "direccion": -1
+        }
+      ]
+    },
+    {
+      "id": "resultado_extraordinario",
+      "numero": 12,
+      "nombre": "Resultado extraordinario",
+      "efectos": [
+        {
+          "tipo": "evento_puntual",
+          "primitiva": "resultado_extraordinario",
+          "ratio_catalogo": "pyg.resultado_extraordinario_pct",
+          "direccion": 1
+        }
+      ]
+    },
+    {
+      "id": "roe_elevado_apalancamiento",
+      "numero": 14,
+      "nombre": "ROE elevado por apalancamiento",
+      "efectos": [
+        {
+          "tipo": "apalancamiento",
+          "ratio_catalogo": "ratios.endeudamiento",
+          "direccion": 1
+        }
+      ]
+    },
+    {
+      "id": "riesgo_refinanciacion",
+      "numero": 16,
+      "nombre": "Riesgo de refinanciación",
+      "efectos": [
+        {
+          "tipo": "reclasificacion_deuda",
+          "ratio_catalogo": "ratios.calidad_deuda",
+          "direccion": -1
+        }
+      ]
+    },
+    {
+      "id": "capex_elevado",
+      "numero": 17,
+      "nombre": "Capex elevado",
+      "efectos": [
+        {
+          "tipo": "capex",
+          "ratio_catalogo": "ratios.rotacion_activo_no_corriente",
+          "direccion": -1
+        }
+      ]
     }
   ]
 }
