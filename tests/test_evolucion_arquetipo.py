@@ -340,14 +340,64 @@ def test_catalogo_version_es_la_del_catalogo_pasado_explicitamente(catalogo, arq
 
 
 def test_reimplementacion_generica_reproduce_los_valores_de_referencia(catalogo, arquetipos):
-    # Regresión dura: valores exactos capturados con la versión anterior (hardcodeada) del
-    # arquetipo 1, antes de generalizar el motor. Si esto falla, la generalización cambió el
-    # comportamiento del arquetipo 1 — el objetivo explícito era que NO lo hiciera.
+    # Regresión dura: valores exactos del arquetipo 1 para este caso concreto (sector 24.1,
+    # semilla 5, fuerte). Los valores originales (capturados con la versión hardcodeada, antes
+    # de generalizar el motor) se re-pinnearon a los actuales tras corregir un sesgo real en la
+    # semilla del RNG: `generar_empresa_base` y `generar_evolucion_arquetipo` sembraban el
+    # generador solo con `semilla`, sin mezclar sector/segmento — cualquier sector con la misma
+    # semilla partía del mismo estado de RNG y consumía la MISMA secuencia de sorteos (el modo
+    # típico/atípico y el valor z de cada partida no dependen de huber/mad, solo su escalado
+    # posterior), así que compartían más aleatoriedad de la debida entre sí. Corregido mezclando
+    # un hash estable (zlib.crc32) de sector+segmento en la semilla — ver docstring de
+    # motor.empresa_base y motor.evolucion_arquetipo. Si este test vuelve a fallar SIN que se
+    # haya tocado la semilla del RNG deliberadamente, sí es una regresión real del mecanismo del
+    # arquetipo 1 — el objetivo explícito de la generalización era que no cambiara su
+    # comportamiento.
     evolucion = _generar(catalogo, arquetipos, "24.1", 5, "fuerte")
     ej = evolucion.ejercicios
-    assert ej[2023].balance_eur["existencias"] == pytest.approx(2_178_497, abs=1)
-    assert ej[2024].balance_eur["existencias"] == pytest.approx(3_467_505, abs=1)
-    assert ej[2025].balance_eur["existencias"] == pytest.approx(4_127_413, abs=1)
-    assert ej[2023].endeudamiento == pytest.approx(0.602, abs=1e-3)
-    assert ej[2024].endeudamiento == pytest.approx(0.631, abs=1e-3)
-    assert ej[2025].endeudamiento == pytest.approx(0.679, abs=1e-3)
+    assert ej[2023].balance_eur["existencias"] == pytest.approx(2_344_937, abs=1)
+    assert ej[2024].balance_eur["existencias"] == pytest.approx(3_325_814, abs=1)
+    assert ej[2025].balance_eur["existencias"] == pytest.approx(3_978_012, abs=1)
+    assert ej[2023].endeudamiento == pytest.approx(0.600, abs=1e-3)
+    assert ej[2024].endeudamiento == pytest.approx(0.672, abs=1e-3)
+    assert ej[2025].endeudamiento == pytest.approx(0.716, abs=1e-3)
+
+
+def test_sectores_distintos_no_comparten_crecimiento_pleno_objetivo(catalogo, arquetipos):
+    # Regresión del mismo sesgo que el de test_reimplementacion_generica_...: la semilla de
+    # `semilla_secuencia` (de la que salen rng_tendencia y rngs_pyg) se sembraba solo con
+    # `semilla`, así que cualquier sector/segmento con la misma semilla obtenía exactamente el
+    # mismo crecimiento_pleno_objetivo (para arquetipos sin rango_crecimiento_pleno propio, que
+    # no depende del sector) y el mismo ruido de PyG de 2024/2025. Corregido mezclando
+    # sector+segmento (NO intensidad) en la semilla — ver docstring del módulo. Barrido de los 27
+    # sectores del catálogo x 4 semillas: 0 duplicados esperados.
+    import re
+
+    codigos = [re.search(r"\(([^()]+)\)\s*$", s).group(1) for s in catalogo["sector"].unique()]
+    for semilla in range(4):
+        valores = [
+            generar_evolucion_arquetipo(
+                codigo, "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=semilla, intensidad="fuerte",
+                arquetipo_id="exceso_stock", catalogo=catalogo, arquetipos=arquetipos,
+            ).crecimiento_pleno_objetivo
+            for codigo in codigos
+        ]
+        assert len(set(valores)) == len(valores), f"semilla {semilla}: hay sectores con el mismo crecimiento_pleno_objetivo"
+
+
+def test_mismo_sector_y_semilla_comparte_crecimiento_pleno_objetivo_entre_intensidades(catalogo, arquetipos):
+    # Lo contrario del test anterior: por diseño, la misma semilla+sector+segmento con
+    # intensidades distintas SÍ debe compartir el "ruido de fondo" (aquí, crecimiento_pleno_objetivo
+    # cuando el arquetipo no define rango propio) — el mezclado de sector+segmento en la semilla
+    # NO incluye la intensidad. Solo el empuje propio del arquetipo debe variar con ella (ver
+    # también test_intensidad_fuerte_tiene_mas_efecto_que_moderado).
+    for sector in ("24.1", "62", "47.1"):
+        for semilla in SEMILLAS:
+            valores = {
+                generar_evolucion_arquetipo(
+                    sector, "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=semilla, intensidad=intensidad,
+                    arquetipo_id="exceso_stock", catalogo=catalogo, arquetipos=arquetipos,
+                ).crecimiento_pleno_objetivo
+                for intensidad in ("leve", "moderado", "fuerte")
+            }
+            assert len(valores) == 1, f"sector {sector}, semilla {semilla}: crecimiento_pleno_objetivo varía con la intensidad"

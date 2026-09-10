@@ -2,11 +2,28 @@
 sectorial, con variabilidad realista entre empresas de un mismo sector.
 
 Sin arquetipos, sin serie de tres años, sin EFE: un único ejercicio, coherente y cuadrado.
+
+**Semilla del generador aleatorio.** `rng` se siembra con `semilla` MEZCLADA con un hash
+estable (`zlib.crc32`, no `hash()` de Python — este varía entre procesos por PYTHONHASHSEED,
+rompería la reproducibilidad) de `sector+segmento`, no con `semilla` a secas. Sembrar solo con
+`semilla` (como hacía la primera versión) dejaba a CUALQUIER sector/segmento con el mismo
+número de semilla partiendo del MISMO estado de `rng` — y como el modo típico/atípico y el
+valor z de cada partida (`_generar_partida`/`_normal_truncada`) no dependen de huber/mad, solo
+su escalado posterior sí, la secuencia de sorteos consumida era, en la práctica, IDÉNTICA entre
+sectores distintos que compartieran semilla (verificado: el z de `rotacion_activo` coincidía
+hasta 1e-9 entre dos sectores cualesquiera con la misma semilla) — se corrigió tras una
+auditoría pedida explícitamente al encontrar el mismo patrón en el sorteo de `nota_memoria` de
+`motor.evolucion_arquetipo`. La intensidad NO se mezcla aquí (no aplica: esta función no la
+conoce) ni en la semilla equivalente de `motor.evolucion_arquetipo.generar_evolucion_arquetipo`
+— por diseño, la misma semilla+sector+segmento con intensidades distintas debe compartir el
+mismo "ruido de fondo" de la empresa (ver docstring de ese módulo), solo el propio empuje del
+arquetipo varía con la intensidad.
 """
 
 from __future__ import annotations
 
 import re
+import zlib
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -334,8 +351,9 @@ def generar_empresa_base(
     """Genera el balance y la PyG base (un ejercicio, sin arquetipos) de una empresa ficticia.
 
     `sector` es el código entre paréntesis del catálogo (p. ej. "24.1", "4941"). `segmento` es
-    "grandes_medianas" o "pequeñas". El resultado es reproducible: misma semilla, mismo caso.
-    """
+    "grandes_medianas" o "pequeñas". El resultado es reproducible: misma semilla+sector+segmento,
+    mismo caso (ver docstring del módulo sobre por qué la semilla del RNG mezcla sector+segmento,
+    no solo `semilla`)."""
     if segmento not in SEGMENTOS_VALIDOS:
         raise EmpresaBaseError(f"Segmento '{segmento}' no válido. Debe ser uno de: {sorted(SEGMENTOS_VALIDOS)}")
     if ventas_objetivo <= 0:
@@ -347,7 +365,8 @@ def generar_empresa_base(
     fila = resolver_fila_sector(catalogo, sector, segmento)
     sector_nombre = fila["sector"]
 
-    rng = np.random.default_rng(semilla)
+    entropia_caso = zlib.crc32(f"{sector}|{segmento}".encode("utf-8"))
+    rng = np.random.default_rng([semilla, entropia_caso])
 
     balance_pct, modos_balance = _generar_balance_pct(rng, fila)
 

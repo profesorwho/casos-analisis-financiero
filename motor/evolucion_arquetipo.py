@@ -243,6 +243,29 @@ había que fijar para poder implementar):
   archivo, no de un número mantenido a mano) y `pgc_version` (fijo por ahora: solo hay una
   versión normativa en juego). Falta la versión normativa "de verdad" variable y el ID del
   caso/variante — se añadirán cuando exista un repositorio de casos.
+
+- **Auditoría de sesgo en la semilla del RNG (a raíz del hallazgo en `nota_memoria`).** El
+  mismo patrón de bug (un generador aleatorio que llega a un punto de sorteo en el MISMO estado
+  para combinaciones que deberían ser independientes) se encontró también en los DOS puntos
+  donde este módulo siembra un `np.random.Generator`/`SeedSequence` a partir de `semilla` —
+  `semilla_secuencia` (de la que salen `rng_tendencia` y `rngs_pyg`, aquí) y `rng` dentro de
+  `motor.empresa_base.generar_empresa_base` (usado para el año base 2023 de cualquier caso).
+  Ambos se sembraban SOLO con `semilla`, sin mezclar sector/segmento: como el modo típico/
+  atípico y el valor z de cada partida no dependen de huber/mad (solo su escalado posterior sí),
+  cualquier sector/segmento con la misma semilla consumía la secuencia de sorteos IDÉNTICA —
+  verificado numéricamente (z de `rotacion_activo` y de `gastos_personal_pct` en 2024
+  coincidiendo hasta 1e-9 entre sectores distintos con la misma semilla; `crecimiento_pleno_
+  objetivo` bit a bit idéntico entre los 27 sectores del catálogo para cualquier semilla, en
+  arquetipos sin `rango_crecimiento_pleno` propio). Corregido mezclando un hash estable
+  (`zlib.crc32`, no `hash()` de Python — varía entre procesos por PYTHONHASHSEED) de
+  sector+segmento en ambas semillas. Verificado tras el fix, en el barrido de los 27 sectores x
+  4 semillas: 0 valores duplicados entre sectores (antes, 27/27 idénticos por semilla en ambos
+  puntos). La intensidad NO se mezcla en ninguna de las dos: por diseño, la misma
+  semilla+sector+segmento con intensidades distintas debe seguir compartiendo el mismo "ruido de
+  fondo" de la empresa (verificado que se preserva tras el fix), y solo el empuje propio del
+  arquetipo debe variar con la intensidad. La corrección forzó a re-pinnear los valores exactos
+  de `test_reimplementacion_generica_reproduce_los_valores_de_referencia` (el mecanismo del
+  arquetipo 1 no cambió, solo el ruido de fondo que recibe).
 """
 
 from __future__ import annotations
@@ -1024,7 +1047,19 @@ def generar_evolucion_arquetipo(
     empresa_2023 = generar_empresa_base(sector, segmento, ventas_objetivo_2023, semilla, catalogo=catalogo)
     ejercicios: dict[int, EjercicioEmpresa] = {AÑO_BASE: _ejercicio_desde_empresa_base(empresa_2023)}
 
-    semilla_secuencia = np.random.SeedSequence(semilla)
+    # La semilla mezcla `semilla` con un hash estable (zlib.crc32, no `hash()` de Python) de
+    # sector+segmento — NO de intensidad: por diseño, la misma semilla+sector+segmento con
+    # distintas intensidades debe compartir el mismo "ruido de fondo" (crecimiento_pleno_objetivo
+    # cuando el arquetipo no define rango propio, y la PyG de 2024/2025 para las primitivas que
+    # el arquetipo no toca), y solo el empuje propio del arquetipo debe variar con la intensidad
+    # (ver test_intensidad_fuerte_tiene_mas_efecto_que_moderado). Sin este mezclado, CUALQUIER
+    # sector/segmento con la misma semilla partía del mismo estado de RNG: verificado que
+    # crecimiento_pleno_objetivo salía bit a bit idéntico entre sectores distintos que
+    # compartieran semilla, para cualquier arquetipo sin rango_crecimiento_pleno propio — mismo
+    # patrón de bug que el corregido en el sorteo de `nota_memoria` (ver más abajo), auditado
+    # explícitamente a raíz de aquel hallazgo.
+    entropia_sector = zlib.crc32(f"{sector}|{segmento}".encode("utf-8"))
+    semilla_secuencia = np.random.SeedSequence([semilla, entropia_sector])
     hijo_tendencia, hijo_2024, hijo_2025 = semilla_secuencia.spawn(3)
     rng_tendencia = np.random.default_rng(hijo_tendencia)
     rngs_pyg = {2024: np.random.default_rng(hijo_2024), 2025: np.random.default_rng(hijo_2025)}

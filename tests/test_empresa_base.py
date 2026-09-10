@@ -150,6 +150,31 @@ def test_reproducibilidad_misma_semilla(catalogo):
     assert a.modos == b.modos
 
 
+def test_sectores_distintos_no_comparten_ruido_pese_a_la_misma_semilla(catalogo):
+    # Regresión de un sesgo real: `rng` se sembraba solo con `semilla`, así que CUALQUIER sector
+    # con la misma semilla partía del mismo estado de RNG y consumía la misma secuencia de
+    # sorteos (el modo típico/atípico y el z de cada partida no dependen de huber/mad, solo su
+    # escalado posterior) — verificado con el z de rotacion_activo coincidiendo hasta 1e-9 entre
+    # sectores distintos. Corregido mezclando sector+segmento en la semilla (ver docstring del
+    # módulo). Barrido de los 27 sectores del catálogo x 4 semillas: 0 duplicados esperados.
+    import re
+
+    codigos = [re.search(r"\(([^()]+)\)\s*$", s).group(1) for s in catalogo["sector"].unique()]
+    for semilla in range(4):
+        z_por_sector = {}
+        for codigo in codigos:
+            fila = resolver_fila_sector(catalogo, codigo, "grandes_medianas")
+            empresa = generar_empresa_base(codigo, "grandes_medianas", VENTAS_OBJETIVO, semilla=semilla, catalogo=catalogo)
+            huber = fila["ratios.rotacion_activo.huber_9y"]
+            mad = fila["ratios.rotacion_activo.huber_scale_mad"]
+            z_por_sector[codigo] = round((empresa.rotacion_activo - huber) / mad, 9)
+        valores = list(z_por_sector.values())
+        assert len(set(valores)) == len(valores), (
+            f"semilla {semilla}: hay sectores con el mismo z de rotacion_activo -> "
+            f"comparten ruido de fondo: {z_por_sector}"
+        )
+
+
 def test_segmento_pequeñas_tambien_funciona(catalogo):
     empresa = generar_empresa_base("47.1", "pequeñas", 1_500_000.0, semilla=7, catalogo=catalogo)
     activo_eur = empresa.balance_eur["activo_no_corriente"] + empresa.balance_eur["activo_corriente"]
