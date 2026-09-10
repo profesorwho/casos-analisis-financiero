@@ -35,10 +35,18 @@ IDS_ESPERADOS = {
     "adquisicion": 18,
 }
 
+IDS_MEMORIA_PURA = {
+    "dependencia_pocos_clientes": 7,
+    "activo_mantenido_venta": 19,
+    "operaciones_vinculadas": 20,
+    "coberturas": 21,
+    "informacion_relevante_memoria": 22,
+}
 
-def test_carga_los_16_arquetipos_implementados():
+
+def test_carga_los_16_arquetipos_cuantitativos():
     arquetipos = cargar_arquetipos()
-    assert set(arquetipos) == set(IDS_ESPERADOS)
+    assert set(id_ for id_, d in arquetipos.items() if d.clase == "cuantitativo") == set(IDS_ESPERADOS)
     for id_, numero in IDS_ESPERADOS.items():
         assert arquetipos[id_].numero == numero
         assert len(arquetipos[id_].efectos) >= 1
@@ -47,6 +55,19 @@ def test_carga_los_16_arquetipos_implementados():
 def test_tipo_de_efecto_adquisicion():
     arquetipos = cargar_arquetipos()
     assert all(isinstance(e, EfectoAdquisicion) for e in arquetipos["adquisicion"].efectos)
+
+
+def test_carga_los_5_arquetipos_de_memoria_pura():
+    arquetipos = cargar_arquetipos()
+    assert set(id_ for id_, d in arquetipos.items() if d.clase == "memoria_pura") == set(IDS_MEMORIA_PURA)
+    for id_, numero in IDS_MEMORIA_PURA.items():
+        assert arquetipos[id_].numero == numero
+        assert arquetipos[id_].efectos == ()
+
+
+def test_carga_los_21_arquetipos_en_total():
+    arquetipos = cargar_arquetipos()
+    assert set(arquetipos) == set(IDS_ESPERADOS) | set(IDS_MEMORIA_PURA)
 
 
 def test_tipos_de_efecto_del_tercer_lote():

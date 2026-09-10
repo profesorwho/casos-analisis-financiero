@@ -160,6 +160,12 @@ class DefinicionArquetipo:
     nombre: str
     efectos: tuple[Efecto, ...]
     rango_crecimiento_pleno: dict[str, tuple[float, float]] | None = None
+    # "cuantitativo" (por defecto): tiene efectos numéricos, lo procesa
+    # motor.evolucion_arquetipo._evolucionar_un_año. "memoria_pura": arquetipos 7/19/20/21/22 —
+    # sin ninguna huella numérica, `efectos` vacío está permitido (ver cargar_arquetipos), la
+    # generación de texto vive en motor.memoria. Campo a nivel de ARQUETIPO, distinto del "tipo"
+    # de cada efecto individual (que solo tiene sentido para arquetipos cuantitativos).
+    clase: str = "cuantitativo"
 
 
 def _construir_efecto(bruto: dict, arquetipo_id: str, indice: int) -> Efecto:
@@ -227,10 +233,14 @@ def cargar_arquetipos(ruta: str | Path = RUTA_ARQUETIPOS_POR_DEFECTO) -> dict[st
         if arquetipo_id in arquetipos:
             raise ArquetipoInvalidoError(f"Arquetipo duplicado: '{arquetipo_id}'")
 
+        clase = bruto.get("clase", "cuantitativo")
+        if clase not in ("cuantitativo", "memoria_pura"):
+            raise ArquetipoInvalidoError(f"{arquetipo_id}: clase '{clase}' no reconocida (debe ser 'cuantitativo' o 'memoria_pura')")
+
         efectos = tuple(
             _construir_efecto(efecto_bruto, arquetipo_id, i) for i, efecto_bruto in enumerate(bruto.get("efectos", []))
         )
-        if not efectos:
+        if not efectos and clase != "memoria_pura":
             raise ArquetipoInvalidoError(f"{arquetipo_id}: no tiene ningún efecto")
 
         rango_bruto = bruto.get("rango_crecimiento_pleno")
@@ -244,6 +254,7 @@ def cargar_arquetipos(ruta: str | Path = RUTA_ARQUETIPOS_POR_DEFECTO) -> dict[st
             nombre=bruto.get("nombre", arquetipo_id),
             efectos=efectos,
             rango_crecimiento_pleno=rango_crecimiento_pleno,
+            clase=clase,
         )
 
     return arquetipos

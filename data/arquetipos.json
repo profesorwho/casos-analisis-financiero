@@ -232,6 +232,41 @@
           "direccion": 1
         }
       ]
+    },
+    {
+      "id": "dependencia_pocos_clientes",
+      "numero": 7,
+      "nombre": "Dependencia de pocos clientes",
+      "clase": "memoria_pura",
+      "efectos": []
+    },
+    {
+      "id": "activo_mantenido_venta",
+      "numero": 19,
+      "nombre": "Activo mantenido para la venta",
+      "clase": "memoria_pura",
+      "efectos": []
+    },
+    {
+      "id": "operaciones_vinculadas",
+      "numero": 20,
+      "nombre": "Operaciones vinculadas",
+      "clase": "memoria_pura",
+      "efectos": []
+    },
+    {
+      "id": "coberturas",
+      "numero": 21,
+      "nombre": "Coberturas",
+      "clase": "memoria_pura",
+      "efectos": []
+    },
+    {
+      "id": "informacion_relevante_memoria",
+      "numero": 22,
+      "nombre": "Información relevante en memoria",
+      "clase": "memoria_pura",
+      "efectos": []
     }
   ]
 }
