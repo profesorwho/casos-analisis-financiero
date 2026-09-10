@@ -8,7 +8,7 @@ import pytest
 
 from motor.arquetipos import cargar_arquetipos
 from motor.catalogo import cargar_y_validar_catalogo
-from motor.evolucion_arquetipo import generar_evolucion_arquetipo
+from motor.evolucion_arquetipo import NOTAS_MEMORIA_GASTOS_PERSONAL_AL_LIMITE, generar_evolucion_arquetipo
 
 VENTAS_OBJETIVO_2023 = 8_000_000.0
 SEMILLAS = range(8)
@@ -405,6 +405,260 @@ def test_margen_bruto_nunca_supera_el_techo_del_sector(catalogo, arquetipos):
             evolucion = _generar(catalogo, arquetipos, "mejora_margen", sector, semilla)
             for ejercicio in evolucion.ejercicios.values():
                 assert ejercicio.pyg_pct["margen_bruto"] <= techo_margen + 1e-6
+
+
+# --------------------------------------------------------------------------------------------
+# Segundo lote: arquetipos 3, 4, 6, 8, 10 (sección 2.24). 3 y 6 reutilizan el mecanismo de
+# masa_circulante sin ningún código nuevo; 4 ejercita la generalización de NOF con signo
+# (existencias/realizable ACTIVO vs. acreedores_comerciales PASIVO); 8 es un mecanismo nuevo
+# (reclasificacion_deuda); 10 ejercita el techo de plausibilidad de PyG de "base dinámica"
+# (gastos_personal -> baii, a diferencia de margen_bruto que es "100 - primitiva").
+# --------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("sector", SECTORES)
+def test_aumento_nof_balances_cuadran(catalogo, arquetipos, sector):
+    for semilla in SEMILLAS:
+        evolucion = _generar(catalogo, arquetipos, "aumento_nof", sector, semilla)
+        for ejercicio in evolucion.ejercicios.values():
+            assert _cuadra(ejercicio), f"semilla {semilla}, año {ejercicio.año}: descuadre"
+
+
+@pytest.mark.parametrize("sector", SECTORES)
+def test_aumento_clientes_solo_toca_realizable(catalogo, arquetipos, sector):
+    for semilla in SEMILLAS:
+        evolucion = _generar(catalogo, arquetipos, "aumento_clientes", sector, semilla, intensidad="moderado")
+        ej = evolucion.ejercicios
+        for año_anterior, año in ((2023, 2024), (2024, 2025)):
+            crecimiento_ventas = ej[año].ventas / ej[año_anterior].ventas - 1
+            for variable in ("existencias", "acreedores_comerciales"):
+                proporcional = ej[año_anterior].balance_eur[variable] * (1 + crecimiento_ventas)
+                assert ej[año].balance_eur[variable] == pytest.approx(proporcional, rel=1e-9)
+            realizable_proporcional = ej[año_anterior].balance_eur["realizable"] * (1 + crecimiento_ventas)
+            assert ej[año].balance_eur["realizable"] >= realizable_proporcional - 1e-6
+
+
+@pytest.mark.parametrize("sector", SECTORES)
+def test_deterioro_ciclo_caja_balances_cuadran(catalogo, arquetipos, sector):
+    for semilla in SEMILLAS:
+        evolucion = _generar(catalogo, arquetipos, "deterioro_ciclo_caja", sector, semilla)
+        for ejercicio in evolucion.ejercicios.values():
+            assert _cuadra(ejercicio), f"semilla {semilla}, año {ejercicio.año}: descuadre"
+
+
+@pytest.mark.parametrize("sector", SECTORES)
+def test_deterioro_ciclo_caja_realizable_sube_y_acreedores_baja(catalogo, arquetipos, sector):
+    # Huella opuesta simultánea: realizable (activo) sube más que ventas, acreedores_comerciales
+    # (pasivo) sube menos — las dos presionan la NOF en la misma dirección (más déficit de caja).
+    for semilla in SEMILLAS:
+        evolucion = _generar(catalogo, arquetipos, "deterioro_ciclo_caja", sector, semilla)
+        ej = evolucion.ejercicios
+        for año_anterior, año in ((2023, 2024), (2024, 2025)):
+            crecimiento_ventas = ej[año].ventas / ej[año_anterior].ventas - 1
+            realizable_proporcional = ej[año_anterior].balance_eur["realizable"] * (1 + crecimiento_ventas)
+            acreedores_proporcional = ej[año_anterior].balance_eur["acreedores_comerciales"] * (1 + crecimiento_ventas)
+            assert ej[año].balance_eur["realizable"] >= realizable_proporcional - 1e-6
+            assert ej[año].balance_eur["acreedores_comerciales"] <= acreedores_proporcional + 1e-6
+
+
+@pytest.mark.parametrize("sector", SECTORES)
+def test_refinanciacion_balances_cuadran(catalogo, arquetipos, sector):
+    for semilla in SEMILLAS:
+        evolucion = _generar(catalogo, arquetipos, "refinanciacion", sector, semilla)
+        for ejercicio in evolucion.ejercicios.values():
+            assert _cuadra(ejercicio), f"semilla {semilla}, año {ejercicio.año}: descuadre"
+
+
+@pytest.mark.parametrize("sector", SECTORES)
+def test_refinanciacion_no_altera_la_deuda_financiera_total(catalogo, arquetipos, sector):
+    # Reclasifica largo/corto plazo sin cambiar el total: una renegociación cambia el
+    # vencimiento, no el importe (ver EfectoReclasificacionDeuda en motor/arquetipos.py).
+    for semilla in SEMILLAS:
+        evolucion = _generar(catalogo, arquetipos, "refinanciacion", sector, semilla)
+        ej = evolucion.ejercicios
+        for año_anterior, año in ((2023, 2024), (2024, 2025)):
+            crecimiento_ventas = ej[año].ventas / ej[año_anterior].ventas - 1
+            deuda_total_proporcional = (
+                ej[año_anterior].balance_eur["deudas_fin_largo"] + ej[año_anterior].balance_eur["deudas_fin_corto"]
+            ) * (1 + crecimiento_ventas)
+            deuda_total_real = ej[año].balance_eur["deudas_fin_largo"] + ej[año].balance_eur["deudas_fin_corto"]
+            assert deuda_total_real == pytest.approx(deuda_total_proporcional, abs=1.0)
+
+
+@pytest.mark.parametrize("sector", SECTORES)
+def test_refinanciacion_sube_la_proporcion_a_largo_plazo(catalogo, arquetipos, sector):
+    for semilla in SEMILLAS:
+        evolucion = _generar(catalogo, arquetipos, "refinanciacion", sector, semilla, intensidad="fuerte")
+        ej = evolucion.ejercicios
+        for año_anterior, año in ((2023, 2024), (2024, 2025)):
+            calidad_anterior = ej[año_anterior].balance_eur["deudas_fin_largo"] / (
+                ej[año_anterior].balance_eur["deudas_fin_largo"] + ej[año_anterior].balance_eur["deudas_fin_corto"]
+            )
+            calidad_actual = ej[año].balance_eur["deudas_fin_largo"] / (
+                ej[año].balance_eur["deudas_fin_largo"] + ej[año].balance_eur["deudas_fin_corto"]
+            )
+            assert calidad_actual >= calidad_anterior - 1e-9
+
+
+@pytest.mark.parametrize("sector", SECTORES)
+def test_mejora_ebitda_balances_cuadran(catalogo, arquetipos, sector):
+    for semilla in SEMILLAS:
+        evolucion = _generar(catalogo, arquetipos, "mejora_ebitda", sector, semilla)
+        for ejercicio in evolucion.ejercicios.values():
+            assert _cuadra(ejercicio), f"semilla {semilla}, año {ejercicio.año}: descuadre"
+
+
+@pytest.mark.parametrize("sector", SECTORES)
+def test_mejora_ebitda_gastos_personal_baja_salvo_limite_por_ruido_de_base(catalogo, arquetipos, sector):
+    # A diferencia de mejora_margen (base fija, ver test_mejora_margen_...), aquí NO se puede
+    # exigir que gastos_personal_pct baje siempre: la base de baii (valor_añadido, amortizaciones,
+    # resultado_extraordinario) se sortea de nuevo cada año, independiente del arquetipo. La
+    # contención (_limitar_gastos_personal_por_baii) amortigua la intensidad del propio arquetipo
+    # antes de invertir su sentido — solo lo invierte (sube gastos_personal por encima del año
+    # anterior) cuando ni siquiera con intensidad cero bastaría, es decir, cuando el desbordamiento
+    # viene del ruido de la base ese año, no del arquetipo. Eso es exactamente lo que marca
+    # `pyg_contencion_al_limite`. Cuantificado en la prueba de estrés completa (ver
+    # test_mejora_ebitda_las_subidas_de_gastos_personal_siempre_coinciden_con_el_limite_por_ruido):
+    # de 316 activaciones, 173 (54,7%) se resuelven amortiguando sin invertir el sentido, 143
+    # (45,3%) sí lo invierten — y las 143 coinciden EXACTAMENTE con pyg_contencion_al_limite=True.
+    for semilla in SEMILLAS:
+        evolucion = _generar(catalogo, arquetipos, "mejora_ebitda", sector, semilla)
+        ej = evolucion.ejercicios
+        for año_anterior, año in ((2023, 2024), (2024, 2025)):
+            sube = ej[año].pyg_pct["gastos_personal"] > ej[año_anterior].pyg_pct["gastos_personal"] + 1e-9
+            assert sube == ej[año].pyg_contencion_al_limite, (
+                f"sector {sector}, semilla {semilla}, año {año}: sube={sube} pero "
+                f"pyg_contencion_al_limite={ej[año].pyg_contencion_al_limite}"
+            )
+        assert ej[2024].modos["pyg.gastos_personal"] == "arquetipo"
+        assert ej[2025].modos["pyg.gastos_personal"] == "arquetipo"
+
+
+def test_mejora_ebitda_baii_respeta_el_techo_de_plausibilidad_del_sector(catalogo, arquetipos):
+    # Regresión del hallazgo del stress test: sin _limitar_gastos_personal_por_baii, 316 de 648
+    # ejercicios evaluados (48.8%) superaban huber_9y + 3·MAD de baii_pct del sector sin ninguna
+    # señal. Barrido representativo (27 sectores x 3 intensidades x 4 semillas = 324 casos).
+    import re
+
+    from motor.empresa_base import resolver_fila_sector
+    from motor.evolucion_arquetipo import N_DESVIACIONES_TECHO_PYG
+
+    codigos = [re.search(r"\(([^()]+)\)\s*$", s).group(1) for s in catalogo["sector"].unique()]
+    por_encima_sin_señal = []
+    activaciones = 0
+    for codigo in codigos:
+        fila = resolver_fila_sector(catalogo, codigo, "grandes_medianas")
+        techo_baii = fila["pyg.baii_pct.huber_9y"] + N_DESVIACIONES_TECHO_PYG * fila["pyg.baii_pct.huber_scale_mad"]
+        for intensidad in ("leve", "moderado", "fuerte"):
+            for semilla in range(4):
+                evolucion = generar_evolucion_arquetipo(
+                    codigo,
+                    "grandes_medianas",
+                    VENTAS_OBJETIVO_2023,
+                    semilla=semilla,
+                    intensidad=intensidad,
+                    arquetipo_id="mejora_ebitda",
+                    catalogo=catalogo,
+                    arquetipos=arquetipos,
+                )
+                for año in (2024, 2025):
+                    ej = evolucion.ejercicios[año]
+                    if ej.riesgo_plausibilidad_pyg:
+                        activaciones += 1
+                    if ej.pyg_pct["baii"] > techo_baii + 1e-6 and not ej.riesgo_plausibilidad_pyg:
+                        por_encima_sin_señal.append((codigo, intensidad, semilla, año, ej.pyg_pct["baii"], techo_baii))
+    assert activaciones > 0, "la muestra no incluyó ningún caso donde se activara la contención: ajustar el barrido"
+    assert not por_encima_sin_señal, f"{len(por_encima_sin_señal)} casos sin señalizar: {por_encima_sin_señal[:10]}"
+
+
+def test_mejora_ebitda_las_subidas_de_gastos_personal_siempre_coinciden_con_el_limite_por_ruido(catalogo, arquetipos):
+    # Regresión del hallazgo del stress test (ver docstring del módulo, sección "base
+    # dinámica"): a diferencia de margen_bruto, la base de baii se sortea de nuevo cada año, así
+    # que el objetivo de continuidad de gastos_personal a veces requiere subirlo (en vez de
+    # bajarlo) para no perforar el techo — pero SOLO cuando amortiguar la intensidad del propio
+    # arquetipo a cero ya no basta (`pyg_contencion_al_limite=True`). De 648 transiciones
+    # evaluadas (27 sectores x 3 intensidades x 4 semillas x 2 años), 143 (22,1%) suben — las 143
+    # coinciden EXACTAMENTE con pyg_contencion_al_limite=True, ni una menos ni una más: nunca una
+    # subida sin que amortiguar la intensidad fuera insuficiente, y nunca pyg_contencion_al_limite
+    # activado sin que realmente suba.
+    import re
+
+    codigos = [re.search(r"\(([^()]+)\)\s*$", s).group(1) for s in catalogo["sector"].unique()]
+    discrepancias = []
+    subidas_totales = 0
+    for codigo in codigos:
+        for intensidad in ("leve", "moderado", "fuerte"):
+            for semilla in range(4):
+                evolucion = generar_evolucion_arquetipo(
+                    codigo,
+                    "grandes_medianas",
+                    VENTAS_OBJETIVO_2023,
+                    semilla=semilla,
+                    intensidad=intensidad,
+                    arquetipo_id="mejora_ebitda",
+                    catalogo=catalogo,
+                    arquetipos=arquetipos,
+                )
+                ej = evolucion.ejercicios
+                for año_anterior, año in ((2023, 2024), (2024, 2025)):
+                    sube = ej[año].pyg_pct["gastos_personal"] > ej[año_anterior].pyg_pct["gastos_personal"] + 1e-9
+                    if sube:
+                        subidas_totales += 1
+                    if sube != ej[año].pyg_contencion_al_limite:
+                        discrepancias.append((codigo, intensidad, semilla, año, sube, ej[año].pyg_contencion_al_limite))
+    assert subidas_totales > 0, "la muestra no incluyó ningún caso de subida: ajustar el barrido"
+    assert not discrepancias, f"{len(discrepancias)} discrepancias entre subida y pyg_contencion_al_limite: {discrepancias[:10]}"
+
+
+def test_mejora_ebitda_nota_memoria_solo_aparece_con_pyg_contencion_al_limite(catalogo, arquetipos):
+    for semilla in SEMILLAS:
+        evolucion = _generar(catalogo, arquetipos, "mejora_ebitda", "24.1", semilla)
+        for ejercicio in evolucion.ejercicios.values():
+            if ejercicio.pyg_contencion_al_limite:
+                assert ejercicio.nota_memoria is not None
+                assert ejercicio.nota_memoria in NOTAS_MEMORIA_GASTOS_PERSONAL_AL_LIMITE
+            else:
+                assert ejercicio.nota_memoria is None
+
+
+def test_mejora_ebitda_nota_memoria_es_reproducible_con_la_misma_semilla(catalogo, arquetipos):
+    # Misma semilla (y mismo resto de parámetros) -> siempre la misma redacción.
+    for semilla in SEMILLAS:
+        primera = _generar(catalogo, arquetipos, "mejora_ebitda", "24.1", semilla)
+        segunda = _generar(catalogo, arquetipos, "mejora_ebitda", "24.1", semilla)
+        for año in (2024, 2025):
+            assert primera.ejercicios[año].nota_memoria == segunda.ejercicios[año].nota_memoria
+
+
+def test_mejora_ebitda_nota_memoria_varia_entre_las_5_opciones(catalogo, arquetipos):
+    # A lo largo de los 143 casos con pyg_contencion_al_limite=True (barrido representativo: 27
+    # sectores x 3 intensidades x 4 semillas x 2 años = 648 transiciones), deben aparecer varias
+    # de las 5 redacciones alternativas, no una única repetida siempre.
+    import re
+
+    codigos = [re.search(r"\(([^()]+)\)\s*$", s).group(1) for s in catalogo["sector"].unique()]
+    notas_vistas = set()
+    casos_con_nota = 0
+    for codigo in codigos:
+        for intensidad in ("leve", "moderado", "fuerte"):
+            for semilla in range(4):
+                evolucion = generar_evolucion_arquetipo(
+                    codigo,
+                    "grandes_medianas",
+                    VENTAS_OBJETIVO_2023,
+                    semilla=semilla,
+                    intensidad=intensidad,
+                    arquetipo_id="mejora_ebitda",
+                    catalogo=catalogo,
+                    arquetipos=arquetipos,
+                )
+                for año in (2024, 2025):
+                    ej = evolucion.ejercicios[año]
+                    if ej.pyg_contencion_al_limite:
+                        casos_con_nota += 1
+                        notas_vistas.add(ej.nota_memoria)
+    assert casos_con_nota > 0, "la muestra no incluyó ningún caso con pyg_contencion_al_limite: ajustar el barrido"
+    assert len(notas_vistas) > 1, f"solo apareció una redacción en {casos_con_nota} casos: {notas_vistas}"
 
 
 def test_margen_bruto_sin_contener_queda_registrado(catalogo, arquetipos):

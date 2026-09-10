@@ -78,6 +78,87 @@
           "direccion": -1
         }
       ]
+    },
+    {
+      "id": "aumento_nof",
+      "numero": 3,
+      "nombre": "Aumento de NOF",
+      "efectos": [
+        {
+          "tipo": "masa_circulante",
+          "variable": "existencias",
+          "formula": "rotacion",
+          "ratio_catalogo": "ratios.rotacion_existencias",
+          "direccion": -1
+        },
+        {
+          "tipo": "masa_circulante",
+          "variable": "realizable",
+          "formula": "dias",
+          "ratio_catalogo": "ratios.cobro_dias",
+          "direccion": 1
+        }
+      ]
+    },
+    {
+      "id": "deterioro_ciclo_caja",
+      "numero": 4,
+      "nombre": "Deterioro del ciclo de caja",
+      "efectos": [
+        {
+          "tipo": "masa_circulante",
+          "variable": "realizable",
+          "formula": "dias",
+          "ratio_catalogo": "ratios.cobro_dias",
+          "direccion": 1
+        },
+        {
+          "tipo": "masa_circulante",
+          "variable": "acreedores_comerciales",
+          "formula": "dias",
+          "ratio_catalogo": "ratios.pago_dias",
+          "direccion": -1
+        }
+      ]
+    },
+    {
+      "id": "aumento_clientes",
+      "numero": 6,
+      "nombre": "Aumento de clientes (base)",
+      "efectos": [
+        {
+          "tipo": "masa_circulante",
+          "variable": "realizable",
+          "formula": "dias",
+          "ratio_catalogo": "ratios.cobro_dias",
+          "direccion": 1
+        }
+      ]
+    },
+    {
+      "id": "refinanciacion",
+      "numero": 8,
+      "nombre": "Refinanciación",
+      "efectos": [
+        {
+          "tipo": "reclasificacion_deuda",
+          "ratio_catalogo": "ratios.calidad_deuda",
+          "direccion": 1
+        }
+      ]
+    },
+    {
+      "id": "mejora_ebitda",
+      "numero": 10,
+      "nombre": "Mejora de EBITDA",
+      "efectos": [
+        {
+          "tipo": "pyg_primitiva",
+          "primitiva": "gastos_personal",
+          "ratio_catalogo": "pyg.gastos_personal_pct",
+          "direccion": -1
+        }
+      ]
     }
   ]
 }

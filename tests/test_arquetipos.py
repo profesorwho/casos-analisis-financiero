@@ -7,6 +7,7 @@ from motor.arquetipos import (
     EfectoApalancamiento,
     EfectoMasaCirculante,
     EfectoPygPrimitiva,
+    EfectoReclasificacionDeuda,
     EfectoTesoreria,
     RUTA_ARQUETIPOS_POR_DEFECTO,
     cargar_arquetipos,
@@ -18,15 +19,36 @@ IDS_ESPERADOS = {
     "apalancamiento": 9,
     "mejora_margen": 11,
     "riesgo_liquidez_pese_beneficio": 15,
+    "aumento_nof": 3,
+    "deterioro_ciclo_caja": 4,
+    "aumento_clientes": 6,
+    "refinanciacion": 8,
+    "mejora_ebitda": 10,
 }
 
 
-def test_carga_los_5_arquetipos_implementados():
+def test_carga_los_10_arquetipos_implementados():
     arquetipos = cargar_arquetipos()
     assert set(arquetipos) == set(IDS_ESPERADOS)
     for id_, numero in IDS_ESPERADOS.items():
         assert arquetipos[id_].numero == numero
         assert len(arquetipos[id_].efectos) >= 1
+
+
+def test_tipos_de_efecto_del_segundo_lote():
+    arquetipos = cargar_arquetipos()
+    assert all(isinstance(e, EfectoMasaCirculante) for e in arquetipos["aumento_nof"].efectos)
+    assert all(isinstance(e, EfectoMasaCirculante) for e in arquetipos["deterioro_ciclo_caja"].efectos)
+    assert all(isinstance(e, EfectoMasaCirculante) for e in arquetipos["aumento_clientes"].efectos)
+    assert all(isinstance(e, EfectoPygPrimitiva) for e in arquetipos["mejora_ebitda"].efectos)
+    assert all(isinstance(e, EfectoReclasificacionDeuda) for e in arquetipos["refinanciacion"].efectos)
+
+
+def test_deterioro_ciclo_caja_toca_realizable_y_acreedores_con_signos_opuestos():
+    arquetipos = cargar_arquetipos()
+    efectos = {e.variable: e.direccion for e in arquetipos["deterioro_ciclo_caja"].efectos}
+    assert efectos["realizable"] == 1
+    assert efectos["acreedores_comerciales"] == -1
 
 
 def test_tipos_de_efecto_son_los_esperados():

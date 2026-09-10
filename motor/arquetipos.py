@@ -19,8 +19,11 @@ from pathlib import Path
 
 RUTA_ARQUETIPOS_POR_DEFECTO = Path(__file__).resolve().parent.parent / "data" / "arquetipos.json"
 
-TIPOS_EFECTO_VALIDOS = frozenset({"masa_circulante", "pyg_primitiva", "apalancamiento", "tesoreria"})
+TIPOS_EFECTO_VALIDOS = frozenset(
+    {"masa_circulante", "pyg_primitiva", "apalancamiento", "tesoreria", "reclasificacion_deuda"}
+)
 FORMULAS_MASA_CIRCULANTE_VALIDAS = frozenset({"rotacion", "dias"})
+VARIABLES_MASA_CIRCULANTE_VALIDAS = frozenset({"existencias", "realizable", "acreedores_comerciales"})
 
 
 class ArquetipoInvalidoError(ValueError):
@@ -74,7 +77,26 @@ class EfectoTesoreria:
     direccion: int
 
 
-Efecto = EfectoMasaCirculante | EfectoPygPrimitiva | EfectoApalancamiento | EfectoTesoreria
+@dataclass(frozen=True)
+class EfectoReclasificacionDeuda:
+    """Reclasifica deuda financiera entre largo y corto plazo (calidad_deuda = deudas_fin_largo
+    / deuda_financiera_total) SIN alterar la deuda financiera total — una renegociación cambia
+    el vencimiento, no el importe. Distinto de "apalancamiento" (que sí sube la deuda total) y
+    de los efectos de circulante: no toca activo, ni PN, ni el total de pasivo, así que no
+    interactúa con la contención de endeudamiento (el ratio total no se mueve por este efecto).
+    `direccion` +1 = más deuda a largo (mejora la calidad/vencimiento, refinanciación exitosa)."""
+
+    ratio_catalogo: str
+    direccion: int
+
+
+Efecto = (
+    EfectoMasaCirculante
+    | EfectoPygPrimitiva
+    | EfectoApalancamiento
+    | EfectoTesoreria
+    | EfectoReclasificacionDeuda
+)
 
 
 @dataclass(frozen=True)
@@ -103,7 +125,7 @@ def _construir_efecto(bruto: dict, arquetipo_id: str, indice: int) -> Efecto:
     if tipo == "masa_circulante":
         variable = bruto.get("variable")
         formula = bruto.get("formula")
-        if variable not in ("existencias", "realizable"):
+        if variable not in VARIABLES_MASA_CIRCULANTE_VALIDAS:
             raise ArquetipoInvalidoError(f"{arquetipo_id}: efecto #{indice} variable='{variable}' no reconocida")
         if formula not in FORMULAS_MASA_CIRCULANTE_VALIDAS:
             raise ArquetipoInvalidoError(f"{arquetipo_id}: efecto #{indice} formula='{formula}' no reconocida")
@@ -118,7 +140,10 @@ def _construir_efecto(bruto: dict, arquetipo_id: str, indice: int) -> Efecto:
     if tipo == "apalancamiento":
         return EfectoApalancamiento(ratio_catalogo=ratio_catalogo, direccion=direccion)
 
-    return EfectoTesoreria(ratio_catalogo=ratio_catalogo, direccion=direccion)
+    if tipo == "tesoreria":
+        return EfectoTesoreria(ratio_catalogo=ratio_catalogo, direccion=direccion)
+
+    return EfectoReclasificacionDeuda(ratio_catalogo=ratio_catalogo, direccion=direccion)
 
 
 def cargar_arquetipos(ruta: str | Path = RUTA_ARQUETIPOS_POR_DEFECTO) -> dict[str, DefinicionArquetipo]:
