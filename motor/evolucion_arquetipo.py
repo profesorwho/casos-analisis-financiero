@@ -10,12 +10,12 @@ Motor GENÉRICO: qué arquetipo se aplica es un dato (`data/arquetipos.json`, ca
 - **Lo específico de cada arquetipo**: qué variable mueve, en qué dirección y contra qué
   ratio ancla — vive SOLO en `data/arquetipos.json`, no en código.
 
-No todos los arquetipos cuantitativos de la sección 2.24 encajan en las 7 formas ya
+No todos los arquetipos cuantitativos de la sección 2.24 encajan en las 8 formas ya
 implementadas (masa_circulante, pyg_primitiva, apalancamiento, tesoreria, reclasificacion_deuda,
-evento_puntual, capex) — ver el informe de clasificación en el mensaje que acompaña a cada
-commit para el detalle de cuáles sí y cuáles necesitarían una forma nueva (o no aplican al
-motor en absoluto, como el arquetipo 13). Los arquetipos cualitativos puros (7, 19, 20, 21, 22)
-no pasan por este mecanismo en absoluto.
+evento_puntual, capex, adquisicion) — ver el informe de clasificación en el mensaje que acompaña
+a cada commit para el detalle de cuáles sí y cuáles necesitarían una forma nueva (o no aplican
+al motor en absoluto, como el arquetipo 13). Los arquetipos cualitativos puros (7, 19, 20, 21,
+22) no pasan por este mecanismo en absoluto.
 
 Sin matriz de compatibilidad (combinación de varios arquetipos a la vez), sin EFE/ECPN
 completos, sin dividendos.
@@ -359,6 +359,84 @@ había que fijar para poder implementar):
   porque no estaba pedida y añadiría una capa de ingeniería no solicitada; queda como posible
   mejora futura si el caso de uso lo requiere.
 
+- **Arquetipo 18 (Adquisición) — el más distinto de todos los implementados: un salto
+  DISCRETO y EXÓGENO en un único ejercicio, no una desviación de continuidad.** Mecanismo nuevo
+  (`EfectoAdquisicion`), con varias decisiones deliberadamente distintas del resto:
+
+  **Año fijo, no sorteado (`AÑO_ADQUISICION = 2024`), a diferencia del arquetipo 12.** El
+  arquetipo 12 (resultado extraordinario) sortea el año 50/50 porque no importa cuál de los dos
+  elija: el suceso solo necesita desaparecer al año siguiente. El 18 SÍ tiene un requisito
+  temporal explícito de la guía docente (ficha 18): el alumnado debe poder leer 2025 como un
+  ejercicio completo con la unidad YA integrada. Eso solo es posible si la operación ocurre en el
+  PRIMER año del arquetipo — sorteada, la mitad de los casos caerían en 2025 y nunca se vería un
+  año post-integración dentro de la ventana de 3 ejercicios. Por eso es una constante fija, no un
+  sorteo: no hace falta ningún RNG dedicado para el año (a diferencia del 12).
+
+  **Magnitud del salto de activo_no_corriente**: `intensidad_base × activo total de 2023`
+  (antes de la operación) — sin escalar por fracción del año (`intensidad_base`, no
+  `intensidad_efectiva`: es un suceso puntual, mismo criterio que el arquetipo 12). Interpretar
+  directamente `INTENSIDAD_BASE` (0,15/0,30/0,50) como fracción del activo total previo es fiel
+  a la escala real de una operación de M&A "significativa" (15-50% del balance no es descabellado
+  para una adquisición relevante) y evita anclar a un ratio del catálogo cuyo Huber no representa
+  nada parecido a "tamaño típico de una compra" — no existe tal ratio en la sección 2.23.
+  `ratio_catalogo` (`balance.activo_no_corriente`) queda solo como trazabilidad, igual que en
+  `tesoreria` y `evento_puntual` — no se usa su Huber en la fórmula. El modelo no desglosa un
+  fondo de comercio como partida de balance separada (no existe esa categoría en `MASAS_BALANCE`
+  ni en el resto del motor): el fondo de comercio, si procede, queda implícito dentro del propio
+  incremento de `activo_no_corriente` — añadir una partida nueva solo para esto habría exigido
+  tocar `empresa_base.py` y cada consumidor del balance, ingeniería desproporcionada para lo que
+  pide la sección 2.24 (que no exige desglosarlo como cifra, solo mencionarlo "si procede" en la
+  memoria — ver más abajo).
+
+  **Financiación: caja primero, deuda a largo el resto** — mismo orden de prioridad que
+  `_deficit_y_deuda_corto` para el déficit de NOF, pero la deuda nueva va a LARGO plazo (una
+  compra de inmovilizado, no un déficit de circulante), igual que la decisión ya tomada para el
+  arquetipo 17 ("capex"). Sin restar nada de patrimonio_neto (a diferencia de "apalancamiento"):
+  financia la compra del propio activo, no una distribución — el cuadre no necesita ningún
+  cálculo en forma cerrada, activo y pasivo/caja se mueven exactamente lo mismo. La contención de
+  endeudamiento (chequeo incondicional ya existente) se aplica sin cambios: verificado en pruebas
+  de estrés (972 ejercicios, 324 casos) que se activa en 70 casos (7,2%), el 100% correctamente
+  señalizado, y el 100% de esas activaciones queda en `contencion_al_limite=True` (sin palanca de
+  circulante que amortiguar) — mismo patrón ya aceptado para 9/11/15/16/17, no una corrección
+  fallida.
+
+  **Ventas — orgánicas vs. inorgánicas, expuestas por separado (`EjercicioEmpresa.
+  ventas_organicas_eur`/`ventas_inorganicas_eur`, `None` salvo en AÑO_ADQUISICION).** La guía
+  docente (ficha 18) pide explícitamente poder separar "cuánto ha crecido el negocio que ya
+  existía" de "cuánto aporta la pieza adquirida" — así que no basta con una cifra combinada.
+  `ventas_organicas_eur` es exactamente lo que habrían sido las ventas SIN el arquetipo (mismo
+  `crecimiento_ventas` de fondo que ya usa cualquier otro arquetipo sin huella de ventas propia).
+  `ventas_inorganicas_eur` se ancla a `ratios.rotacion_activo` del sector (ventas/activo total
+  típico) aplicado sobre el propio importe adquirido — asume que la unidad comprada opera con una
+  eficiencia de activo similar a la del sector, en vez de un número de ventas arbitrario y
+  desconectado del tamaño de la operación. El resto del circulante (existencias, realizable,
+  acreedores_comerciales) crece proporcional a las ventas YA COMBINADAS (orgánicas + inorgánicas),
+  sin distinguir de dónde viene cada venta — decisión deliberada: la huella de la sección 2.24
+  para este arquetipo no pide separar el circulante de la unidad adquirida, y una empresa
+  combinada más grande necesita más circulante en conjunto, venga la venta de donde venga.
+  2025 no repite la inyección: crece de forma puramente proporcional desde la base YA ampliada de
+  2024 (sin código adicional, automático — mismo mecanismo que cualquier año sin efecto activo).
+
+  **Memoria OBLIGATORIA, no opcional** (a diferencia de `nota_memoria` en el resto de usos:
+  10 la activa solo en un caso límite raro, 16 cada año que su efecto actúa) — aquí se genera
+  SIEMPRE que el arquetipo esté activo, en AÑO_ADQUISICION, porque el arquetipo consiste
+  precisamente en una operación que la memoria debe explicar: no es una señal de plausibilidad,
+  es parte de la propia huella (sección 2.24: "Memoria obligatoria"). Reutiliza `rngs_nota` (ya
+  independiente por sector+segmento+intensidad+año) con un pool propio de 5 redacciones
+  (`NOTAS_MEMORIA_ADQUISICION`, escritas para este arquetipo) — verificado en pruebas de estrés:
+  presente en el 100% de los 324 casos, nunca fuera de AÑO_ADQUISICION, las 5 redacciones
+  aparecen todas, reproducible por semilla.
+
+  **Plausibilidad general**: 0 descuadres en 972 ejercicios evaluados; el incremento de
+  activo_no_corriente coincide exactamente (rel=1e-6) con `intensidad_base × activo total 2023`
+  en los 324 casos, confirmando que la magnitud no se ve alterada por ningún otro mecanismo. En 3
+  de los 324 casos (sector con `disponible` alto y `otras_deudas_corto` bajo de partida) el
+  drenaje de caja de la operación hizo que el plug general de cuadre (ya existente, "red de
+  seguridad barata" para cuando `otras_deudas_corto` pediría quedar negativo) redirigiera un
+  remanente hacia `disponible` — comportamiento del mecanismo de cuadre PRE-EXISTENTE, no algo
+  nuevo de este arquetipo; el balance sigue cuadrando exacto en los 3 casos, no es un error, solo
+  una interacción más visible aquí por la magnitud del salto.
+
 - **Trazabilidad (sección 2.15).** `EvolucionArquetipo` guarda `arquetipo`, `intensidad`,
   `semilla`, `catalogo_version` (hash del CSV del catálogo usado — se deriva del propio
   archivo, no de un número mantenido a mano) y `pgc_version` (fijo por ahora: solo hay una
@@ -399,6 +477,7 @@ import pandas as pd
 
 from motor.arquetipos import (
     DefinicionArquetipo,
+    EfectoAdquisicion,
     EfectoApalancamiento,
     EfectoCapex,
     EfectoEventoPuntual,
@@ -420,6 +499,13 @@ from motor.empresa_base import _completar_pyg_con_deuda, _generar_pyg_hasta_baii
 
 AÑOS = (2023, 2024, 2025)
 AÑO_BASE = 2023
+
+# Año FIJO (no sorteado, a diferencia de EfectoEventoPuntual) del suceso del arquetipo 18
+# ("Adquisición"): siempre 2024, nunca 2025. Decisión deliberada, distinta del criterio del
+# arquetipo 12 — ver docstring del módulo, sección "Arquetipo 18", para el porqué (la guía
+# docente exige que 2025 se pueda leer como un año completo con la unidad ya integrada, lo que
+# solo es posible si la operación ocurre en el primer año del arquetipo, no en el segundo).
+AÑO_ADQUISICION = 2024
 
 # Trazabilidad (sección 2.15): única versión normativa en juego por ahora.
 PGC_VERSION = "PGC RD 1514/2007"
@@ -554,6 +640,33 @@ NOTAS_MEMORIA_RIESGO_REFINANCIACION = (
     "clasificada a corto plazo hasta la firma del nuevo acuerdo.",
 )
 
+# Redacciones alternativas para `nota_memoria` del arquetipo 18 ("Adquisición") — a diferencia de
+# las anteriores (10: caso límite raro; 16: huella habitual pero condicionada a que el efecto
+# actúe ese año), esta nota es OBLIGATORIA: se genera SIEMPRE que el arquetipo esté activo, en el
+# año de la operación (AÑO_ADQUISICION), porque el arquetipo consiste precisamente en una
+# operación que la memoria debe explicar — no es una señal de plausibilidad, es parte de la
+# propia huella. Mismo patrón de selección reproducible (`rngs_nota`), redactadas directamente
+# para este arquetipo: cada una apunta a un aspecto distinto y verificable de una combinación de
+# negocios (fecha de toma de control, fondo de comercio, compra de activos/cartera a un
+# competidor, estrategia de crecimiento inorgánico, forma de financiación).
+NOTAS_MEMORIA_ADQUISICION = (
+    "Durante el ejercicio la sociedad formalizó la adquisición de una unidad de negocio "
+    "complementaria a su actividad principal, integrada en el perímetro de consolidación desde "
+    "la fecha de toma de control.",
+    "La operación de adquisición realizada en el ejercicio incluye el reconocimiento de un "
+    "fondo de comercio derivado del exceso del precio pagado sobre el valor razonable de los "
+    "activos netos identificables adquiridos.",
+    "La sociedad adquirió durante el ejercicio los activos y la cartera de clientes de un "
+    "competidor local, ampliando su capacidad productiva e instalada sin necesidad de "
+    "inversión orgánica adicional.",
+    "En el marco de su estrategia de crecimiento inorgánico, la sociedad culminó en el "
+    "ejercicio la compra de una compañía del sector, cuyos activos y resultados se incorporan "
+    "a las cuentas anuales desde la fecha de adquisición.",
+    "La combinación de negocios formalizada en el ejercicio se financió mediante una "
+    "combinación de recursos propios y nueva financiación bancaria a largo plazo, conforme al "
+    "acuerdo de compraventa suscrito.",
+)
+
 # Mapeo ESTRUCTURAL (no específico de ningún arquetipo): qué masas de circulante puede tocar un
 # efecto masa_circulante son activo (su aumento incrementa la NOF: existencias, clientes) y
 # cuáles son pasivo (su aumento la REDUCE: más financiación de proveedores, menos caja
@@ -597,7 +710,10 @@ class EjercicioEmpresa:
     pyg_contencion_al_limite: bool = False  # True si un efecto de "base dinámica" (baii) tuvo que invertir su
     # sentido para no rebasar el techo/suelo del sector — amortiguar su propia intensidad a cero no bastaba
     # (el desbordamiento venía del ruido de la base ese año, no del arquetipo). Ver docstring del módulo.
-    nota_memoria: str | None = None  # cobertura narrativa de negocio cuando pyg_contencion_al_limite=True
+    nota_memoria: str | None = None  # cobertura narrativa de negocio — caso límite raro (10), huella
+    # habitual del propio arquetipo (16), u OBLIGATORIA siempre que el arquetipo esté activo (18)
+    ventas_organicas_eur: float | None = None  # solo en AÑO_ADQUISICION (18): ventas sin la operación
+    ventas_inorganicas_eur: float | None = None  # solo en AÑO_ADQUISICION (18): aportación de la unidad adquirida
 
     @property
     def rotacion_existencias(self) -> float:
@@ -839,7 +955,32 @@ def _evolucionar_un_año(
     efectos_reclasificacion_deuda = [e for e in definicion.efectos if isinstance(e, EfectoReclasificacionDeuda)]
     efectos_evento_puntual = [e for e in definicion.efectos if isinstance(e, EfectoEventoPuntual)]
     efectos_capex = [e for e in definicion.efectos if isinstance(e, EfectoCapex)]
+    efectos_adquisicion = [e for e in definicion.efectos if isinstance(e, EfectoAdquisicion)]
     nota_memoria: str | None = None
+
+    # --- Adquisición (arquetipo 18): inyección exógena de activo_no_corriente Y de ventas
+    # "inorgánicas", ambas SOLO en AÑO_ADQUISICION (2024, fijo — ver constante). La magnitud se
+    # calcula ANTES de que `ventas` se use en el resto de la función (masas de circulante, PyG),
+    # así que todo lo que crece "proporcional a ventas" ya incluye la aportación de la unidad
+    # adquirida — decisión deliberada: el modelo no separa el circulante propio de la unidad
+    # adquirida (la huella de la sección 2.24 no lo pide), una empresa combinada más grande
+    # necesita más circulante en conjunto, venga la venta de donde venga. `ventas_organicas_eur`
+    # (lo que habrían sido las ventas SIN la operación) queda registrado aparte para que el
+    # resultado exponga el desglose que pide la guía docente (ficha 18). ---
+    incremento_activo_adquisicion_eur = 0.0
+    ventas_organicas_eur: float | None = None
+    ventas_inorganicas_eur: float | None = None
+    if efectos_adquisicion and año == AÑO_ADQUISICION:
+        activo_total_previo_eur = anterior.balance_eur["activo_no_corriente"] + anterior.balance_eur["activo_corriente"]
+        incremento_activo_adquisicion_eur = intensidad_base * activo_total_previo_eur
+        # La aportación de ventas de la unidad adquirida se ancla a ratios.rotacion_activo del
+        # sector (ventas/activo total típico) sobre el propio importe adquirido — asume que la
+        # unidad comprada opera con una eficiencia de activo similar a la del sector, en vez de
+        # un número de ventas arbitrario y desconectado del tamaño de la operación.
+        huber_rotacion_activo = fila["ratios.rotacion_activo.huber_9y"]
+        ventas_organicas_eur = ventas
+        ventas_inorganicas_eur = incremento_activo_adquisicion_eur * huber_rotacion_activo
+        ventas = ventas_organicas_eur + ventas_inorganicas_eur
 
     # --- Masas de circulante: proporcional a ventas por defecto, desviadas si el arquetipo
     # las toca. Las tres variables soportadas (SIGNO_NOF_MASA_CIRCULANTE) se tratan siempre
@@ -917,6 +1058,26 @@ def _evolucionar_un_año(
     if efectos_capex:
         exceso_capex_eur = max(0.0, activo_no_corriente_eur - activo_no_corriente_proporcional_eur)
         deudas_fin_largo_proporcional_eur += exceso_capex_eur
+
+    # --- Adquisición (arquetipo 18): el importe adquirido (incremento_activo_adquisicion_eur,
+    # calculado al principio de la función) se suma a activo_no_corriente y se financia primero
+    # con la caja disponible ese año y, lo que no cubra, con deuda a largo plazo NUEVA — mismo
+    # orden de prioridad ("caja primero, deuda después") que ya usa _deficit_y_deuda_corto para
+    # el déficit de NOF, pero aquí la deuda va a LARGO (una compra de inmovilizado, no un déficit
+    # de circulante) en vez de a corto. Igual que en "capex", no se resta nada de patrimonio_neto
+    # (financia la compra del propio activo, no una distribución) — el activo y el pasivo (o la
+    # caja) se mueven exactamente lo mismo, sin romper el cuadre. La nota de memoria es
+    # OBLIGATORIA aquí (a diferencia del resto de usos de `nota_memoria`): se genera siempre que
+    # el efecto esté activo ese año, porque el arquetipo consiste precisamente en una operación
+    # que la memoria debe explicar.
+    if incremento_activo_adquisicion_eur > 0:
+        activo_no_corriente_eur += incremento_activo_adquisicion_eur
+        aportacion_caja_adquisicion_eur = min(disponible_proporcional_eur, incremento_activo_adquisicion_eur)
+        disponible_proporcional_eur -= aportacion_caja_adquisicion_eur
+        deuda_nueva_adquisicion_eur = incremento_activo_adquisicion_eur - aportacion_caja_adquisicion_eur
+        deudas_fin_largo_proporcional_eur += deuda_nueva_adquisicion_eur
+        indice_nota = rng_nota.integers(len(NOTAS_MEMORIA_ADQUISICION))
+        nota_memoria = NOTAS_MEMORIA_ADQUISICION[indice_nota]
 
     # --- PyG: primitivas no financieras + tipo de interés, sorteadas UNA sola vez. Las que el
     # arquetipo toca (efecto pyg_primitiva) se fuerzan por continuidad en vez de sortearse, y
@@ -1228,6 +1389,8 @@ def _evolucionar_un_año(
         pyg_subtotales_sin_contener=pyg_subtotales_sin_contener,
         pyg_contencion_al_limite=pyg_contencion_al_limite,
         nota_memoria=nota_memoria,
+        ventas_organicas_eur=ventas_organicas_eur,
+        ventas_inorganicas_eur=ventas_inorganicas_eur,
     )
 
 

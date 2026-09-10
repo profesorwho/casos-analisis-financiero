@@ -220,6 +220,18 @@
           "direccion": -1
         }
       ]
+    },
+    {
+      "id": "adquisicion",
+      "numero": 18,
+      "nombre": "Adquisición",
+      "efectos": [
+        {
+          "tipo": "adquisicion",
+          "ratio_catalogo": "balance.activo_no_corriente",
+          "direccion": 1
+        }
+      ]
     }
   ]
 }

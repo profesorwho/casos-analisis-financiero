@@ -18,7 +18,7 @@ Especificación funcional completa: `docs/especificaciones_proyecto_casos_balanc
 |---|---|---|---|
 | `catalogo.py` | Carga y valida el catálogo de ratios sectoriales (CSV, 27 sectores × 2 segmentos, `huber_9y`/`huber_scale_mad` por ratio). | `cargar_y_validar_catalogo(ruta=...) -> DataFrame`; `version_catalogo(ruta=...) -> str` (hash usado como `catalogo_version`, sección 2.15). | Base de todo — sin arquetipos. |
 | `empresa_base.py` | Genera balance + PyG de **una** empresa, **un** ejercicio, a partir del catálogo + ruido típico/atípico. Sin arquetipos, sin serie temporal. | `generar_empresa_base(sector, segmento, ventas_objetivo, semilla, catalogo=None) -> EmpresaBase`; `resolver_fila_sector(catalogo, sector_codigo, segmento) -> pd.Series` | Año base 2023 de **cualquier** caso, con o sin arquetipo. |
-| `arquetipos.py` | Carga y valida `data/arquetipos.json` como dataclasses tipadas. **Sin lógica de generación.** | `cargar_arquetipos(ruta=...) -> dict[str, DefinicionArquetipo]` | Tipos de efecto: `EfectoMasaCirculante`, `EfectoPygPrimitiva`, `EfectoApalancamiento`, `EfectoTesoreria`, `EfectoReclasificacionDeuda`, `EfectoEventoPuntual`, `EfectoCapex`. |
+| `arquetipos.py` | Carga y valida `data/arquetipos.json` como dataclasses tipadas. **Sin lógica de generación.** | `cargar_arquetipos(ruta=...) -> dict[str, DefinicionArquetipo]` | Tipos de efecto: `EfectoMasaCirculante`, `EfectoPygPrimitiva`, `EfectoApalancamiento`, `EfectoTesoreria`, `EfectoReclasificacionDeuda`, `EfectoEventoPuntual`, `EfectoCapex`, `EfectoAdquisicion`. |
 | `evolucion_arquetipo.py` | Motor genérico: evoluciona una empresa 3 ejercicios (2023 base + 2024/2025 con el arquetipo aplicado), interpretando cada tipo de `Efecto`. Contiene toda la lógica de mecanismo — **no releer para saber qué arquetipos toca cada mecanismo, ver tabla de mecanismos abajo**. | `generar_evolucion_arquetipo(sector, segmento, ventas_objetivo_2023, semilla, intensidad, arquetipo_id, catalogo=None, arquetipos=None) -> EvolucionArquetipo` | Todos los arquetipos cuantitativos implementados (ver `docs/indice_arquetipos.md`). |
 
 ## Mecanismos reutilizables ya construidos (en `evolucion_arquetipo.py`, salvo que se indique)
@@ -32,9 +32,10 @@ Especificación funcional completa: `docs/especificaciones_proyecto_casos_balanc
 | `reclasificacion_deuda` | Reasigna deuda largo↔corto SIN alterar el total (mejora o empeora `calidad_deuda`). | 8 (dirección +1), 16 (dirección −1, + `nota_memoria`) |
 | `evento_puntual` | Fuerza una primitiva de PyG solo en UN año sorteado (no progresivo) — vuelve al ruido normal el año siguiente sin código adicional. | 12 |
 | `capex` | `activo_no_corriente` por continuidad (ancla `rotacion_activo_no_corriente`), financiado con deuda a largo NUEVA (no toca PN, no toca circulante). | 17 |
+| `adquisicion` | Salto DISCRETO (no continuo) de `activo_no_corriente` en un año FIJO (`AÑO_ADQUISICION=2024`, no sorteado), financiado con caja + deuda a largo; separa `ventas_organicas_eur`/`ventas_inorganicas_eur`; `nota_memoria` OBLIGATORIA (no opcional). | 18 |
 | Contención de endeudamiento | Chequeo **incondicional** cada año: si el endeudamiento supera `huber+3·MAD` (techo absoluto 0,85), amortigua vía las masas de ACTIVO tocadas por el arquetipo, si las hay; si no, queda `contencion_al_limite=True` (señal sin corrección posible). | Todos (corre siempre, toque o no circulante) |
 | Hash estable sector+segmento (`zlib.crc32`) | Siembra cada RNG (`generar_empresa_base`, `rng_tendencia`/`rngs_pyg`, `rngs_nota`) mezclando semilla+sector+segmento — **nunca intensidad** (mismo "ruido de fondo" entre intensidades del mismo caso, por diseño). | Todos — infraestructura, no arquetipo-específico |
-| `nota_memoria` | Cobertura narrativa reproducible (RNG dedicado `rngs_nota`, redacciones alternativas por arquetipo). | 10 (caso límite), 16 (huella habitual) |
+| `nota_memoria` | Cobertura narrativa reproducible (RNG dedicado `rngs_nota`, redacciones alternativas por arquetipo). Opcional (10: caso límite; 16: huella habitual) u OBLIGATORIA (18). | 10, 16, 18 |
 
 ## Otros documentos de este índice
 

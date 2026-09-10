@@ -28,6 +28,7 @@ TIPOS_EFECTO_VALIDOS = frozenset(
         "reclasificacion_deuda",
         "evento_puntual",
         "capex",
+        "adquisicion",
     }
 )
 FORMULAS_MASA_CIRCULANTE_VALIDAS = frozenset({"rotacion", "dias"})
@@ -124,6 +125,22 @@ class EfectoCapex:
     direccion: int
 
 
+@dataclass(frozen=True)
+class EfectoAdquisicion:
+    """Inyección exógena y puntual de activo_no_corriente (arquetipo 18, "Adquisición") — NO es
+    una desviación de continuidad como el resto de efectos, es un salto discreto en un único
+    ejercicio fijo (AÑO_ADQUISICION en motor/evolucion_arquetipo.py, siempre 2024, nunca
+    sorteado). `ratio_catalogo` (balance.activo_no_corriente) es solo trazabilidad, igual que en
+    EfectoTesoreria: la magnitud se calcula como intensidad_base x activo total previo a la
+    operación, no como una desviación del Huber de ese ratio. Financiada con caja disponible y,
+    lo que no cubra, deuda a largo plazo nueva; añade también una aportación de ventas
+    "inorgánica" ese año (ver `_evolucionar_un_año`) y una nota de memoria OBLIGATORIA (a
+    diferencia de `nota_memoria` en el resto de arquetipos, que es opcional)."""
+
+    ratio_catalogo: str
+    direccion: int
+
+
 Efecto = (
     EfectoMasaCirculante
     | EfectoPygPrimitiva
@@ -132,6 +149,7 @@ Efecto = (
     | EfectoReclasificacionDeuda
     | EfectoEventoPuntual
     | EfectoCapex
+    | EfectoAdquisicion
 )
 
 
@@ -188,7 +206,10 @@ def _construir_efecto(bruto: dict, arquetipo_id: str, indice: int) -> Efecto:
             raise ArquetipoInvalidoError(f"{arquetipo_id}: efecto #{indice} no tiene 'primitiva'")
         return EfectoEventoPuntual(primitiva=primitiva, ratio_catalogo=ratio_catalogo, direccion=direccion)
 
-    return EfectoCapex(ratio_catalogo=ratio_catalogo, direccion=direccion)
+    if tipo == "capex":
+        return EfectoCapex(ratio_catalogo=ratio_catalogo, direccion=direccion)
+
+    return EfectoAdquisicion(ratio_catalogo=ratio_catalogo, direccion=direccion)
 
 
 def cargar_arquetipos(ruta: str | Path = RUTA_ARQUETIPOS_POR_DEFECTO) -> dict[str, DefinicionArquetipo]:

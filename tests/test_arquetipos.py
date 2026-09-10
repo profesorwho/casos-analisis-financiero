@@ -4,6 +4,7 @@ import pytest
 
 from motor.arquetipos import (
     ArquetipoInvalidoError,
+    EfectoAdquisicion,
     EfectoApalancamiento,
     EfectoCapex,
     EfectoEventoPuntual,
@@ -31,15 +32,21 @@ IDS_ESPERADOS = {
     "roe_elevado_apalancamiento": 14,
     "riesgo_refinanciacion": 16,
     "capex_elevado": 17,
+    "adquisicion": 18,
 }
 
 
-def test_carga_los_15_arquetipos_implementados():
+def test_carga_los_16_arquetipos_implementados():
     arquetipos = cargar_arquetipos()
     assert set(arquetipos) == set(IDS_ESPERADOS)
     for id_, numero in IDS_ESPERADOS.items():
         assert arquetipos[id_].numero == numero
         assert len(arquetipos[id_].efectos) >= 1
+
+
+def test_tipo_de_efecto_adquisicion():
+    arquetipos = cargar_arquetipos()
+    assert all(isinstance(e, EfectoAdquisicion) for e in arquetipos["adquisicion"].efectos)
 
 
 def test_tipos_de_efecto_del_tercer_lote():

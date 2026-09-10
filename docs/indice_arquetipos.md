@@ -24,7 +24,7 @@ si ya se comiteó, es simplemente `CERRADO`; comprobar `git log`/`git status` si
 | 15 | Riesgo de liquidez pese a beneficio | `riesgo_liquidez_pese_beneficio` | `tesoreria` | CERRADO | Sin techo/suelo de plausibilidad sectorial (limitación documentada) |
 | 16 | Riesgo de refinanciación | `riesgo_refinanciacion` | `reclasificacion_deuda` (dirección −1) + `nota_memoria` | CERRADO | Nota de memoria activa cada año que el efecto actúa (no es caso límite, es la huella habitual) |
 | 17 | Capex elevado | `capex_elevado` | `capex` (nuevo) | CERRADO | Financiado con deuda a largo nueva; 15,6% de activaciones de `riesgo_endeudamiento` en stress test, 100% `contencion_al_limite` (sin palanca de circulante) |
-| 18 | Adquisición | — | — | PENDIENTE (sesión propia) | Salto discreto no orgánico + fondo de comercio + memoria específica — el más distinto de todos, deliberadamente fuera de los lotes anteriores |
+| 18 | Adquisición | `adquisicion` | `adquisicion` (nuevo) | IMPLEMENTADO (sin comitear) | Salto discreto de `activo_no_corriente` en año FIJO (2024, no sorteado), financiado con caja+deuda a largo; separa `ventas_organicas_eur`/`ventas_inorganicas_eur`; `nota_memoria` obligatoria (no opcional, a diferencia de 10/16); 70/972 activaciones de `riesgo_endeudamiento` (7,2%), 100% señalizadas, 100% `contencion_al_limite` |
 | 19 | Activo mantenido para la venta | — | — | PENDIENTE | Reclasificación de un activo específico, no un ratio |
 | 20 | Operaciones vinculadas | — | — | PENDIENTE | Cualitativo puro (solo memoria) |
 | 21 | Coberturas | — | — | PENDIENTE | Cualitativo + PN |
