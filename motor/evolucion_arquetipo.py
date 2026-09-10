@@ -247,6 +247,7 @@ había que fijar para poder implementar):
 
 from __future__ import annotations
 
+import zlib
 from dataclasses import dataclass, field, replace
 
 import numpy as np
@@ -355,9 +356,12 @@ SUBTOTAL_PYG_BASE_DINAMICA_DE_PRIMITIVA = {
 # colectivo, contratación, indemnizaciones no recurrentes, cotizaciones sociales, variable ligado
 # a objetivos) — primer ensayo, en pequeño, del patrón que hará falta a mayor escala en la futura
 # fase de memoria cualitativa: varias redacciones alternativas para una misma señal técnica, no
-# una plantilla única repetida. Selección aleatoria reproducible (ver _evolucionar_un_año): se
-# sortea con el mismo `rng_pyg` del ejercicio, después de agotar los sorteos de la PyG — misma
-# semilla y año, siempre la misma redacción; entre semillas distintas, variedad entre las 5.
+# una plantilla única repetida. Selección aleatoria reproducible con un RNG DEDICADO
+# (`rngs_nota` en generar_evolucion_arquetipo, independiente de rngs_pyg — ver ahí por qué:
+# reutilizar rng_pyg sesgaba el sorteo, colapsándolo a un puñado de valores repetidos por
+# semilla+año en vez de una elección uniforme por caso) — mismo caso (sector, segmento,
+# intensidad, semilla, año), siempre la misma redacción; entre casos distintos, variedad
+# uniforme entre las 5.
 NOTAS_MEMORIA_GASTOS_PERSONAL_AL_LIMITE = (
     "El incremento de los gastos de personal respecto al ejercicio anterior se explica por la "
     "actualización salarial derivada del convenio colectivo aplicable, que absorbió parte de la "
@@ -616,6 +620,7 @@ def _evolucionar_un_año(
     anterior: EjercicioEmpresa,
     fila: pd.Series,
     rng_pyg: np.random.Generator,
+    rng_nota: np.random.Generator,
     crecimiento_ventas: float,
     intensidad_efectiva: float,
     definicion: DefinicionArquetipo,
@@ -718,10 +723,15 @@ def _evolucionar_un_año(
             if limite_por_ruido_base:
                 pyg_contencion_al_limite = True
                 # Cobertura narrativa de negocio para el dato técnico (ver docstring del módulo,
-                # sección "Arquetipo 10"): se sortea con el MISMO rng_pyg de este ejercicio,
-                # después de agotar los sorteos de la PyG (rng_pyg no se usa ya para nada más en
-                # esta función) — reproducible por semilla+año, con variedad entre semillas.
-                indice_nota = rng_pyg.integers(len(NOTAS_MEMORIA_GASTOS_PERSONAL_AL_LIMITE))
+                # sección "Arquetipo 10"): usa `rng_nota`, un generador INDEPENDIENTE de rng_pyg,
+                # sembrado con semilla + sector + segmento + intensidad (ver
+                # generar_evolucion_arquetipo) — no basta con reutilizar rng_pyg: llega al punto
+                # del sorteo en el MISMO estado para cualquier sector/intensidad con la misma
+                # semilla (los draws previos de la PyG no dependen de huber/mad, solo su
+                # escalado), lo que colapsaba el sorteo a un puñado de valores repetidos en vez
+                # de una elección uniforme por caso (detectado por sesgo estadístico real, no
+                # ruido de muestra pequeña — ver docstring del módulo).
+                indice_nota = rng_nota.integers(len(NOTAS_MEMORIA_GASTOS_PERSONAL_AL_LIMITE))
                 nota_memoria = NOTAS_MEMORIA_GASTOS_PERSONAL_AL_LIMITE[indice_nota]
 
     def _deficit_y_deuda_corto(existencias_eur: float, realizable_eur: float, acreedores_comerciales_eur: float) -> tuple[float, float, float]:
@@ -1019,6 +1029,23 @@ def generar_evolucion_arquetipo(
     rng_tendencia = np.random.default_rng(hijo_tendencia)
     rngs_pyg = {2024: np.random.default_rng(hijo_2024), 2025: np.random.default_rng(hijo_2025)}
 
+    # RNG dedicado e independiente para `nota_memoria` (arquetipo 10): NO reutiliza rngs_pyg. Su
+    # semilla mezcla `semilla` con un hash estable (zlib.crc32, no `hash()` de Python — este
+    # último varía entre procesos por PYTHONHASHSEED, rompería la reproducibilidad) de
+    # sector+segmento+intensidad, así que el sorteo es específico de cada caso, no solo de
+    # `semilla`. Necesario porque `rngs_pyg[año]` llega al punto donde se sortearía la nota en EL
+    # MISMO estado para cualquier sector/intensidad con la misma semilla (todos los draws previos
+    # de `_generar_pyg_hasta_baii` — típico/atípico, z de la normal truncada — no dependen de
+    # huber/mad ni de intensidad, solo su escalado posterior sí): detectado en pruebas de estrés,
+    # el reparto observado entre las 5 redacciones en 143 casos (12/37/56/33/5) no era ruido de
+    # muestra pequeña (chi-cuadrado ~58 con 4 g.l., p<0,001) sino que colapsaba a solo 6 sorteos
+    # realmente distintos (uno por combinación semilla x año con algún caso activado), repetido
+    # idéntico en todos los sectores/intensidades que compartían esa semilla y año.
+    entropia_caso = zlib.crc32(f"{sector}|{segmento}|{intensidad}".encode("utf-8"))
+    semilla_secuencia_notas = np.random.SeedSequence([semilla, entropia_caso])
+    hijo_nota_2024, hijo_nota_2025 = semilla_secuencia_notas.spawn(2)
+    rngs_nota = {2024: np.random.default_rng(hijo_nota_2024), 2025: np.random.default_rng(hijo_nota_2025)}
+
     if definicion.rango_crecimiento_pleno is not None:
         bajo, alto = definicion.rango_crecimiento_pleno[intensidad]
         crecimiento_pleno_objetivo = bajo + rng_tendencia.random() * (alto - bajo)
@@ -1034,7 +1061,7 @@ def generar_evolucion_arquetipo(
             crecimiento_pleno_objetivo * fraccion if definicion.rango_crecimiento_pleno is not None else crecimiento_pleno_objetivo
         )
         ejercicio = _evolucionar_un_año(
-            año, anterior, fila, rngs_pyg[año], crecimiento_ventas, intensidad_efectiva, definicion
+            año, anterior, fila, rngs_pyg[año], rngs_nota[año], crecimiento_ventas, intensidad_efectiva, definicion
         )
         ejercicios[año] = ejercicio
         anterior = ejercicio
