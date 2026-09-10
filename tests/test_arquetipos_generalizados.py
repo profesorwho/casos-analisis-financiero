@@ -353,3 +353,69 @@ def test_espiral_de_deuda_de_apalancamiento_siempre_queda_señalizada(catalogo, 
                         sin_detectar.append((codigo, intensidad, semilla, pn_activo_2025))
     assert total_bajo_umbral > 0, "la muestra no incluyó ningún caso de espiral de deuda: ajustar el barrido"
     assert not sin_detectar, f"{len(sin_detectar)} casos de espiral de deuda sin señalizar: {sin_detectar}"
+
+
+def test_margen_bruto_respeta_el_techo_de_plausibilidad_del_sector(catalogo, arquetipos):
+    # Regresión del hallazgo del stress test: antes de _limitar_por_subtotal, 1.796 de 2.592
+    # ejercicios evaluados del arquetipo "mejora_margen" (69%) superaban huber_9y + 3·MAD de
+    # margen_bruto del sector sin ninguna señal — ver docstring del módulo. Barrido
+    # representativo (27 sectores x 3 intensidades x 4 semillas = 324 casos), no los 1.296
+    # completos, para mantener la suite rápida.
+    import re
+
+    from motor.empresa_base import resolver_fila_sector
+    from motor.evolucion_arquetipo import N_DESVIACIONES_TECHO_PYG
+
+    codigos = [re.search(r"\(([^()]+)\)\s*$", s).group(1) for s in catalogo["sector"].unique()]
+    por_encima_sin_señal = []
+    activaciones = 0
+    for codigo in codigos:
+        fila = resolver_fila_sector(catalogo, codigo, "grandes_medianas")
+        techo_margen = fila["pyg.margen_bruto_pct.huber_9y"] + N_DESVIACIONES_TECHO_PYG * fila["pyg.margen_bruto_pct.huber_scale_mad"]
+        for intensidad in ("leve", "moderado", "fuerte"):
+            for semilla in range(4):
+                evolucion = generar_evolucion_arquetipo(
+                    codigo,
+                    "grandes_medianas",
+                    VENTAS_OBJETIVO_2023,
+                    semilla=semilla,
+                    intensidad=intensidad,
+                    arquetipo_id="mejora_margen",
+                    catalogo=catalogo,
+                    arquetipos=arquetipos,
+                )
+                for año in (2024, 2025):
+                    ej = evolucion.ejercicios[año]
+                    if ej.riesgo_plausibilidad_pyg:
+                        activaciones += 1
+                    if ej.pyg_pct["margen_bruto"] > techo_margen + 1e-6 and not ej.riesgo_plausibilidad_pyg:
+                        por_encima_sin_señal.append((codigo, intensidad, semilla, año, ej.pyg_pct["margen_bruto"], techo_margen))
+    assert activaciones > 0, "la muestra no incluyó ningún caso donde se activara la contención: ajustar el barrido"
+    assert not por_encima_sin_señal, f"{len(por_encima_sin_señal)} casos sin señalizar: {por_encima_sin_señal[:10]}"
+
+
+def test_margen_bruto_nunca_supera_el_techo_del_sector(catalogo, arquetipos):
+    from motor.empresa_base import resolver_fila_sector
+    from motor.evolucion_arquetipo import N_DESVIACIONES_TECHO_PYG
+
+    for sector in ("24.1", "62", "47.1"):
+        fila = resolver_fila_sector(catalogo, sector, "grandes_medianas")
+        techo_margen = fila["pyg.margen_bruto_pct.huber_9y"] + N_DESVIACIONES_TECHO_PYG * fila["pyg.margen_bruto_pct.huber_scale_mad"]
+        for semilla in SEMILLAS:
+            evolucion = _generar(catalogo, arquetipos, "mejora_margen", sector, semilla)
+            for ejercicio in evolucion.ejercicios.values():
+                assert ejercicio.pyg_pct["margen_bruto"] <= techo_margen + 1e-6
+
+
+def test_margen_bruto_sin_contener_queda_registrado(catalogo, arquetipos):
+    # Cuando se activa la contención, el valor previo (sin topar) debe quedar trazado, igual
+    # que endeudamiento_sin_contener.
+    encontrado_alguno = False
+    for semilla in SEMILLAS:
+        evolucion = _generar(catalogo, arquetipos, "mejora_margen", "24.1", semilla, intensidad="fuerte")
+        for ejercicio in evolucion.ejercicios.values():
+            if ejercicio.riesgo_plausibilidad_pyg:
+                encontrado_alguno = True
+                assert "margen_bruto" in ejercicio.pyg_subtotales_sin_contener
+                assert ejercicio.pyg_subtotales_sin_contener["margen_bruto"] > ejercicio.pyg_pct["margen_bruto"]
+    assert encontrado_alguno, "ninguna de las semillas activó la contención: ajustar el caso de prueba"

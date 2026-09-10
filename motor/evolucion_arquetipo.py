@@ -129,6 +129,28 @@ había que fijar para poder implementar):
   patrimonio neto por debajo del 15% del activo partiendo de una base sana en 2023 (>=15% en
   2023) — los 130 quedan señalizados por esta vía, 0 pasan desapercibidos.
 
+- **Techo/suelo de plausibilidad sectorial para subtotales de PyG (arquetipo 11 y cualquier
+  otro efecto pyg_primitiva futuro).** El suelo/techo que ya tenía la propia primitiva
+  (`FRACCION_MINIMA/MAXIMA_VS_HUBER`, frente al Huber de LA MISMA variable, p. ej.
+  `pyg.consumos_explotacion_pct`) no acota de forma realista lo que le pasa al SUBTOTAL que esa
+  primitiva alimenta (`pyg.margen_bruto_pct`): son columnas del catálogo distintas, con Huber y
+  MAD propios — el margen bruto puede rebasar su propio techo sectorial mucho antes de que la
+  primitiva llegue al suyo. Medido en pruebas de estrés (mismo método que con el arquetipo 9):
+  de 2.592 ejercicios evaluados del arquetipo "mejora_margen" (1.296 combinaciones x 2 años),
+  **1.796 (69%) superaban huber_9y + 3·MAD de `margen_bruto` del sector sin ninguna señal** — ya
+  en intensidad "leve" (no hacía falta "fuerte" para desbordarlo). Corregido con
+  `_limitar_por_subtotal`: además del suelo/techo de la propia primitiva, se calcula qué
+  subtotal alimenta (`SUBTOTAL_PYG_DE_PRIMITIVA`, mapeo estructural de la cascada, no dato de
+  arquetipo) y se topa el objetivo de la primitiva para que ESE subtotal no rebase su propio
+  huber_9y +/- N·MAD. Solo válido hoy para relaciones "subtotal = 100 − primitiva" (la única
+  que existe: margen_bruto = ingresos_explotacion(100) − consumos_explotacion) — no hacía falta
+  ningún punto fijo ni iteración, a diferencia del endeudamiento: aquí no hay dependencia
+  circular con la deuda/interés, así que se resuelve con una sola operación algebraica. El caso
+  queda marcado (`riesgo_plausibilidad_pyg=True`, `pyg_subtotales_sin_contener` con el valor
+  antes de topar) igual que el resto de contenciones de este módulo. Verificado tras el fix: 0
+  de 2.592 ejercicios por encima del techo, y los 1.796 que antes pasaban desapercibidos quedan
+  ahora señalizados exactamente.
+
 - **Arquetipo 15 (riesgo de liquidez pese a beneficio) — limitación documentada.** Se decidió
   tras probarlo que SÍ encaja en el mecanismo general si se modela como "la tesorería (variable
   `disponible`) crece por debajo de lo proporcional a ventas, un intensidad_efectiva" —
@@ -153,7 +175,7 @@ había que fijar para poder implementar):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -216,6 +238,27 @@ TECHO_ENDEUDAMIENTO_MAXIMO_ABSOLUTO = 0.85
 MAX_ITERACIONES_CONTENCION = 50
 TOLERANCIA_CONVERGENCIA_DETERIORO_EUR = 1.0
 
+# Techo/suelo de plausibilidad sectorial para subtotales de la PyG que un efecto pyg_primitiva
+# pueda empujar de forma acumulativa (mismo método que el techo de endeudamiento: huber_9y +/-
+# N desviaciones del catálogo). Se añadió tras comprobar en pruebas de estrés que, sin él, el
+# suelo/techo de FRACCION_MINIMA/MAXIMA_VS_HUBER sobre la propia primitiva (consumos_explotacion)
+# no acota de forma realista el subtotal derivado (margen_bruto): 1.796 de 2.592 ejercicios
+# evaluados del arquetipo "mejora_margen" (69%) superaban huber+3*MAD de margen_bruto del
+# sector sin ninguna señal — ya en intensidad "leve".
+N_DESVIACIONES_TECHO_PYG = 3.0
+
+# Mapeo ESTRUCTURAL (no específico de ningún arquetipo, no es dato de data/arquetipos.json): a
+# qué subtotal de la cascada de PyG (motor.empresa_base._completar_pyg_con_deuda) alimenta de
+# forma directa cada primitiva, para poder acotar ESE subtotal a su propio techo/suelo
+# sectorial — no solo el de la propia primitiva. Vive en el motor, no en los datos, porque es
+# una propiedad fija de la fórmula de la cascada (margen_bruto = ingresos_explotacion -
+# consumos_explotacion), no una elección del arquetipo. Ampliar aquí, no en el JSON, cuando se
+# implementen arquetipos que toquen otras primitivas con un subtotal directo claro (p. ej.
+# gastos_personal/amortizaciones -> baii para el arquetipo 10 "mejora de EBITDA").
+SUBTOTAL_PYG_DE_PRIMITIVA = {
+    "consumos_explotacion": "margen_bruto",
+}
+
 
 class EvolucionArquetipoError(ValueError):
     """Parámetros de entrada inválidos."""
@@ -239,6 +282,8 @@ class EjercicioEmpresa:
     deterioro_aplicado_eur: float = 0.0  # exceso de circulante amortiguado por plausibilidad
     contencion_al_limite: bool = False  # True si no se pudo llegar al techo (nada que amortiguar, o se agotó)
     apalancamiento_extra_eur: float = 0.0  # deuda a largo extra por el efecto "apalancamiento", si lo hay
+    riesgo_plausibilidad_pyg: bool = False  # True si algún efecto pyg_primitiva topó el techo/suelo de su subtotal
+    pyg_subtotales_sin_contener: dict[str, float] = field(default_factory=dict)  # {subtotal: valor antes de topar}
 
     @property
     def rotacion_existencias(self) -> float:
@@ -328,6 +373,39 @@ def _pyg_primitiva_objetivo(
     return _mover_ratio_continuo(valor_anterior, efecto.direccion, intensidad_efectiva, huber)
 
 
+def _limitar_por_subtotal(
+    primitiva: str, valor_objetivo: float, fila: pd.Series, direccion: int
+) -> tuple[float, str | None, float | None]:
+    """Si `primitiva` alimenta un subtotal de la cascada de PyG (SUBTOTAL_PYG_DE_PRIMITIVA),
+    topa `valor_objetivo` para que ESE subtotal no rebase su propio techo/suelo de
+    plausibilidad sectorial (huber_9y +/- N desviaciones) — no solo el de la propia primitiva
+    (que usa el Huber de otra variable del catálogo y en la práctica no acota nada realista:
+    ver docstring del módulo). Solo válido para relaciones "subtotal = 100 - primitiva"
+    (la única que existe hoy: margen_bruto = ingresos_explotacion(100) - consumos_explotacion).
+
+    Devuelve (valor_final, nombre_subtotal_si_se_activó, valor_sin_contener_del_subtotal)."""
+    subtotal = SUBTOTAL_PYG_DE_PRIMITIVA.get(primitiva)
+    if subtotal is None:
+        return valor_objetivo, None, None
+
+    huber_subtotal = fila[f"pyg.{subtotal}_pct.huber_9y"]
+    mad_subtotal = fila[f"pyg.{subtotal}_pct.huber_scale_mad"]
+    subtotal_sin_contener = 100.0 - valor_objetivo
+
+    if direccion < 0:
+        # La primitiva baja => el subtotal (100 - primitiva) sube: topar el subtotal a su
+        # techo equivale a ponerle un SUELO a la propia primitiva.
+        techo_subtotal = huber_subtotal + N_DESVIACIONES_TECHO_PYG * mad_subtotal
+        if subtotal_sin_contener <= techo_subtotal:
+            return valor_objetivo, None, None
+        return 100.0 - techo_subtotal, subtotal, subtotal_sin_contener
+    else:
+        suelo_subtotal = huber_subtotal - N_DESVIACIONES_TECHO_PYG * mad_subtotal
+        if subtotal_sin_contener >= suelo_subtotal:
+            return valor_objetivo, None, None
+        return 100.0 - suelo_subtotal, subtotal, subtotal_sin_contener
+
+
 def _disponible_proporcional_con_efecto(
     efecto: EfectoTesoreria | None, disponible_proporcional_eur: float, intensidad_efectiva: float
 ) -> float:
@@ -381,10 +459,21 @@ def _evolucionar_un_año(
     deuda_financiera_inicio_eur = anterior.balance_eur["deudas_fin_largo"] + anterior.balance_eur["deudas_fin_corto"]
 
     # --- PyG: primitivas no financieras + tipo de interés, sorteadas UNA sola vez. Las que el
-    # arquetipo toca (efecto pyg_primitiva) se fuerzan por continuidad en vez de sortearse. ---
-    primitivas_forzadas = {
-        efecto.primitiva: _pyg_primitiva_objetivo(efecto, anterior, fila, intensidad_efectiva) for efecto in efectos_pyg
-    }
+    # arquetipo toca (efecto pyg_primitiva) se fuerzan por continuidad en vez de sortearse, y
+    # además se topan para que el subtotal que alimentan no rebase su propio techo/suelo de
+    # plausibilidad sectorial (ver _limitar_por_subtotal). ---
+    primitivas_forzadas: dict[str, float] = {}
+    riesgo_plausibilidad_pyg = False
+    pyg_subtotales_sin_contener: dict[str, float] = {}
+    for efecto in efectos_pyg:
+        objetivo = _pyg_primitiva_objetivo(efecto, anterior, fila, intensidad_efectiva)
+        objetivo, subtotal_topado, subtotal_sin_contener = _limitar_por_subtotal(
+            efecto.primitiva, objetivo, fila, efecto.direccion
+        )
+        primitivas_forzadas[efecto.primitiva] = objetivo
+        if subtotal_topado is not None:
+            riesgo_plausibilidad_pyg = True
+            pyg_subtotales_sin_contener[subtotal_topado] = subtotal_sin_contener
     parcial_pyg = _generar_pyg_hasta_baii(rng_pyg, fila, ventas, primitivas_forzadas=primitivas_forzadas)
 
     def _deficit_y_deuda_corto(existencias_eur: float, realizable_eur: float) -> tuple[float, float, float]:
@@ -605,6 +694,8 @@ def _evolucionar_un_año(
         deterioro_aplicado_eur=deterioro_aplicado_eur,
         contencion_al_limite=contencion_al_limite,
         apalancamiento_extra_eur=apalancamiento_extra_eur,
+        riesgo_plausibilidad_pyg=riesgo_plausibilidad_pyg,
+        pyg_subtotales_sin_contener=pyg_subtotales_sin_contener,
     )
 
 
