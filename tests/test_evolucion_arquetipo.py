@@ -1,9 +1,9 @@
 import pytest
 
+from motor.arquetipos import cargar_arquetipos
 from motor.catalogo import cargar_y_validar_catalogo, version_catalogo
 from motor.empresa_base import SUELO_TIPO_INTERES, TECHO_TIPO_INTERES, resolver_fila_sector
 from motor.evolucion_arquetipo import (
-    ARQUETIPO_ID,
     AÑO_BASE,
     N_DESVIACIONES_TECHO_ENDEUDAMIENTO,
     PGC_VERSION,
@@ -11,6 +11,11 @@ from motor.evolucion_arquetipo import (
     EvolucionArquetipoError,
     generar_evolucion_arquetipo,
 )
+
+# Este archivo prueba específicamente el arquetipo 1 ("Crecimiento con destrucción de caja")
+# sobre el núcleo genérico. Los arquetipos 5/9/11/15 tienen su propio archivo:
+# tests/test_arquetipos_generalizados.py.
+ARQUETIPO_1 = "crecimiento_destruccion_caja"
 
 VENTAS_OBJETIVO_2023 = 8_000_000.0
 SEMILLAS = range(5)
@@ -29,19 +34,32 @@ def catalogo():
     return cargar_y_validar_catalogo()
 
 
-def _casos(catalogo, sector, intensidad):
-    return [
-        generar_evolucion_arquetipo(
-            sector, "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=s, intensidad=intensidad, catalogo=catalogo
-        )
-        for s in SEMILLAS
-    ]
+@pytest.fixture(scope="module")
+def arquetipos():
+    return cargar_arquetipos()
+
+
+def _generar(catalogo, arquetipos, sector, semilla, intensidad, ventas=VENTAS_OBJETIVO_2023):
+    return generar_evolucion_arquetipo(
+        sector,
+        "grandes_medianas",
+        ventas,
+        semilla=semilla,
+        intensidad=intensidad,
+        arquetipo_id=ARQUETIPO_1,
+        catalogo=catalogo,
+        arquetipos=arquetipos,
+    )
+
+
+def _casos(catalogo, arquetipos, sector, intensidad):
+    return [_generar(catalogo, arquetipos, sector, s, intensidad) for s in SEMILLAS]
 
 
 @pytest.mark.parametrize("sector", SECTORES)
 @pytest.mark.parametrize("intensidad", INTENSIDADES)
-def test_los_tres_balances_cuadran(catalogo, sector, intensidad):
-    for evolucion in _casos(catalogo, sector, intensidad):
+def test_los_tres_balances_cuadran(catalogo, arquetipos, sector, intensidad):
+    for evolucion in _casos(catalogo, arquetipos, sector, intensidad):
         for año, ejercicio in evolucion.ejercicios.items():
             activo = ejercicio.balance_eur["activo_no_corriente"] + ejercicio.balance_eur["activo_corriente"]
             pn_pasivo = (
@@ -54,8 +72,8 @@ def test_los_tres_balances_cuadran(catalogo, sector, intensidad):
 
 @pytest.mark.parametrize("sector", SECTORES)
 @pytest.mark.parametrize("intensidad", INTENSIDADES)
-def test_patrimonio_neto_sigue_el_resultado_del_ejercicio(catalogo, sector, intensidad):
-    for evolucion in _casos(catalogo, sector, intensidad):
+def test_patrimonio_neto_sigue_el_resultado_del_ejercicio(catalogo, arquetipos, sector, intensidad):
+    for evolucion in _casos(catalogo, arquetipos, sector, intensidad):
         ej = evolucion.ejercicios
         assert ej[2024].balance_eur["patrimonio_neto"] == pytest.approx(
             ej[2023].balance_eur["patrimonio_neto"] + ej[2024].pyg_eur["resultado_ejercicio"], abs=0.01
@@ -67,16 +85,16 @@ def test_patrimonio_neto_sigue_el_resultado_del_ejercicio(catalogo, sector, inte
 
 @pytest.mark.parametrize("sector", SECTORES)
 @pytest.mark.parametrize("intensidad", INTENSIDADES)
-def test_las_ventas_crecen_cada_año(catalogo, sector, intensidad):
-    for evolucion in _casos(catalogo, sector, intensidad):
+def test_las_ventas_crecen_cada_año(catalogo, arquetipos, sector, intensidad):
+    for evolucion in _casos(catalogo, arquetipos, sector, intensidad):
         ej = evolucion.ejercicios
         assert ej[2023].ventas < ej[2024].ventas < ej[2025].ventas
 
 
 @pytest.mark.parametrize("sector", SECTORES)
 @pytest.mark.parametrize("intensidad", INTENSIDADES)
-def test_existencias_y_clientes_crecen_mas_que_las_ventas(catalogo, sector, intensidad):
-    for evolucion in _casos(catalogo, sector, intensidad):
+def test_existencias_y_clientes_crecen_mas_que_las_ventas(catalogo, arquetipos, sector, intensidad):
+    for evolucion in _casos(catalogo, arquetipos, sector, intensidad):
         ej = evolucion.ejercicios
 
         # >= y no > estricto: cuando el endeudamiento resultante superaría el techo de
@@ -105,8 +123,8 @@ def test_existencias_y_clientes_crecen_mas_que_las_ventas(catalogo, sector, inte
 
 @pytest.mark.parametrize("sector", SECTORES)
 @pytest.mark.parametrize("intensidad", INTENSIDADES)
-def test_tesoreria_cae_o_deuda_corto_compensa(catalogo, sector, intensidad):
-    for evolucion in _casos(catalogo, sector, intensidad):
+def test_tesoreria_cae_o_deuda_corto_compensa(catalogo, arquetipos, sector, intensidad):
+    for evolucion in _casos(catalogo, arquetipos, sector, intensidad):
         ej = evolucion.ejercicios
         for año_anterior, año in ((2023, 2024), (2024, 2025)):
             activo_anterior = (
@@ -122,10 +140,10 @@ def test_tesoreria_cae_o_deuda_corto_compensa(catalogo, sector, intensidad):
 
 @pytest.mark.parametrize("sector", SECTORES)
 @pytest.mark.parametrize("intensidad", INTENSIDADES)
-def test_el_efecto_es_mas_marcado_en_2025_que_en_2024(catalogo, sector, intensidad):
+def test_el_efecto_es_mas_marcado_en_2025_que_en_2024(catalogo, arquetipos, sector, intensidad):
     # Solo se compara en los casos sin contención de endeudamiento: si esta amortigua 2024 o
     # 2025, deja de ser una comparación "arquetipo puro" (ver test_contencion_de_endeudamiento).
-    for evolucion in _casos(catalogo, sector, intensidad):
+    for evolucion in _casos(catalogo, arquetipos, sector, intensidad):
         ej = evolucion.ejercicios
         if ej[2024].riesgo_endeudamiento or ej[2025].riesgo_endeudamiento:
             continue
@@ -139,14 +157,10 @@ def test_el_efecto_es_mas_marcado_en_2025_que_en_2024(catalogo, sector, intensid
 
 
 @pytest.mark.parametrize("sector", SECTORES)
-def test_intensidad_fuerte_tiene_mas_efecto_que_moderado(catalogo, sector):
+def test_intensidad_fuerte_tiene_mas_efecto_que_moderado(catalogo, arquetipos, sector):
     for semilla in SEMILLAS:
-        moderado = generar_evolucion_arquetipo(
-            sector, "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=semilla, intensidad="moderado", catalogo=catalogo
-        )
-        fuerte = generar_evolucion_arquetipo(
-            sector, "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=semilla, intensidad="fuerte", catalogo=catalogo
-        )
+        moderado = _generar(catalogo, arquetipos, sector, semilla, "moderado")
+        fuerte = _generar(catalogo, arquetipos, sector, semilla, "fuerte")
 
         # Estas dos se cumplen siempre: no dependen de la contención de endeudamiento (el
         # crecimiento de ventas objetivo y las ventas resultantes no se amortiguan nunca).
@@ -169,7 +183,7 @@ def test_intensidad_fuerte_tiene_mas_efecto_que_moderado(catalogo, sector):
 
 
 @pytest.mark.parametrize("sector", SECTORES)
-def test_gastos_financieros_dependen_de_la_deuda_tomada(catalogo, sector):
+def test_gastos_financieros_dependen_de_la_deuda_tomada(catalogo, arquetipos, sector):
     # Antes de anclar los gastos financieros a la deuda financiera media, moderado y fuerte
     # daban EXACTAMENTE la misma cobertura de gastos financieros cada año (los % de PyG se
     # sorteaban independientes del nivel de deuda). Ahora deben divergir, porque fuerte toma
@@ -177,12 +191,8 @@ def test_gastos_financieros_dependen_de_la_deuda_tomada(catalogo, sector):
     huellas_moderado = set()
     huellas_fuerte = set()
     for semilla in SEMILLAS:
-        moderado = generar_evolucion_arquetipo(
-            sector, "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=semilla, intensidad="moderado", catalogo=catalogo
-        )
-        fuerte = generar_evolucion_arquetipo(
-            sector, "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=semilla, intensidad="fuerte", catalogo=catalogo
-        )
+        moderado = _generar(catalogo, arquetipos, sector, semilla, "moderado")
+        fuerte = _generar(catalogo, arquetipos, sector, semilla, "fuerte")
         for año in (2024, 2025):
             gf_moderado = moderado.ejercicios[año].pyg_eur["gastos_financieros"]
             gf_fuerte = fuerte.ejercicios[año].pyg_eur["gastos_financieros"]
@@ -205,7 +215,7 @@ def test_gastos_financieros_dependen_de_la_deuda_tomada(catalogo, sector):
 
 @pytest.mark.parametrize("sector", SECTORES)
 @pytest.mark.parametrize("intensidad", INTENSIDADES)
-def test_tipo_de_interes_implicito_es_razonable_para_el_sector(catalogo, sector, intensidad):
+def test_tipo_de_interes_implicito_es_razonable_para_el_sector(catalogo, arquetipos, sector, intensidad):
     fila = resolver_fila_sector(catalogo, sector, "grandes_medianas")
     huber_coste_deuda = fila["ratios.coste_deuda.huber_9y"]
     mad_coste_deuda = fila["ratios.coste_deuda.huber_scale_mad"]
@@ -214,7 +224,7 @@ def test_tipo_de_interes_implicito_es_razonable_para_el_sector(catalogo, sector,
     cota_inferior = max(SUELO_TIPO_INTERES, huber_coste_deuda - 3 * mad_coste_deuda) - 1e-6
     cota_superior = min(TECHO_TIPO_INTERES, huber_coste_deuda + 3 * mad_coste_deuda) + 1e-6
 
-    for evolucion in _casos(catalogo, sector, intensidad):
+    for evolucion in _casos(catalogo, arquetipos, sector, intensidad):
         anterior = evolucion.ejercicios[AÑO_BASE]
         for año in (2024, 2025):
             ej = evolucion.ejercicios[año]
@@ -231,13 +241,13 @@ def test_tipo_de_interes_implicito_es_razonable_para_el_sector(catalogo, sector,
 
 @pytest.mark.parametrize("sector", SECTORES)
 @pytest.mark.parametrize("intensidad", INTENSIDADES)
-def test_contencion_de_endeudamiento_respeta_el_techo_del_sector(catalogo, sector, intensidad):
+def test_contencion_de_endeudamiento_respeta_el_techo_del_sector(catalogo, arquetipos, sector, intensidad):
     fila = resolver_fila_sector(catalogo, sector, "grandes_medianas")
     techo_esperado = min(
         fila["ratios.endeudamiento.huber_9y"] + N_DESVIACIONES_TECHO_ENDEUDAMIENTO * fila["ratios.endeudamiento.huber_scale_mad"],
         TECHO_ENDEUDAMIENTO_MAXIMO_ABSOLUTO,
     )
-    for evolucion in _casos(catalogo, sector, intensidad):
+    for evolucion in _casos(catalogo, arquetipos, sector, intensidad):
         for año in (2024, 2025):
             ej = evolucion.ejercicios[año]
             if ej.riesgo_endeudamiento:
@@ -249,6 +259,8 @@ def test_contencion_de_endeudamiento_respeta_el_techo_del_sector(catalogo, secto
                 # cambia ni el activo ni el pasivo, ver docstring del módulo).
                 assert ej.endeudamiento_sin_contener is not None
                 assert ej.endeudamiento < ej.endeudamiento_sin_contener
+                # El arquetipo 1 siempre toca existencias y realizable, así que siempre hay
+                # algo que amortiguar (deterioro_aplicado_eur > 0) cuando hay riesgo.
                 assert ej.deterioro_aplicado_eur > 0.0
 
                 # Tolerancia ligada a la convergencia del bucle de contención (converge al
@@ -260,37 +272,29 @@ def test_contencion_de_endeudamiento_respeta_el_techo_del_sector(catalogo, secto
                 assert ej.deterioro_aplicado_eur == 0.0
 
 
-def test_contencion_de_endeudamiento_se_activa_en_algun_caso(catalogo):
+def test_contencion_de_endeudamiento_se_activa_en_algun_caso(catalogo, arquetipos):
     # Confirma que el mecanismo no es código muerto: para un sector con endeudamiento Huber
     # bajo (Siderurgia) y el arquetipo en fuerte, debe activarse al menos una vez en un barrido
     # de semillas razonable.
     activaciones = 0
     for semilla in range(20):
-        evolucion = generar_evolucion_arquetipo(
-            "24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=semilla, intensidad="fuerte", catalogo=catalogo
-        )
+        evolucion = _generar(catalogo, arquetipos, "24.1", semilla, "fuerte")
         activaciones += sum(evolucion.ejercicios[año].riesgo_endeudamiento for año in (2024, 2025))
     assert activaciones > 0
 
 
-def test_reproducibilidad_misma_semilla(catalogo):
-    a = generar_evolucion_arquetipo(
-        "24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=99, intensidad="moderado", catalogo=catalogo
-    )
-    b = generar_evolucion_arquetipo(
-        "24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=99, intensidad="moderado", catalogo=catalogo
-    )
+def test_reproducibilidad_misma_semilla(catalogo, arquetipos):
+    a = _generar(catalogo, arquetipos, "24.1", 99, "moderado")
+    b = _generar(catalogo, arquetipos, "24.1", 99, "moderado")
     for año in (2023, 2024, 2025):
         assert a.ejercicios[año].balance_eur == b.ejercicios[año].balance_eur
         assert a.ejercicios[año].pyg_eur == b.ejercicios[año].pyg_eur
 
 
-def test_año_base_coincide_con_empresa_base_directa(catalogo):
+def test_año_base_coincide_con_empresa_base_directa(catalogo, arquetipos):
     from motor.empresa_base import generar_empresa_base
 
-    evolucion = generar_evolucion_arquetipo(
-        "24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=5, intensidad="moderado", catalogo=catalogo
-    )
+    evolucion = _generar(catalogo, arquetipos, "24.1", 5, "moderado")
     empresa_directa = generar_empresa_base(
         "24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=5, catalogo=catalogo
     )
@@ -298,30 +302,52 @@ def test_año_base_coincide_con_empresa_base_directa(catalogo):
     assert evolucion.ejercicios[AÑO_BASE].pyg_eur == empresa_directa.pyg_eur
 
 
-def test_intensidad_invalida_lanza_error(catalogo):
+def test_intensidad_invalida_lanza_error(catalogo, arquetipos):
     with pytest.raises(EvolucionArquetipoError, match="Intensidad"):
+        _generar(catalogo, arquetipos, "24.1", 1, "extrema")
+
+
+def test_arquetipo_desconocido_lanza_error(catalogo, arquetipos):
+    with pytest.raises(EvolucionArquetipoError, match="no reconocido"):
         generar_evolucion_arquetipo(
-            "24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=1, intensidad="extrema", catalogo=catalogo
+            "24.1",
+            "grandes_medianas",
+            VENTAS_OBJETIVO_2023,
+            semilla=1,
+            intensidad="moderado",
+            arquetipo_id="no_existe",
+            catalogo=catalogo,
+            arquetipos=arquetipos,
         )
 
 
-def test_metadatos_de_trazabilidad_presentes(catalogo):
+def test_metadatos_de_trazabilidad_presentes(catalogo, arquetipos):
     # Sección 2.15: cada caso debe poder reconstruirse y defenderse, lo que exige guardar qué
     # arquetipo/intensidad/semilla lo generaron y contra qué versión del catálogo y del PGC.
-    evolucion = generar_evolucion_arquetipo(
-        "24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=3, intensidad="fuerte", catalogo=catalogo
-    )
-    assert evolucion.arquetipo == ARQUETIPO_ID
+    evolucion = _generar(catalogo, arquetipos, "24.1", 3, "fuerte")
+    assert evolucion.arquetipo == ARQUETIPO_1
     assert evolucion.intensidad == "fuerte"
     assert evolucion.semilla == 3
     assert evolucion.catalogo_version == version_catalogo()
     assert evolucion.pgc_version == PGC_VERSION == "PGC RD 1514/2007"
 
 
-def test_catalogo_version_es_la_del_catalogo_pasado_explicitamente(catalogo):
+def test_catalogo_version_es_la_del_catalogo_pasado_explicitamente(catalogo, arquetipos):
     # No debe depender de recargar el catálogo por defecto: tiene que venir del propio
     # DataFrame recibido, para que sea fiel a lo que realmente se usó en esa llamada.
-    evolucion = generar_evolucion_arquetipo(
-        "24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=1, intensidad="moderado", catalogo=catalogo
-    )
+    evolucion = _generar(catalogo, arquetipos, "24.1", 1, "moderado")
     assert evolucion.catalogo_version == catalogo.attrs["catalogo_version"]
+
+
+def test_reimplementacion_generica_reproduce_los_valores_de_referencia(catalogo, arquetipos):
+    # Regresión dura: valores exactos capturados con la versión anterior (hardcodeada) del
+    # arquetipo 1, antes de generalizar el motor. Si esto falla, la generalización cambió el
+    # comportamiento del arquetipo 1 — el objetivo explícito era que NO lo hiciera.
+    evolucion = _generar(catalogo, arquetipos, "24.1", 5, "fuerte")
+    ej = evolucion.ejercicios
+    assert ej[2023].balance_eur["existencias"] == pytest.approx(2_178_497, abs=1)
+    assert ej[2024].balance_eur["existencias"] == pytest.approx(3_467_505, abs=1)
+    assert ej[2025].balance_eur["existencias"] == pytest.approx(4_127_413, abs=1)
+    assert ej[2023].endeudamiento == pytest.approx(0.602, abs=1e-3)
+    assert ej[2024].endeudamiento == pytest.approx(0.631, abs=1e-3)
+    assert ej[2025].endeudamiento == pytest.approx(0.679, abs=1e-3)

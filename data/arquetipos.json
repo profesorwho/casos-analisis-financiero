@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "comentario": "Definiciones de arquetipos cuantitativos (sección 2.24 de la especificación) para el núcleo genérico de motor/evolucion_arquetipo.py. Cada 'efecto' declara qué variable mueve el arquetipo, en qué dirección (+1/-1) y contra qué ratio ancla del catálogo se mide/acota — no contiene lógica, solo los datos de la tabla de la sección 2.24. El 'tipo' de cada efecto selecciona qué función genérica del motor lo aplica (ver motor/arquetipos.py).",
+  "arquetipos": [
+    {
+      "id": "crecimiento_destruccion_caja",
+      "numero": 1,
+      "nombre": "Crecimiento con destrucción de caja",
+      "rango_crecimiento_pleno": {
+        "leve": [0.03, 0.08],
+        "moderado": [0.08, 0.15],
+        "fuerte": [0.15, 0.25]
+      },
+      "efectos": [
+        {
+          "tipo": "masa_circulante",
+          "variable": "existencias",
+          "formula": "rotacion",
+          "ratio_catalogo": "ratios.rotacion_existencias",
+          "direccion": -1
+        },
+        {
+          "tipo": "masa_circulante",
+          "variable": "realizable",
+          "formula": "dias",
+          "ratio_catalogo": "ratios.cobro_dias",
+          "direccion": 1
+        }
+      ]
+    },
+    {
+      "id": "exceso_stock",
+      "numero": 5,
+      "nombre": "Exceso de stock",
+      "efectos": [
+        {
+          "tipo": "masa_circulante",
+          "variable": "existencias",
+          "formula": "rotacion",
+          "ratio_catalogo": "ratios.rotacion_existencias",
+          "direccion": -1
+        }
+      ]
+    },
+    {
+      "id": "mejora_margen",
+      "numero": 11,
+      "nombre": "Mejora de margen",
+      "efectos": [
+        {
+          "tipo": "pyg_primitiva",
+          "primitiva": "consumos_explotacion",
+          "ratio_catalogo": "pyg.consumos_explotacion_pct",
+          "direccion": -1
+        }
+      ]
+    },
+    {
+      "id": "apalancamiento",
+      "numero": 9,
+      "nombre": "Apalancamiento",
+      "efectos": [
+        {
+          "tipo": "apalancamiento",
+          "ratio_catalogo": "ratios.endeudamiento",
+          "direccion": 1
+        }
+      ]
+    },
+    {
+      "id": "riesgo_liquidez_pese_beneficio",
+      "numero": 15,
+      "nombre": "Riesgo de liquidez pese a beneficio",
+      "efectos": [
+        {
+          "tipo": "tesoreria",
+          "ratio_catalogo": "ratios.tesoreria",
+          "direccion": -1
+        }
+      ]
+    }
+  ]
+}

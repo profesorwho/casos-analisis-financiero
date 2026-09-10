@@ -214,15 +214,31 @@ class _PygParcial:
     modos: dict[str, str]
 
 
-def _generar_pyg_hasta_baii(rng: np.random.Generator, fila: pd.Series, ventas_objetivo: float) -> _PygParcial:
+def _generar_pyg_hasta_baii(
+    rng: np.random.Generator,
+    fila: pd.Series,
+    ventas_objetivo: float,
+    primitivas_forzadas: dict[str, float] | None = None,
+) -> _PygParcial:
     """Sortea las primitivas de la PyG que no dependen de deuda, y el tipo de interés del
     ejercicio (mismo mecanismo típico/atípico que el resto de partidas, anclado a
     ratios.coste_deuda del sector). No calcula gastos financieros ni nada de BAI en adelante:
     eso depende de la deuda financiera media del ejercicio, que en `evolucion_arquetipo` no se
-    conoce hasta después de decidir si hay contención de endeudamiento."""
+    conoce hasta después de decidir si hay contención de endeudamiento.
+
+    `primitivas_forzadas`: para un arquetipo con efecto "pyg_primitiva" (p. ej. mejora de
+    margen sobre consumos_explotacion_pct), el valor ya calculado con continuidad respecto al
+    año anterior — sustituye el sorteo de esa partida en concreto. Se registra con modo
+    "arquetipo" en vez de "tipico"/"atipico" (no es ruido, es el efecto del arquetipo).
+    """
+    primitivas_forzadas = primitivas_forzadas or {}
     brutos: dict[str, float] = {}
     modos: dict[str, str] = {}
     for nombre_salida, variable in PRIMITIVAS_PYG.items():
+        if nombre_salida in primitivas_forzadas:
+            brutos[nombre_salida] = primitivas_forzadas[nombre_salida]
+            modos[f"pyg.{nombre_salida}"] = "arquetipo"
+            continue
         huber = fila[f"pyg.{variable}.huber_9y"]
         mad = fila[f"pyg.{variable}.huber_scale_mad"]
         suelo = SUELO_PORCENTAJE if nombre_salida in PRIMITIVAS_PYG_NO_NEGATIVAS else None

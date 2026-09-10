@@ -1,8 +1,22 @@
 """Evolución de una empresa a lo largo de 3 ejercicios (2023-2025) aplicando UN arquetipo.
 
-Implementa únicamente el arquetipo 1 ("Crecimiento con destrucción de caja", sección 2.24 de
-la especificación) como prueba de concepto del mecanismo de evolución causal año a año, antes
-de generalizarlo a los otros 21 arquetipos. Sin matriz de compatibilidad, sin EFE/ECPN
+Motor GENÉRICO: qué arquetipo se aplica es un dato (`data/arquetipos.json`, cargado por
+`motor.arquetipos`), no código hardcodeado por arquetipo. Este módulo separa dos cosas:
+
+- **Mecanismo general** (reutilizable para cualquier arquetipo cuantitativo que encaje en una
+  de las 4 formas de efecto soportadas): modelo de continuidad año a año de un ratio, cascada
+  de PyG, enlace deuda-interés, contención de plausibilidad del endeudamiento, cuadre del
+  balance. Vive en funciones de este módulo que no mencionan ningún arquetipo por su nombre.
+- **Lo específico de cada arquetipo**: qué variable mueve, en qué dirección y contra qué
+  ratio ancla — vive SOLO en `data/arquetipos.json`, no en código.
+
+No todos los arquetipos cuantitativos de la sección 2.24 encajan en las 4 formas ya
+implementadas (masa_circulante, pyg_primitiva, apalancamiento, tesoreria) — ver el informe de
+clasificación en el mensaje que acompaña a este commit para el detalle de cuáles sí y cuáles
+necesitarían una forma nueva. Los arquetipos cualitativos puros (7, 19, 20, 21, 22) no pasan
+por este mecanismo en absoluto.
+
+Sin matriz de compatibilidad (combinación de varios arquetipos a la vez), sin EFE/ECPN
 completos, sin dividendos.
 
 Diseño del mecanismo (decisiones no explícitas en la fórmula general de la sección 2.24, que
@@ -11,92 +25,130 @@ había que fijar para poder implementar):
 - **2023 es el único ejercicio que usa el catálogo + ruido** (vía `motor.empresa_base` tal
   cual). 2024 y 2025 no vuelven a sortear existencias/clientes/tesorería desde el catálogo:
   se derivan del ejercicio anterior + el efecto del arquetipo ese año.
-- **Ventas**: crecen cada año según un "crecimiento pleno" (objetivo a intensidad 100%, un
-  único valor por empresa, sorteado una vez dentro de un rango por intensidad) escalado por la
-  fracción del año (60% en 2024, 100% en 2025):
-    leve: 3%-8% · moderado: 8%-15% · fuerte: 15%-25% (punto medio ~ criterio informal ACCID
-    de crecimiento "moderado" citado en la especificación; rango completo para dar variabilidad).
-- **Existencias y clientes (= partida "realizable")**: la rotación de existencias y el plazo
-  de cobro se mueven cada año en un `intensidad_base x fracción_año` respecto al propio ratio
-  del año anterior de la empresa (no respecto al valor Huber directamente): rotación de
-  existencias × (1 − intensidad_efectiva), plazo de cobro × (1 + intensidad_efectiva). Se
-  descartó anclar directamente al valor Huber del sector como haría la fórmula general de la
-  sección 2.24 (`Valor_simulado = Huber x (1+intensidad*dirección)`) porque, al ser 2023 ya un
-  sorteo con ruido propio, la distancia entre el ratio real de 2023 y el Huber del sector
-  puede ser grande por simple variabilidad estadística — anclar ahí habría provocado un salto
-  brusco en 2024 dominado por "volver a la media del sector" y no por el arquetipo, rompiendo
-  la progresión pedida (2024 más suave que 2025). El valor Huber del sector se conserva como
-  referencia de plausibilidad (suelo/techo defensivo: no se permite bajar de un 10% del Huber
-  ni superar 3x el Huber), no como objetivo al que saltar.
+- **Ventas**: si el arquetipo define su propio `rango_crecimiento_pleno` (solo el arquetipo 1,
+  por ahora — es el único cuya huella incluye "Ventas" en la sección 2.24), se sortea una vez
+  por empresa dentro de ese rango (según intensidad) y se escala por la fracción del año (60%
+  en 2024, 100% en 2025), exactamente como antes. Si el arquetipo NO define uno (5, 9, 11, 15:
+  ninguno tiene "Ventas" en su huella), la empresa sigue necesitando alguna trayectoria de
+  ventas para tener una historia de varios años — se usa un crecimiento orgánico modesto fijo
+  (`RANGO_CRECIMIENTO_ORGANICO`), sorteado una vez, SIN escalar por intensidad ni por fracción
+  del año (no es el efecto del arquetipo, es solo el telón de fondo sobre el que actúa).
+- **Ratios de continuidad (masa_circulante, pyg_primitiva)**: se mueven cada año un
+  `intensidad_base x fracción_año` respecto al propio valor del año anterior de la empresa (no
+  respecto al valor Huber directamente): se descartó anclar directamente al Huber del sector
+  como haría la fórmula general de la sección 2.24 (`Valor_simulado = Huber x
+  (1+intensidad*dirección)`) porque, al ser 2023 ya un sorteo con ruido propio, la distancia
+  entre el ratio real de 2023 y el Huber del sector puede ser grande por simple variabilidad
+  estadística — anclar ahí habría provocado un salto brusco en 2024 dominado por "volver a la
+  media del sector" y no por el arquetipo. El valor Huber del sector se conserva como
+  referencia de plausibilidad (suelo/techo defensivo), no como objetivo al que saltar.
 - **Tesorería y deuda a corto**: el resto de las masas del balance (inmovilizado, patrimonio
   neto vía resultado retenido, deuda a largo, otras partidas de pasivo corriente) crecen en
   línea con las ventas. La diferencia entre ese crecimiento "neutro" de existencias+clientes
-  y el crecimiento real (mayor, por el arquetipo) es la "NOF extra" del año: se resta primero
-  de la tesorería; si la tesorería no basta (no puede quedar negativa), el resto se cubre con
-  un aumento de deudas financieras a corto plazo. Es la forma de mantener la coherencia de
-  "un aumento de circulante no financiado con caja se financia con deuda nueva" sin tener
-  todavía el EFE completo.
-- **Patrimonio neto**: PN(año) = PN(año-1) + resultado del ejercicio(año), reparto de
-  dividendos cero (hasta que exista ECPN completo).
-- **Cuadre final**: a diferencia de `empresa_base.py` (donde la renormalización porcentual ya
-  deja el balance cuadrado y el ajuste es una excepción rara), aquí el ajuste sobre "otras
-  deudas a corto plazo" SÍ es el mecanismo habitual de cuadre en 2024 y 2025: cada masa
-  evoluciona con su propia regla (ventas, arquetipo, o resultado retenido) y no hay
-  renormalización conjunta, así que el plug absorbe la diferencia residual cada año.
+  y el crecimiento real (mayor, si el arquetipo las toca) es la "NOF extra" del año: se resta
+  primero de la tesorería; si la tesorería no basta, el resto se cubre con deuda a corto nueva.
+- **Patrimonio neto**: PN(año) = PN(año-1) + resultado del ejercicio(año) − lo que financie el
+  efecto "apalancamiento" ese año (ver más abajo), sin más dividendos (hasta que exista ECPN).
+- **Cuadre final**: el ajuste sobre "otras deudas a corto plazo" es el mecanismo habitual de
+  cuadre en 2024 y 2025 (no una excepción rara como en `empresa_base.py`): cada masa evoluciona
+  con su propia regla y no hay renormalización conjunta, así que el plug absorbe la diferencia
+  residual cada año — incluida la pequeña aproximación de segundo orden del efecto
+  "apalancamiento" (ver abajo).
 
 - **Control de plausibilidad del endeudamiento.** Cuando el déficit de caja se traslada a
   deudas financieras a corto plazo, se comprueba el endeudamiento resultante (pasivo
   total/activo total) contra `ratios.endeudamiento.huber_9y + 3 x huber_scale_mad` del sector.
-  Si lo superaría, NO se deja crecer la deuda sin límite. **Decisión de diseño importante,
-  distinta de lo pedido inicialmente:** se descartó reducir directamente el patrimonio neto
-  como palanca de contención. Con el activo fijado por el propio arquetipo, la identidad
-  contable Activo = PN + Pasivo implica endeudamiento = 1 − PN/Activo — bajar el PN, con el
-  activo fijo, **exige más pasivo, no menos**: habría empeorado el endeudamiento que se quería
-  contener, no solo habría sido "un efecto secundario sin control" sino matemáticamente
-  contrario al objetivo (se verificó derivando la identidad a mano antes de implementar; ver
-  `_evolucionar_un_año`). La palanca que sí reduce el endeudamiento resultante manteniendo el
-  cuadre es amortiguar el propio exceso de circulante del arquetipo ese año (existencias
-  primero, clientes si no basta), limitado como máximo a revertir el exceso por encima del
-  crecimiento proporcional a ventas — nunca por debajo de lo que habría crecido sin arquetipo.
-  El patrimonio neto no se toca: en este modelo mínimo no existe todavía una partida de
-  "deterioro de existencias" en la cascada de PyG que conecte esa amortiguación con una pérdida
-  contable — inventarlo habría sido una pérdida no trazable en las cuentas, así que se deja
-  fuera hasta que el modelo tenga esa partida. El caso queda marcado explícitamente
-  (`riesgo_endeudamiento=True`, con el endeudamiento sin contener y el importe amortiguado) como
-  señal para el alumnado, se haya podido contener del todo o no.
+  Si lo superaría, NO se deja crecer la deuda sin límite: se amortigua el propio exceso de las
+  masas de circulante que el arquetipo haya tocado (en el orden en que aparecen en su
+  definición), limitado como máximo a revertir el exceso por encima del crecimiento
+  proporcional a ventas — nunca por debajo. El patrimonio neto no se toca como palanca de
+  contención: con el activo fijado por el arquetipo, la identidad contable Activo = PN + Pasivo
+  implica endeudamiento = 1 − PN/Activo — bajar el PN, con el activo fijo, exige MÁS pasivo, no
+  menos (se verificó derivando la identidad a mano antes de implementar). Si el arquetipo no
+  toca ninguna masa de circulante (9, 11, 15), no hay nada que amortiguar: el caso queda
+  marcado igualmente (`riesgo_endeudamiento=True`, `contencion_al_limite=True`,
+  `deterioro_aplicado_eur=0.0`) como señal, sin poder corregirse por esta vía.
+  Es un punto fijo (menos deuda -> menos interés -> más PN -> hace falta amortiguar menos), no
+  una fórmula cerrada de una sola pasada: se itera acotado (`MAX_ITERACIONES_CONTENCION`).
 
 - **Gastos financieros = deuda financiera media x tipo de interés del sector**, no un % de PyG
   sorteado de forma independiente (ver `motor.empresa_base._generar_pyg_hasta_baii` /
   `_completar_pyg_con_deuda`). La deuda financiera media de un ejercicio es el promedio entre
-  el saldo de deudas financieras (largo + corto plazo) al inicio (= balance del año anterior) y
-  al final del propio ejercicio. Esto crea una dependencia circular con la contención de
-  endeudamiento: la deuda financiera final depende de si hay contención (que amortigua
-  existencias/clientes y por tanto la deuda a corto necesaria), pero decidir si hay contención
-  exige conocer el patrimonio neto, que exige conocer el resultado del ejercicio, que exige
-  conocer los gastos financieros, que exigen conocer la deuda financiera final.
+  el saldo de deudas financieras (largo + corto plazo) al inicio y al final del propio
+  ejercicio. Esto crea una dependencia circular con la contención de endeudamiento (la deuda
+  financiera final depende de si hay contención, contener depende del PN, el PN depende de los
+  gastos financieros, que dependen de la deuda financiera final): se resuelve evaluando primero
+  el escenario sin contener (deuda, interés, resultado, PN, balance ya cuadrado) y, solo si
+  hace falta contener, reevaluando el escenario completo con las cifras ya amortiguadas — sin
+  reabrir la decisión de contención.
 
-  Se resuelve en como mucho dos pasadas, sin bucle abierto: (1) se sortean las primitivas de
-  PyG y el tipo de interés UNA sola vez (no dependen de deuda); (2) se evalúa el escenario
-  "bruto" (existencias/clientes al objetivo pleno del arquetipo, sin contener) calculando su
-  deuda financiera final, su coste financiero, su resultado y su PN, y con eso el balance
-  candidato ya cuadrado; (3) se comprueba el endeudamiento de ese candidato contra el techo; si
-  no lo supera, ese candidato ES el resultado final (deuda usada para el interés = deuda del
-  balance final, sin aproximación). Si lo supera, se amortigua existencias/clientes como ya se
-  describe arriba, y se vuelve a evaluar el escenario completo (deuda financiera, gastos
-  financieros, resultado, PN, balance) una segunda vez con las cifras ya amortiguadas — sin
-  volver a comprobar si la contención sigue siendo necesaria tras este ajuste fino (evitaría
-  un bucle sin garantía de terminar). El importe a amortiguar se calcula con el patrimonio neto
-  del escenario bruto (no el final, que aún no existe en ese momento): es una aproximación de
-  segundo orden — el efecto de "menos deuda → menos interés → más beneficio → más PN" sobre el
-  propio importe de contención es pequeño frente al efecto principal del arquetipo, y aceptarlo
-  evita convertir esto en un solver iterativo.
+- **Arquetipo 9 (apalancamiento) — mecanismo específico, no una forma más del molde genérico
+  de "ratio de continuidad".** Sube el endeudamiento objetivo (continuidad desde el propio
+  endeudamiento del año anterior, topado al mismo techo de plausibilidad de la sección
+  anterior) y resuelve en forma cerrada (sin iterar: ni el activo ni el pasivo "base" dependen
+  del interés) cuánta deuda financiera a largo plazo extra (W) hace falta para llegar a ese
+  endeudamiento objetivo, dado el activo y el resto del pasivo de ese ejercicio. Esa W se suma
+  a deudas_fin_largo, y se resta de patrimonio neto — la deuda nueva financia una distribución,
+  no una compra de activo (si no se restara del PN, el plug general de cuadre simplemente
+  movería la misma W desde "otras deudas a corto" a "deudas a largo": el endeudamiento total no
+  cambiaría nada, solo la composición de la deuda — se detectó exactamente así al derivar la
+  identidad contable antes de implementar). La W calculada ignora el pequeño efecto de segundo
+  orden de que la deuda nueva también sube el gasto financiero (y por tanto baja algo más el
+  PN de lo que la fórmula asume): se deja que el plug de cuadre general absorba ese residuo,
+  igual que ya hace con otras aproximaciones de este módulo. La distribución nunca reparte más
+  PN del que hay ese ejercicio (`apalancamiento_extra_eur` se topa a `max(0, PN antes de
+  distribuir)`), pero esto NO impide que el PN acabe en negativo en ejercicios posteriores por
+  pérdidas normales: el interés de la deuda ya acumulada de un año sube el gasto financiero del
+  siguiente, y si el resultado operativo de ese año es débil (sector volátil + sorteo de base
+  ya débil), el PN puede erosionarse hasta negativo sin que haya una distribución nueva ese
+  año. Verificado en pruebas de estrés: ocurre en 4 de 3.000 combinaciones (todas del mismo
+  sector pequeño y volátil, Restaurantes). No se trata como valor absurdo — a diferencia de una
+  masa físicamente imposible (existencias negativas), un patrimonio neto negativo es un estado
+  contable real (empresa descapitalizada) — pero es una limitación a tener presente: este
+  modelo mínimo no marca todavía una alerta de insolvencia/continuidad para ese caso.
+
+  **Efecto de segundo año — "espiral de deuda" (detectado en pruebas, no buscado a propósito;
+  SÍ se detecta y se señaliza, aunque no siempre se pueda corregir del todo).** El interés de
+  la deuda YA acumulada de un año anterior sigue devengando en los siguientes: si ese interés
+  es alto (deuda grande) y el resultado operativo del año es flojo, el PN crece poco o
+  retrocede, mientras el resto del pasivo (que sí crece con ventas, incluida la propia deuda
+  heredada) no se frena — el endeudamiento de un año puede acabar por encima del techo sin que
+  se añada ni un euro de deuda nueva ESE año (`apalancamiento_extra_eur=0`). La comprobación de
+  plausibilidad de endeudamiento (ver más arriba) se ejecuta SIEMPRE, no solo cuando hay
+  déficit de NOF o deuda nueva de apalancamiento ese año concreto — así que este caso sí se
+  detecta (`riesgo_endeudamiento=True`). Lo que NO puede es corregirlo por la vía habitual: el
+  arquetipo "apalancamiento" no toca ninguna masa de circulante, así que no hay nada que
+  amortiguar (`contencion_al_limite=True`, `deterioro_aplicado_eur=0`) — queda marcado como
+  caso de riesgo, no arreglado en silencio. Corregirlo de verdad exigiría tocar el patrimonio
+  neto como palanca, que ya se ha descartado por la misma razón de siempre (empeoraría el
+  propio ratio que se quiere contener). Es una "espiral de deuda" real (el interés de la deuda
+  existente erosiona el patrimonio, empeorando el ratio sin decisión nueva alguna) — coherente
+  con lo que le pasa a una empresa realmente sobreapalancada, aunque no era el objetivo
+  explícito de este arquetipo. Cuantificado en pruebas de estrés (1.296 combinaciones del
+  arquetipo, sector x segmento x intensidad x semilla): 130 (10%) terminan 2025 con un
+  patrimonio neto por debajo del 15% del activo partiendo de una base sana en 2023 (>=15% en
+  2023) — los 130 quedan señalizados por esta vía, 0 pasan desapercibidos.
+
+- **Arquetipo 15 (riesgo de liquidez pese a beneficio) — limitación documentada.** Se decidió
+  tras probarlo que SÍ encaja en el mecanismo general si se modela como "la tesorería (variable
+  `disponible`) crece por debajo de lo proporcional a ventas, un intensidad_efectiva" —
+  reutiliza el pipeline de déficit/deuda ya existente sin cambios (la tesorería más baja de lo
+  normal simplemente hace más probable que aparezca déficit, financiado con deuda a corto,
+  exactamente el mecanismo que ya había). El resultado del ejercicio no se toca en absoluto
+  (sigue la cascada de PyG normal), lo que produce justo la divergencia "beneficio sano, caja
+  tensa" de la huella del arquetipo. La limitación real: `ratios.tesoreria` del catálogo es
+  (realizable+disponible)/pasivo_corriente (se comprobó numéricamente contra las masas del
+  balance), no disponible/ventas — que es la unidad que usa esta implementación, por
+  consistencia con existencias/realizable y para no tener que mover realizable también (lo que
+  reabriría el problema de "dos variables a la vez"). Por eso este efecto NO usa el Huber de
+  `ratios.tesoreria` como suelo/techo de plausibilidad (las unidades no son comparables): solo
+  el suelo genérico de "disponible no puede ser negativo" que ya tenía el pipeline general.
 
 - **Trazabilidad (sección 2.15).** `EvolucionArquetipo` guarda `arquetipo`, `intensidad`,
   `semilla`, `catalogo_version` (hash del CSV del catálogo usado — se deriva del propio
-  archivo, no de un número mantenido a mano, para que no se desincronice si el catálogo
-  cambia sin querer) y `pgc_version` (fijo por ahora: solo hay una versión normativa en
-  juego). Falta la versión normativa "de verdad" variable y el ID del caso/variante — se
-  añadirán cuando exista un repositorio de casos.
+  archivo, no de un número mantenido a mano) y `pgc_version` (fijo por ahora: solo hay una
+  versión normativa en juego). Falta la versión normativa "de verdad" variable y el ID del
+  caso/variante — se añadirán cuando exista un repositorio de casos.
 """
 
 from __future__ import annotations
@@ -106,6 +158,14 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from motor.arquetipos import (
+    DefinicionArquetipo,
+    EfectoApalancamiento,
+    EfectoMasaCirculante,
+    EfectoPygPrimitiva,
+    EfectoTesoreria,
+    cargar_arquetipos,
+)
 from motor.catalogo import cargar_y_validar_catalogo
 from motor.empresa_base import (
     TOLERANCIA_CUADRE_EUR,
@@ -116,7 +176,6 @@ from motor.empresa_base import (
 )
 from motor.empresa_base import _completar_pyg_con_deuda, _generar_pyg_hasta_baii  # reutiliza la cascada de PyG
 
-ARQUETIPO_ID = "crecimiento_destruccion_caja"
 AÑOS = (2023, 2024, 2025)
 AÑO_BASE = 2023
 
@@ -127,25 +186,30 @@ INTENSIDADES_VALIDAS = frozenset({"leve", "moderado", "fuerte"})
 INTENSIDAD_BASE = {"leve": 0.15, "moderado": 0.30, "fuerte": 0.50}
 FRACCION_AÑO = {2024: 0.6, 2025: 1.0}
 
-# Rango de crecimiento de ventas "a intensidad completa" (100%), por nivel de intensidad.
-RANGO_CRECIMIENTO_PLENO = {
-    "leve": (0.03, 0.08),
-    "moderado": (0.08, 0.15),
-    "fuerte": (0.15, 0.25),
-}
+# Crecimiento de ventas para arquetipos que no definen su propio rango_crecimiento_pleno (ver
+# docstring del módulo). Fijo, no escalado por intensidad ni por fracción del año.
+RANGO_CRECIMIENTO_ORGANICO = (0.01, 0.04)
 
 DIAS_AÑO = 365.0
 
-# Suelo/techo defensivo frente al valor Huber del sector (evita valores absurdos en casos
-# extremos; en escenarios moderado/fuerte normales no debería llegar a activarse nunca).
-FRACCION_MINIMA_ROTACION_VS_HUBER = 0.10
-FRACCION_MAXIMA_COBRO_DIAS_VS_HUBER = 3.0
+# Suelo/techo defensivo frente al valor Huber del sector para cualquier ratio de continuidad
+# (masa_circulante, pyg_primitiva). Evita valores absurdos en casos extremos; en escenarios
+# moderado/fuerte normales no debería llegar a activarse casi nunca.
+FRACCION_MINIMA_VS_HUBER = 0.10
+FRACCION_MAXIMA_VS_HUBER = 3.0
 
 # Techo de plausibilidad del endeudamiento: huber_9y + N desviaciones (huber_scale_mad) del
-# sector. Tope absoluto adicional para que la fórmula de contención (que divide por
-# 1-techo_endeudamiento) no degenere si un sector tuviera huber+N*mad >= 1.
+# sector, recortado a este tope absoluto. Además de evitar que la fórmula de contención (que
+# divide por 1-techo_endeudamiento) degenere si un sector tuviera huber+N*mad >= 1, es un
+# límite de capitalización mínima razonable: 0.85 de endeudamiento equivale a un patrimonio
+# neto de solo el 15% del activo. Se bajó de 0,95 (un valor puesto solo por la razón numérica
+# de arriba, sin calibrar como límite económico) tras comprobar en pruebas de estrés que 26 de
+# 1.296 combinaciones del arquetipo "apalancamiento" quedaban con PN/Activo por debajo del 15%
+# en 2025 sin que el mecanismo de contención llegara a activarse — precisamente porque, para
+# los sectores cuyo huber+3mad ya supera 0,95, el endeudamiento real (0,85-0,95) quedaba
+# "dentro" de ese techo tan laxo.
 N_DESVIACIONES_TECHO_ENDEUDAMIENTO = 3.0
-TECHO_ENDEUDAMIENTO_MAXIMO_ABSOLUTO = 0.95
+TECHO_ENDEUDAMIENTO_MAXIMO_ABSOLUTO = 0.85
 
 # La contención de endeudamiento es un punto fijo (menos deuda -> menos interés -> más PN ->
 # hace falta amortiguar menos), no una fórmula cerrada de una sola pasada: se itera acotado.
@@ -164,17 +228,25 @@ class EjercicioEmpresa:
     crecimiento_ventas: float | None  # None en el año base (2023)
     balance_eur: dict[str, float]
     pyg_eur: dict[str, float]
+    pyg_pct: dict[str, float]
     modos: dict[str, str]
     ajuste_cuadre_eur: float
-    rotacion_existencias: float
-    cobro_dias: float
     deuda_extra_por_nof_eur: float  # 0.0 salvo cuando la tesorería no basta para absorber la NOF
     endeudamiento: float  # pasivo total / activo total, ya con cualquier contención aplicada
     cobertura_gastos_financieros: float  # BAII / gastos financieros
     riesgo_endeudamiento: bool = False
     endeudamiento_sin_contener: float | None = None  # solo si riesgo_endeudamiento=True
-    deterioro_aplicado_eur: float = 0.0  # exceso de existencias/clientes amortiguado por plausibilidad
-    contencion_al_limite: bool = False  # True si no se pudo llegar al techo: se agotó el margen de amortiguación
+    deterioro_aplicado_eur: float = 0.0  # exceso de circulante amortiguado por plausibilidad
+    contencion_al_limite: bool = False  # True si no se pudo llegar al techo (nada que amortiguar, o se agotó)
+    apalancamiento_extra_eur: float = 0.0  # deuda a largo extra por el efecto "apalancamiento", si lo hay
+
+    @property
+    def rotacion_existencias(self) -> float:
+        return self.ventas / self.balance_eur["existencias"]
+
+    @property
+    def cobro_dias(self) -> float:
+        return self.balance_eur["realizable"] / self.ventas * DIAS_AÑO
 
 
 @dataclass(frozen=True)
@@ -189,14 +261,6 @@ class EvolucionArquetipo:
     ejercicios: dict[int, EjercicioEmpresa]
     catalogo_version: str  # hash del CSV del catálogo usado para generar el caso (sección 2.15)
     pgc_version: str = PGC_VERSION
-
-
-def _rotacion_existencias(ventas: float, existencias_eur: float) -> float:
-    return ventas / existencias_eur
-
-
-def _cobro_dias(ventas: float, realizable_eur: float) -> float:
-    return realizable_eur / ventas * DIAS_AÑO
 
 
 def _endeudamiento(balance_eur: dict[str, float]) -> float:
@@ -219,14 +283,58 @@ def _ejercicio_desde_empresa_base(empresa: EmpresaBase) -> EjercicioEmpresa:
         crecimiento_ventas=None,
         balance_eur=dict(empresa.balance_eur),
         pyg_eur=dict(empresa.pyg_eur),
+        pyg_pct=dict(empresa.pyg_pct),
         modos=dict(empresa.modos),
         ajuste_cuadre_eur=empresa.ajuste_cuadre_eur,
-        rotacion_existencias=_rotacion_existencias(empresa.ventas_objetivo, empresa.balance_eur["existencias"]),
-        cobro_dias=_cobro_dias(empresa.ventas_objetivo, empresa.balance_eur["realizable"]),
         deuda_extra_por_nof_eur=0.0,
         endeudamiento=_endeudamiento(empresa.balance_eur),
         cobertura_gastos_financieros=_cobertura_gastos_financieros(empresa.pyg_eur),
     )
+
+
+# --------------------------------------------------------------------------------------------
+# Mecanismo general: mover un ratio un intensidad_efectiva respecto a su propio valor anterior.
+# --------------------------------------------------------------------------------------------
+
+
+def _mover_ratio_continuo(valor_anterior: float, direccion: int, intensidad_efectiva: float, huber: float) -> float:
+    """Desplaza un ratio un `intensidad_efectiva` respecto a su propio valor del año anterior,
+    con suelo/techo de plausibilidad frente al Huber del sector (nunca el objetivo en sí — ver
+    docstring del módulo)."""
+    nuevo = valor_anterior * (1 + direccion * intensidad_efectiva)
+    if direccion < 0:
+        return max(nuevo, FRACCION_MINIMA_VS_HUBER * huber)
+    return min(nuevo, FRACCION_MAXIMA_VS_HUBER * huber)
+
+
+def _masa_circulante_objetivo(
+    efecto: EfectoMasaCirculante, anterior: EjercicioEmpresa, ventas: float, fila: pd.Series, intensidad_efectiva: float
+) -> float:
+    huber = fila[f"{efecto.ratio_catalogo}.huber_9y"]
+    if efecto.formula == "rotacion":
+        ratio_anterior = anterior.ventas / anterior.balance_eur[efecto.variable]
+        nuevo_ratio = _mover_ratio_continuo(ratio_anterior, efecto.direccion, intensidad_efectiva, huber)
+        return ventas / nuevo_ratio
+    ratio_anterior = anterior.balance_eur[efecto.variable] / anterior.ventas * DIAS_AÑO
+    nuevo_ratio = _mover_ratio_continuo(ratio_anterior, efecto.direccion, intensidad_efectiva, huber)
+    return nuevo_ratio / DIAS_AÑO * ventas
+
+
+def _pyg_primitiva_objetivo(
+    efecto: EfectoPygPrimitiva, anterior: EjercicioEmpresa, fila: pd.Series, intensidad_efectiva: float
+) -> float:
+    huber = fila[f"{efecto.ratio_catalogo}.huber_9y"]
+    valor_anterior = anterior.pyg_pct[efecto.primitiva]
+    return _mover_ratio_continuo(valor_anterior, efecto.direccion, intensidad_efectiva, huber)
+
+
+def _disponible_proporcional_con_efecto(
+    efecto: EfectoTesoreria | None, disponible_proporcional_eur: float, intensidad_efectiva: float
+) -> float:
+    if efecto is None:
+        return disponible_proporcional_eur
+    factor = max(0.0, 1 + efecto.direccion * intensidad_efectiva)
+    return disponible_proporcional_eur * factor
 
 
 def _evolucionar_un_año(
@@ -236,40 +344,48 @@ def _evolucionar_un_año(
     rng_pyg: np.random.Generator,
     crecimiento_ventas: float,
     intensidad_efectiva: float,
+    definicion: DefinicionArquetipo,
 ) -> EjercicioEmpresa:
     ventas = anterior.ventas * (1 + crecimiento_ventas)
 
-    # --- Existencias: la rotación empeora un intensidad_efectiva respecto al propio año anterior ---
-    huber_rotacion_existencias = fila["ratios.rotacion_existencias.huber_9y"]
-    rotacion_existencias = anterior.rotacion_existencias * (1 - intensidad_efectiva)
-    rotacion_existencias = max(rotacion_existencias, FRACCION_MINIMA_ROTACION_VS_HUBER * huber_rotacion_existencias)
-    existencias_eur = ventas / rotacion_existencias
+    efectos_masa_circulante = [e for e in definicion.efectos if isinstance(e, EfectoMasaCirculante)]
+    efectos_pyg = [e for e in definicion.efectos if isinstance(e, EfectoPygPrimitiva)]
+    efectos_apalancamiento = [e for e in definicion.efectos if isinstance(e, EfectoApalancamiento)]
+    efectos_tesoreria = [e for e in definicion.efectos if isinstance(e, EfectoTesoreria)]
+    efecto_tesoreria = efectos_tesoreria[0] if efectos_tesoreria else None
 
-    # --- Clientes (realizable): el plazo de cobro se alarga un intensidad_efectiva respecto al anterior ---
-    huber_cobro_dias = fila["ratios.cobro_dias.huber_9y"]
-    cobro_dias = anterior.cobro_dias * (1 + intensidad_efectiva)
-    cobro_dias = min(cobro_dias, FRACCION_MAXIMA_COBRO_DIAS_VS_HUBER * huber_cobro_dias)
-    realizable_eur = cobro_dias / DIAS_AÑO * ventas
-
-    existencias_proporcional_eur = anterior.balance_eur["existencias"] * (1 + crecimiento_ventas)
-    realizable_proporcional_eur = anterior.balance_eur["realizable"] * (1 + crecimiento_ventas)
+    # --- Masas de circulante: proporcional a ventas por defecto, desviadas si el arquetipo
+    # las toca (existencias/realizable son las únicas variables soportadas por ahora). ---
+    variables_circulante = {"existencias": anterior.balance_eur["existencias"], "realizable": anterior.balance_eur["realizable"]}
+    proporcional_circulante = {
+        variable: valor * (1 + crecimiento_ventas) for variable, valor in variables_circulante.items()
+    }
+    objetivos_circulante = dict(proporcional_circulante)
+    for efecto in efectos_masa_circulante:
+        objetivos_circulante[efecto.variable] = _masa_circulante_objetivo(efecto, anterior, ventas, fila, intensidad_efectiva)
+    existencias_eur = objetivos_circulante["existencias"]
+    realizable_eur = objetivos_circulante["realizable"]
+    existencias_proporcional_eur = proporcional_circulante["existencias"]
+    realizable_proporcional_eur = proporcional_circulante["realizable"]
 
     # --- Resto de masas: crecen en línea con las ventas (patrimonio neto se trata aparte) ---
     activo_no_corriente_eur = anterior.balance_eur["activo_no_corriente"] * (1 + crecimiento_ventas)
-    pasivo_no_corriente_eur = {
-        "deudas_fin_largo": anterior.balance_eur["deudas_fin_largo"] * (1 + crecimiento_ventas),
-        "otras_deudas_largo": anterior.balance_eur["otras_deudas_largo"] * (1 + crecimiento_ventas),
-    }
+    deudas_fin_largo_proporcional_eur = anterior.balance_eur["deudas_fin_largo"] * (1 + crecimiento_ventas)
+    otras_deudas_largo_eur = anterior.balance_eur["otras_deudas_largo"] * (1 + crecimiento_ventas)
     acreedores_comerciales_eur = anterior.balance_eur["acreedores_comerciales"] * (1 + crecimiento_ventas)
     otras_deudas_corto_eur = anterior.balance_eur["otras_deudas_corto"] * (1 + crecimiento_ventas)
     deudas_fin_corto_proporcional_eur = anterior.balance_eur["deudas_fin_corto"] * (1 + crecimiento_ventas)
-    disponible_proporcional_eur = anterior.balance_eur["disponible"] * (1 + crecimiento_ventas)
+    disponible_proporcional_eur = _disponible_proporcional_con_efecto(
+        efecto_tesoreria, anterior.balance_eur["disponible"] * (1 + crecimiento_ventas), intensidad_efectiva
+    )
     deuda_financiera_inicio_eur = anterior.balance_eur["deudas_fin_largo"] + anterior.balance_eur["deudas_fin_corto"]
 
-    # Primitivas de PyG (no dependen de deuda) + tipo de interés del sector: se sortean UNA
-    # sola vez: los gastos financieros (y por tanto BAI/resultado) se completan más abajo,
-    # dos veces como mucho, según haga falta o no contener el endeudamiento (ver docstring).
-    parcial_pyg = _generar_pyg_hasta_baii(rng_pyg, fila, ventas)
+    # --- PyG: primitivas no financieras + tipo de interés, sorteadas UNA sola vez. Las que el
+    # arquetipo toca (efecto pyg_primitiva) se fuerzan por continuidad en vez de sortearse. ---
+    primitivas_forzadas = {
+        efecto.primitiva: _pyg_primitiva_objetivo(efecto, anterior, fila, intensidad_efectiva) for efecto in efectos_pyg
+    }
+    parcial_pyg = _generar_pyg_hasta_baii(rng_pyg, fila, ventas, primitivas_forzadas=primitivas_forzadas)
 
     def _deficit_y_deuda_corto(existencias_eur: float, realizable_eur: float) -> tuple[float, float, float]:
         nof_extra_eur = max(0.0, existencias_eur - existencias_proporcional_eur) + max(
@@ -286,7 +402,12 @@ def _evolucionar_un_año(
         return disponible_eur, deudas_fin_corto_eur, deuda_extra_por_nof_eur
 
     def _construir_balance(
-        existencias_eur: float, realizable_eur: float, disponible_eur: float, deudas_fin_corto_eur: float, patrimonio_neto_eur: float
+        existencias_eur: float,
+        realizable_eur: float,
+        disponible_eur: float,
+        deudas_fin_corto_eur: float,
+        deudas_fin_largo_eur: float,
+        patrimonio_neto_eur: float,
     ) -> tuple[dict[str, float], float]:
         balance = {
             "activo_no_corriente": activo_no_corriente_eur,
@@ -295,9 +416,9 @@ def _evolucionar_un_año(
             "realizable": realizable_eur,
             "disponible": disponible_eur,
             "patrimonio_neto": patrimonio_neto_eur,
-            "pasivo_no_corriente": pasivo_no_corriente_eur["deudas_fin_largo"] + pasivo_no_corriente_eur["otras_deudas_largo"],
-            "deudas_fin_largo": pasivo_no_corriente_eur["deudas_fin_largo"],
-            "otras_deudas_largo": pasivo_no_corriente_eur["otras_deudas_largo"],
+            "pasivo_no_corriente": deudas_fin_largo_eur + otras_deudas_largo_eur,
+            "deudas_fin_largo": deudas_fin_largo_eur,
+            "otras_deudas_largo": otras_deudas_largo_eur,
             "pasivo_corriente": acreedores_comerciales_eur + deudas_fin_corto_eur + otras_deudas_corto_eur,
             "acreedores_comerciales": acreedores_comerciales_eur,
             "deudas_fin_corto": deudas_fin_corto_eur,
@@ -328,104 +449,144 @@ def _evolucionar_un_año(
         return balance, ajuste_cuadre_eur
 
     def _evaluar(
-        existencias_eur: float, realizable_eur: float
+        existencias_eur: float, realizable_eur: float, extra_deuda_largo_eur: float = 0.0
     ) -> tuple[dict[str, float], float, float, dict[str, float], dict[str, float]]:
-        """Evalúa un escenario de existencias/clientes de forma autoconsistente: la deuda
-        financiera final de ESE escenario determina los gastos financieros de ESE escenario."""
+        """Evalúa un escenario de forma autoconsistente: la deuda financiera final de ESE
+        escenario (incluida la extra por apalancamiento, si la hay) determina sus propios
+        gastos financieros. `extra_deuda_largo_eur` financia una distribución a PN por el
+        mismo importe (ver docstring del módulo, sección "Arquetipo 9")."""
         disponible_eur, deudas_fin_corto_eur, deuda_extra_por_nof_eur = _deficit_y_deuda_corto(
             existencias_eur, realizable_eur
         )
-        deuda_financiera_fin_eur = pasivo_no_corriente_eur["deudas_fin_largo"] + deudas_fin_corto_eur
+        deudas_fin_largo_eur = deudas_fin_largo_proporcional_eur + extra_deuda_largo_eur
+        deuda_financiera_fin_eur = deudas_fin_largo_eur + deudas_fin_corto_eur
         deuda_financiera_media_eur = (deuda_financiera_inicio_eur + deuda_financiera_fin_eur) / 2
         pyg_pct, pyg_eur = _completar_pyg_con_deuda(parcial_pyg, deuda_financiera_media_eur)
-        patrimonio_neto_eur = anterior.balance_eur["patrimonio_neto"] + pyg_eur["resultado_ejercicio"]
+        patrimonio_neto_eur = (
+            anterior.balance_eur["patrimonio_neto"] + pyg_eur["resultado_ejercicio"] - extra_deuda_largo_eur
+        )
         balance, ajuste_cuadre_eur = _construir_balance(
-            existencias_eur, realizable_eur, disponible_eur, deudas_fin_corto_eur, patrimonio_neto_eur
+            existencias_eur, realizable_eur, disponible_eur, deudas_fin_corto_eur, deudas_fin_largo_eur, patrimonio_neto_eur
         )
         return balance, ajuste_cuadre_eur, deuda_extra_por_nof_eur, pyg_pct, pyg_eur
 
-    balance_eur, ajuste_cuadre_eur, deuda_extra_por_nof_eur, pyg_pct, pyg_eur = _evaluar(existencias_eur, realizable_eur)
+    huber_endeudamiento = fila["ratios.endeudamiento.huber_9y"]
+    mad_endeudamiento = fila["ratios.endeudamiento.huber_scale_mad"]
+    techo_endeudamiento = min(
+        huber_endeudamiento + N_DESVIACIONES_TECHO_ENDEUDAMIENTO * mad_endeudamiento,
+        TECHO_ENDEUDAMIENTO_MAXIMO_ABSOLUTO,
+    )
+
+    # --- Apalancamiento: sube la deuda a largo hasta un endeudamiento objetivo (topado al
+    # techo de plausibilidad), resuelto en forma cerrada sobre el balance SIN este efecto. ---
+    apalancamiento_extra_eur = 0.0
+    if efectos_apalancamiento:
+        balance_base, _, _, _, _ = _evaluar(existencias_eur, realizable_eur, extra_deuda_largo_eur=0.0)
+        # Topado al techo ANTES de aplicar la intensidad (no solo el objetivo final): si el año
+        # anterior ya quedó por encima del techo por el residuo habitual del plug de cuadre
+        # (una fracción de euro, normalmente), partir de ese valor ya excedido para multiplicar
+        # por (1+intensidad) podía compensarse mal al recortar después, dejando el endeudamiento
+        # de este año por DEBAJO del anterior (detectado en pruebas: TIC, Siderurgia). Al topar
+        # la propia base, el objetivo de cada año queda siempre <= techo, sin depender de cuánto
+        # se hubiera desviado el año anterior.
+        endeudamiento_anterior = min(_endeudamiento(anterior.balance_eur), techo_endeudamiento)
+        efecto_apalancamiento = efectos_apalancamiento[0]
+        endeudamiento_objetivo = min(
+            endeudamiento_anterior * (1 + efecto_apalancamiento.direccion * intensidad_efectiva), techo_endeudamiento
+        )
+        activo_base_eur = balance_base["activo_no_corriente"] + balance_base["activo_corriente"]
+        pasivo_base_eur = balance_base["pasivo_no_corriente"] + balance_base["pasivo_corriente"]
+        extra_deuda_objetivo_eur = max(0.0, endeudamiento_objetivo * activo_base_eur - pasivo_base_eur)
+        # La deuda nueva financia una distribución a PN (ver docstring): no se puede repartir
+        # más patrimonio neto del que hay. Sin este tope, en sectores con PN de partida bajo
+        # (poco margen entre PN y el endeudamiento objetivo) la distribución podía dejar el PN
+        # en negativo — detectado en pruebas de estrés (Restaurantes y puestos de comidas,
+        # 4 de 3.000 combinaciones). Techo defensivo, no el mecanismo habitual.
+        apalancamiento_extra_eur = min(extra_deuda_objetivo_eur, max(0.0, balance_base["patrimonio_neto"]))
+
+    balance_eur, ajuste_cuadre_eur, deuda_extra_por_nof_eur, pyg_pct, pyg_eur = _evaluar(
+        existencias_eur, realizable_eur, extra_deuda_largo_eur=apalancamiento_extra_eur
+    )
 
     deterioro_aplicado_eur = 0.0
     riesgo_endeudamiento = False
     endeudamiento_sin_contener: float | None = None
     contencion_al_limite = False
 
-    if deuda_extra_por_nof_eur > 0:
-        deficit_bruto_inicial_eur = deuda_extra_por_nof_eur  # = umbral de autofinanciación, ver más abajo
-        endeudamiento_candidato = _endeudamiento(balance_eur)
-        huber_endeudamiento = fila["ratios.endeudamiento.huber_9y"]
-        mad_endeudamiento = fila["ratios.endeudamiento.huber_scale_mad"]
-        techo_endeudamiento = min(
-            huber_endeudamiento + N_DESVIACIONES_TECHO_ENDEUDAMIENTO * mad_endeudamiento,
-            TECHO_ENDEUDAMIENTO_MAXIMO_ABSOLUTO,
-        )
+    # OJO: se comprueba SIEMPRE, no solo "if deuda_extra_por_nof_eur > 0". La primera versión
+    # de este mecanismo solo miraba el endeudamiento cuando el déficit de NOF del propio año
+    # forzaba deuda nueva — pero un arquetipo como "apalancamiento" nunca genera ese déficit
+    # (no toca existencias/realizable) y aun así puede dejar un endeudamiento disparatado por
+    # la "espiral de deuda" (ver docstring): la deuda de un año sigue devengando interés en el
+    # siguiente, erosiona el PN, y el ratio empeora sin que se añada deuda nueva ESE año. Con
+    # el chequeo condicionado a `deuda_extra_por_nof_eur`, esos casos pasaban completamente
+    # desapercibidos: verificado en una pasada de estrés de 1.296 combinaciones del arquetipo
+    # 9, 130 (10%) terminaban 2025 con patrimonio neto por debajo del 15% del activo (partiendo
+    # de una base sana en 2023) sin que `riesgo_endeudamiento` se activase ni una vez.
+    deficit_bruto_inicial_eur = deuda_extra_por_nof_eur  # = umbral de autofinanciación, ver más abajo
+    endeudamiento_candidato = _endeudamiento(balance_eur)
 
-        if endeudamiento_candidato > techo_endeudamiento:
-            # El endeudamiento con financiación 100% a deuda (YA con el cuadre general
-            # incluido, no una cifra a medio calcular) superaría el techo de plausibilidad del
-            # sector: se amortigua el propio exceso de circulante del arquetipo (existencias
-            # primero, clientes si no basta) en vez de seguir cargando todo a deuda sin límite.
-            # Nunca se reduce por debajo del crecimiento proporcional a ventas (el arquetipo,
-            # como mucho, se neutraliza ese año, no se revierte). Ver docstring del módulo: el
-            # patrimonio neto no se toca — con el activo fijado por el arquetipo, bajar el PN
-            # exigiría MÁS pasivo para cuadrar, no menos, empeorando el propio endeudamiento
-            # que se quiere contener (Activo=PN+Pasivo => endeudamiento=1-PN/Activo).
-            riesgo_endeudamiento = True
-            endeudamiento_sin_contener = endeudamiento_candidato
+    if endeudamiento_candidato > techo_endeudamiento:
+        # El endeudamiento (YA con el cuadre general incluido) supera el techo de
+        # plausibilidad del sector: se amortigua el exceso de las masas de circulante que el
+        # arquetipo haya tocado (en el orden de su definición) en vez de seguir cargando todo
+        # a deuda sin límite. Nunca se reduce por debajo del crecimiento proporcional a
+        # ventas. Si el arquetipo no toca ninguna masa de circulante (9, 11, 15) — o si el
+        # exceso disponible no basta, como en la "espiral de deuda" — no hay nada (o no hay
+        # suficiente) que amortiguar por esta vía (deterioro máximo = 0 o insuficiente): el
+        # caso queda marcado igualmente (`contencion_al_limite=True`), sin poder corregirse
+        # del todo — es la señal honesta de que el caso es económicamente implausible, no un
+        # intento fallido de arreglarlo silenciosamente.
+        riesgo_endeudamiento = True
+        endeudamiento_sin_contener = endeudamiento_candidato
 
-            existencias_bruta_eur, realizable_bruta_eur = existencias_eur, realizable_eur
-            activo_bruto_sin_amortiguar_eur = activo_no_corriente_eur + existencias_bruta_eur + realizable_bruta_eur
-            exceso_existencias_eur = max(0.0, existencias_bruta_eur - existencias_proporcional_eur)
-            exceso_realizable_eur = max(0.0, realizable_bruta_eur - realizable_proporcional_eur)
-            # Tope real de amortiguación: el menor entre (a) el exceso del propio arquetipo
-            # (no se revierte por debajo del crecimiento proporcional) y (b) el punto en el que
-            # el déficit de caja llega a cero. Más allá de (b) la tesorería empieza a quedar en
-            # positivo y "amortiguar más" solo mueve valor de existencias/clientes a caja: el
-            # activo total, el pasivo total y el PN dejan de cambiar (deudas_fin_corto ya no
-            # baja más), así que seguir no reduce el endeudamiento — solo desestabilizaba la
-            # fórmula cerrada de abajo, que asume tesorería en cero. Se detectó exactamente así:
-            # con una amortiguación mayor que necesaria, el punto fijo convergía a un
-            # endeudamiento muy por encima del techo (caso real de prueba: 43,5% vs techo 35,6%).
-            deterioro_maximo_eur = min(exceso_existencias_eur + exceso_realizable_eur, deficit_bruto_inicial_eur)
+        existencias_bruta_eur, realizable_bruta_eur = existencias_eur, realizable_eur
+        activo_bruto_sin_amortiguar_eur = activo_no_corriente_eur + existencias_bruta_eur + realizable_bruta_eur
+        excesos_eur = {
+            efecto.variable: max(
+                0.0,
+                objetivos_circulante[efecto.variable] - proporcional_circulante[efecto.variable],
+            )
+            for efecto in efectos_masa_circulante
+        }
+        # Tope real de amortiguación: el menor entre (a) el exceso del propio arquetipo y
+        # (b) el punto en el que el déficit de caja llega a cero (más allá, amortiguar más
+        # no cambia ni el activo ni el pasivo: solo mueve valor a tesorería — ver docstring).
+        # Si no hubo déficit de NOF este año (deficit_bruto_inicial_eur=0, caso apalancamiento/
+        # mejora_margen/tesorería), el tope queda en 0: no hay margen de amortiguación por esta
+        # vía y el bucle lo detecta y marca contencion_al_limite en su primera iteración.
+        deterioro_maximo_eur = min(sum(excesos_eur.values()), deficit_bruto_inicial_eur)
 
-            # El importe a amortiguar depende del PN, que depende de los gastos financieros,
-            # que dependen de la deuda financiera final — que baja al amortiguar. Se itera
-            # (acotado, no es un bucle abierto) recalculando el importe total (siempre respecto
-            # a la base "bruta" sin amortiguar, no de forma incremental) hasta que converge al
-            # techo o se agota el margen de amortiguación posible (deterioro_maximo_eur).
-            for _ in range(MAX_ITERACIONES_CONTENCION):
-                patrimonio_neto_actual_eur = balance_eur["patrimonio_neto"]
-                deterioro_objetivo_eur = activo_bruto_sin_amortiguar_eur - patrimonio_neto_actual_eur / (
-                    1 - techo_endeudamiento
-                )
-                nuevo_deterioro_aplicado_eur = min(max(deterioro_objetivo_eur, 0.0), deterioro_maximo_eur)
-                cambio_eur = abs(nuevo_deterioro_aplicado_eur - deterioro_aplicado_eur)
-                al_limite = nuevo_deterioro_aplicado_eur >= deterioro_maximo_eur
-                deterioro_aplicado_eur = nuevo_deterioro_aplicado_eur
+        for _ in range(MAX_ITERACIONES_CONTENCION):
+            patrimonio_neto_actual_eur = balance_eur["patrimonio_neto"]
+            deterioro_objetivo_eur = activo_bruto_sin_amortiguar_eur - patrimonio_neto_actual_eur / (
+                1 - techo_endeudamiento
+            )
+            nuevo_deterioro_aplicado_eur = min(max(deterioro_objetivo_eur, 0.0), deterioro_maximo_eur)
+            cambio_eur = abs(nuevo_deterioro_aplicado_eur - deterioro_aplicado_eur)
+            al_limite = nuevo_deterioro_aplicado_eur >= deterioro_maximo_eur
+            deterioro_aplicado_eur = nuevo_deterioro_aplicado_eur
 
-                # Se aplica y se reevalúa el balance con el valor de ESTA iteración antes de
-                # decidir si parar — si no, al converger se devolvería el balance de la
-                # iteración anterior, ligeramente desactualizado.
-                deterioro_existencias_eur = min(deterioro_aplicado_eur, exceso_existencias_eur)
-                deterioro_realizable_eur = deterioro_aplicado_eur - deterioro_existencias_eur
-                existencias_eur = existencias_bruta_eur - deterioro_existencias_eur
-                realizable_eur = realizable_bruta_eur - deterioro_realizable_eur
+            # Reparte el deterioro entre las variables tocadas, en el orden de la
+            # definición, agotando cada una antes de pasar a la siguiente.
+            restante = deterioro_aplicado_eur
+            objetivos_circulante_amortiguados = dict(objetivos_circulante)
+            for variable, exceso in excesos_eur.items():
+                aplicado = min(restante, exceso)
+                objetivos_circulante_amortiguados[variable] = objetivos_circulante[variable] - aplicado
+                restante -= aplicado
+            existencias_eur = objetivos_circulante_amortiguados["existencias"]
+            realizable_eur = objetivos_circulante_amortiguados["realizable"]
 
-                balance_eur, ajuste_cuadre_eur, deuda_extra_por_nof_eur, pyg_pct, pyg_eur = _evaluar(
-                    existencias_eur, realizable_eur
-                )
+            balance_eur, ajuste_cuadre_eur, deuda_extra_por_nof_eur, pyg_pct, pyg_eur = _evaluar(
+                existencias_eur, realizable_eur, extra_deuda_largo_eur=apalancamiento_extra_eur
+            )
 
-                if al_limite:
-                    contencion_al_limite = True
-                    break  # se agotó el margen de amortiguación posible sin llegar al techo
-                if cambio_eur < TOLERANCIA_CONVERGENCIA_DETERIORO_EUR:
-                    break  # convergido al techo
-
-    # Rotación de existencias y plazo de cobro "reales" del año, ya con cualquier contención
-    # aplicada (afecta a la continuidad del año siguiente y a lo que se reporta).
-    rotacion_existencias = ventas / existencias_eur
-    cobro_dias = realizable_eur / ventas * DIAS_AÑO
+            if al_limite:
+                contencion_al_limite = True
+                break  # se agotó el margen de amortiguación posible sin llegar al techo
+            if cambio_eur < TOLERANCIA_CONVERGENCIA_DETERIORO_EUR:
+                break  # convergido al techo
 
     return EjercicioEmpresa(
         año=año,
@@ -433,10 +594,9 @@ def _evolucionar_un_año(
         crecimiento_ventas=crecimiento_ventas,
         balance_eur=balance_eur,
         pyg_eur=pyg_eur,
+        pyg_pct=pyg_pct,
         modos=parcial_pyg.modos,
         ajuste_cuadre_eur=ajuste_cuadre_eur,
-        rotacion_existencias=rotacion_existencias,
-        cobro_dias=cobro_dias,
         deuda_extra_por_nof_eur=deuda_extra_por_nof_eur,
         endeudamiento=_endeudamiento(balance_eur),
         cobertura_gastos_financieros=_cobertura_gastos_financieros(pyg_eur),
@@ -444,6 +604,7 @@ def _evolucionar_un_año(
         endeudamiento_sin_contener=endeudamiento_sin_contener,
         deterioro_aplicado_eur=deterioro_aplicado_eur,
         contencion_al_limite=contencion_al_limite,
+        apalancamiento_extra_eur=apalancamiento_extra_eur,
     )
 
 
@@ -453,14 +614,26 @@ def generar_evolucion_arquetipo(
     ventas_objetivo_2023: float,
     semilla: int,
     intensidad: str,
+    arquetipo_id: str,
     catalogo: pd.DataFrame | None = None,
+    arquetipos: dict[str, DefinicionArquetipo] | None = None,
 ) -> EvolucionArquetipo:
-    """Genera 3 ejercicios (2023 base, 2024 y 2025 con el arquetipo 1 aplicado de forma
-    progresiva: 60% de la intensidad en 2024, 100% en 2025), encadenados entre sí."""
+    """Genera 3 ejercicios (2023 base, 2024 y 2025 con `arquetipo_id` aplicado de forma
+    progresiva: 60% de la intensidad en 2024, 100% en 2025), encadenados entre sí.
+
+    `arquetipo_id` es una clave de `data/arquetipos.json` (ver `motor.arquetipos`)."""
     if intensidad not in INTENSIDADES_VALIDAS:
         raise EvolucionArquetipoError(
             f"Intensidad '{intensidad}' no válida. Debe ser una de: {sorted(INTENSIDADES_VALIDAS)}"
         )
+
+    if arquetipos is None:
+        arquetipos = cargar_arquetipos()
+    if arquetipo_id not in arquetipos:
+        raise EvolucionArquetipoError(
+            f"Arquetipo '{arquetipo_id}' no reconocido. Disponibles: {sorted(arquetipos)}"
+        )
+    definicion = arquetipos[arquetipo_id]
 
     if catalogo is None:
         catalogo = cargar_y_validar_catalogo()
@@ -475,16 +648,22 @@ def generar_evolucion_arquetipo(
     rng_tendencia = np.random.default_rng(hijo_tendencia)
     rngs_pyg = {2024: np.random.default_rng(hijo_2024), 2025: np.random.default_rng(hijo_2025)}
 
-    bajo, alto = RANGO_CRECIMIENTO_PLENO[intensidad]
-    crecimiento_pleno_objetivo = bajo + rng_tendencia.random() * (alto - bajo)
+    if definicion.rango_crecimiento_pleno is not None:
+        bajo, alto = definicion.rango_crecimiento_pleno[intensidad]
+        crecimiento_pleno_objetivo = bajo + rng_tendencia.random() * (alto - bajo)
+    else:
+        bajo, alto = RANGO_CRECIMIENTO_ORGANICO
+        crecimiento_pleno_objetivo = bajo + rng_tendencia.random() * (alto - bajo)
 
     anterior = ejercicios[AÑO_BASE]
     for año in (2024, 2025):
         fraccion = FRACCION_AÑO[año]
-        crecimiento_ventas = crecimiento_pleno_objetivo * fraccion
         intensidad_efectiva = INTENSIDAD_BASE[intensidad] * fraccion
+        crecimiento_ventas = (
+            crecimiento_pleno_objetivo * fraccion if definicion.rango_crecimiento_pleno is not None else crecimiento_pleno_objetivo
+        )
         ejercicio = _evolucionar_un_año(
-            año, anterior, fila, rngs_pyg[año], crecimiento_ventas, intensidad_efectiva
+            año, anterior, fila, rngs_pyg[año], crecimiento_ventas, intensidad_efectiva, definicion
         )
         ejercicios[año] = ejercicio
         anterior = ejercicio
@@ -493,7 +672,7 @@ def generar_evolucion_arquetipo(
         sector_codigo=sector,
         sector_nombre=fila["sector"],
         segmento=segmento,
-        arquetipo=ARQUETIPO_ID,
+        arquetipo=arquetipo_id,
         intensidad=intensidad,
         semilla=semilla,
         crecimiento_pleno_objetivo=crecimiento_pleno_objetivo,
