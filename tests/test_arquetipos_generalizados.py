@@ -251,7 +251,10 @@ def test_riesgo_liquidez_no_toca_el_circulante_ni_la_pyg(catalogo, arquetipos, s
                 proporcional = ej[año_anterior].balance_eur[variable] * (1 + crecimiento_ventas)
                 assert ej[año].balance_eur[variable] == pytest.approx(proporcional, rel=1e-9)
             for modo in ej[año].modos.values():
-                assert modo in ("tipico", "atipico")  # ningún "arquetipo": no hay primitivas forzadas
+                # "derivado" = amortizaciones (ya no se sortea, se deriva de la colección de
+                # activos, ver motor/amortizacion.py) — "arquetipo" seguiría sin aparecer aquí,
+                # no hay primitivas forzadas por ningún efecto de este arquetipo.
+                assert modo in ("tipico", "atipico", "derivado")
 
 
 @pytest.mark.parametrize("sector", SECTORES)

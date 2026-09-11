@@ -17,10 +17,15 @@ Especificación funcional completa: `docs/especificaciones_proyecto_casos_balanc
 | Archivo | Responsabilidad | Función(es) pública(s) | Toca |
 |---|---|---|---|
 | `catalogo.py` | Carga y valida el catálogo de ratios sectoriales (CSV, 27 sectores × 2 segmentos, `huber_9y`/`huber_scale_mad` por ratio). | `cargar_y_validar_catalogo(ruta=...) -> DataFrame`; `version_catalogo(ruta=...) -> str` (hash usado como `catalogo_version`, sección 2.15). | Base de todo — sin arquetipos. |
-| `empresa_base.py` | Genera balance + PyG de **una** empresa, **un** ejercicio, a partir del catálogo + ruido típico/atípico. Sin arquetipos, sin serie temporal. | `generar_empresa_base(sector, segmento, ventas_objetivo, semilla, catalogo=None) -> EmpresaBase`; `resolver_fila_sector(catalogo, sector_codigo, segmento) -> pd.Series` | Año base 2023 de **cualquier** caso, con o sin arquetipo. |
+| `ruido.py` | Mecanismo de ruido mixto típico/atípico (85%/15%, normal truncada) — extraído de `empresa_base.py` a su propio módulo para que `amortizacion.py` pueda reutilizarlo sin crear una importación circular. Sin dependencias de otros módulos del motor. | `_generar_partida(rng, huber_9y, huber_scale_mad, suelo=None, techo=None) -> (float, str)`; `_normal_truncada`; `_renormalizar_a_total` | Nada de generación — `empresa_base.py` los reexporta (`from motor.ruido import ...`), así que el resto del código sigue importándolos como `motor.empresa_base.<nombre>` sin cambios. |
+| `empresa_base.py` | Genera balance + PyG de **una** empresa, **un** ejercicio, a partir del catálogo + ruido típico/atípico. Sin arquetipos, sin serie temporal. | `generar_empresa_base(sector, segmento, ventas_objetivo, semilla, catalogo=None) -> EmpresaBase`; `resolver_fila_sector(catalogo, sector_codigo, segmento) -> pd.Series`; `categoria_de_sector(sector_codigo) -> str` | Año base 2023 de **cualquier** caso, con o sin arquetipo. Desde el arreglo de raíz de la amortización, importa `motor.amortizacion` para derivar `pyg_eur["amortizaciones"]` — ver "Amortización derivada" abajo. |
+| `amortizacion.py` | Deriva el gasto de amortización de la PyG a partir de una colección REAL de activos (sub-lotes con vida fiscal, fecha de compra sorteada, posible "ya totalmente amortizado") — sustituye el antiguo sorteo independiente de `amortizaciones_pct`. Ver sección "Amortización derivada" abajo para el diseño completo. | `generar_coleccion_y_perfiles_base(sector, segmento, semilla, categoria, activo_no_corriente_desglose_eur) -> (coleccion, perfil_material, perfil_intangible)`; `generar_cohortes_capex(...)`/`generar_cohortes_adquisicion(...)` (cohortes nuevas de los arquetipos 17/18); `amortizacion_eur_del_año(coleccion, año) -> float`; `bienes_totalmente_amortizados_en(coleccion, año) -> tuple[BienTotalmenteAmortizado,...]` | `empresa_base.py` (año base) y `evolucion_arquetipo.py` (2024/2025, cohortes nuevas de capex/adquisición) — consume el desglose de `activo_no_corriente` ya generado, no genera balance por sí mismo. |
 | `arquetipos.py` | Carga y valida `data/arquetipos.json` como dataclasses tipadas. **Sin lógica de generación.** | `cargar_arquetipos(ruta=...) -> dict[str, DefinicionArquetipo]` | Tipos de efecto: `EfectoMasaCirculante`, `EfectoPygPrimitiva`, `EfectoApalancamiento`, `EfectoTesoreria`, `EfectoReclasificacionDeuda`, `EfectoEventoPuntual`, `EfectoCapex`, `EfectoAdquisicion`. |
 | `evolucion_arquetipo.py` | Motor genérico: evoluciona una empresa 3 ejercicios (2023 base + 2024/2025 con el/los arquetipo(s) aplicado(s)), interpretando cada tipo de `Efecto`. Contiene toda la lógica de mecanismo — **no releer para saber qué arquetipos toca cada mecanismo, ver tabla de mecanismos abajo**. `generar_evolucion_arquetipo` (un solo arquetipo) es un wrapper de una línea sobre `generar_evolucion_combinada` con un dict de 1 elemento — **garantía estructural**: cualquier test de un arquetipo en solitario que siga pasando prueba que la combinación no le cambió el comportamiento. | `generar_evolucion_combinada(sector, segmento, ventas_objetivo_2023, semilla, arquetipos_intensidades: dict[str,str], catalogo=None, arquetipos=None) -> EvolucionArquetipo` (motor general); `generar_evolucion_arquetipo(sector, segmento, ventas_objetivo_2023, semilla, intensidad, arquetipo_id, catalogo=None, arquetipos=None) -> EvolucionArquetipo` (caso de 1 arquetipo) | Todos los arquetipos de `clase="cuantitativo"` (ver `docs/indice_arquetipos.md`); rechaza `clase="memoria_pura"` con `EvolucionArquetipoError`. |
 | `memoria.py` | Genera notas de memoria puramente cualitativas — arquetipos de `clase="memoria_pura"` (sin efectos numéricos, `efectos: []` en el JSON) — y orquesta el caso combinado completo (mezcla `clase="cuantitativo"` + `clase="memoria_pura"`). | `generar_nota_memoria_pura(arquetipo_id, sector, segmento, intensidad, semilla, ejercicio, etiquetas_ya_usadas=frozenset()) -> NotaMemoria` (o la función específica `generar_nota_<arquetipo>(...)`); `generar_caso_combinado(sector, segmento, ventas_objetivo_2023, semilla, arquetipos_intensidades, catalogo=None, arquetipos=None) -> EvolucionArquetipo` (punto de entrada general, cualquier mezcla de clases) | Arquetipos 7, 19, 20, 21, 22. `NotaMemoria` (definida en `evolucion_arquetipo.py`, no aquí — ver "Combinación de arquetipos" abajo) lleva `texto` + `etiquetas` (temas, usadas por el mecanismo de coherencia de la sección 2.12). |
+| `clasificacion_legal.py` | Clasifica cada caso como modelo abreviado/normal (Art. 257 LSC) — capa de cálculo pura sobre datos que el motor YA genera (activo, cifra de negocio) más una plantilla ESTIMADA (no generada) a partir de `ratios.ventas_empleado` del catálogo. No genera balance/PyG, no toca `empresa_base.py`/`evolucion_arquetipo.py`. Ver sección "Clasificación legal" abajo. | `estimar_ventas_por_empleado(sector, segmento, semilla, catalogo=None) -> (float, str)`; `estimar_plantilla(cifra_negocio_eur, ventas_empleado_miles_eur) -> float`; `clasificar_ejercicio(año, activo_eur, cifra_negocio_eur, plantilla_estimada) -> ResultadoClasificacionLegal`; `clasificar_par_ejercicios(resultado_anterior, resultado_actual) -> "abreviado"\|"normal"` | Cualquier caso ya generado (empresa_base o evolución completa) — consume su balance/PyG, no interviene en su generación. |
+| `efe.py` | Estado de Flujos de Efectivo, método indirecto, modelo NORMAL del PGC — capa de cálculo pura sobre dos `EjercicioEmpresa` consecutivos. Ver sección "EFE y ECPN" abajo para el mapeo completo y la corrección sobre la amortización. | `generar_efe(anterior, actual, obligatorio: bool) -> EstadoFlujosEfectivo` (con propiedad `.cuadra`) | Ningún módulo de generación — solo lee `balance_eur`/`pyg_eur` ya generados, incluida la desagregación de PN/activo_no_corriente. |
+| `ecpn.py` | Estado de Cambios en el Patrimonio Neto, Documento B ("Estado total de cambios en el patrimonio neto") del modelo NORMAL del PGC — Documento A (Ingresos y Gastos Reconocidos) queda aparcado, ver decisiones #23. Capa de cálculo pura sobre dos `EjercicioEmpresa` consecutivos. | `generar_ecpn(anterior, actual, obligatorio: bool) -> EstadoCambiosPatrimonioNeto` (con propiedad `.cuadra`) | Igual que `efe.py` — ninguno de generación. |
 
 ## Mecanismos reutilizables ya construidos (en `evolucion_arquetipo.py`, salvo que se indique)
 
@@ -80,6 +85,173 @@ hallazgo de saturación del Combo F: `docs/decisiones_plausibilidad.md` #16.
   "combinacion_negocios")` en el 18 en vez de `"activo"` (no choca con `("activo","desinversion")`
   del 19 — el Combo E combina legítimamente ambos: adquirir un negocio y desinvertir en un activo
   no relacionado son dos hilos narrativos distintos, no redundantes).
+
+## Clasificación legal (Art. 257 LSC) — modelo abreviado vs. normal, y el EFE
+
+Ver `docs/decisiones_plausibilidad.md` #21 y #22 para el detalle cuantificado completo.
+
+- **El segmento del catálogo y la clasificación legal son DOS COSAS DISTINTAS, tratadas como
+  independientes por diseño — no se fuerza que coincidan.** El segmento (`"pequeñas"` /
+  `"grandes_medianas"`) solo decide de qué fila de Huber parte la generación (productividad,
+  rotación de activo, etc. típicas de ese tamaño de empresa en el sector). La clasificación
+  legal (`motor.clasificacion_legal`) se calcula APARTE, sobre los números YA generados de cada
+  caso concreto (activo total, cifra de negocio, más una plantilla estimada) — puede no coincidir
+  con el segmento solicitado, y eso es correcto, no un error a corregir.
+- **Test legal**: Art. 257.1 LSC, 2-de-3 sobre activo ≤4.000.000€, cifra de negocio ≤8.000.000€,
+  plantilla ≤50 — umbrales VIGENTES (verificado externamente, BOE/ICAC; hay un Proyecto de Ley
+  que los subiría a 7,5M/15M/50, sin rango de ley todavía, y aunque se apruebe no aplicaría a los
+  ejercicios 2023-2025 que genera este motor — ver decisiones #21). Art. 257.2: exige el
+  cumplimiento durante 2 ejercicios CONSECUTIVOS — `clasificar_par_ejercicios` solo da
+  "abreviado" si ambos años del par lo son por separado.
+- **Plantilla estimada, no generada**: el motor no modela recursos humanos. Se estima con el
+  MISMO mecanismo de ruido mixto típico/atípico ya usado en todo el motor
+  (`_generar_partida`/`_normal_truncada` de `empresa_base.py`, reutilizado sin cambios) aplicado
+  sobre `ratios.ventas_empleado` del catálogo — un sorteo ÚNICO por caso (sector+segmento+semilla,
+  no por año ni por arquetipo: es un rasgo estructural, como `rotacion_activo`). Cada año escala
+  esa productividad fija por la cifra de negocio real de ese año. Es una estimación de SEGUNDO
+  ORDEN (depende de dos números ya generados + un ratio con ruido), no un dato tan sólido como
+  activo o cifra de negocio — cualquier resultado del test legal que dependa del criterio de
+  empleados hereda esa incertidumbre añadida.
+- **`ventas_objetivo` representativa del segmento, no un valor plano compartido**: la convención
+  de usar 8.000.000€ para cualquier segmento (heredada de los primeros lotes de arquetipos, antes
+  de que existiera esta clasificación) resultaba invertida la mayoría de las veces al comprobar el
+  test legal (65,7%/68,5% incoherente — ver decisiones #21). Convención nueva: **5.000.000€ para
+  "pequeñas"** (dentro del ≤10M€ de ACCID), **15.000.000€ para "grandes_medianas"** (por encima
+  del >10M€ de ACCID). Verificado que ningún hallazgo de calibración de intensidad anterior
+  dependía del nivel absoluto de ventas (el motor es escala-invariante por diseño, todo ancla a
+  ratios/% del catálogo) — la única excepción real son los suelos defensivos en EUROS ABSOLUTOS de
+  los arquetipos 20/21 (`SUELO_IMPORTE_VINCULADAS_EUR`/`SUELO_NOCIONAL_COBERTURA_EUR`), que por
+  diseño SÍ dependen de la escala — sus tests siguen fijos a 8M€ sin tocar.
+- **Incluso con `ventas_objetivo` representativa, "pequeñas" no siempre clasifica "abreviado"**:
+  10 de 27 sectores tienen algún caso que clasifica "normal" pese a facturación modesta (5M€), 6 de
+  forma consistente (sectores intensivos en personal — I+D, consultoría, auditoría, educación,
+  sanidad — o con baja rotación de activo) — reflejo económico real del propio catálogo ACCID, no
+  un defecto de la estimación de plantilla ni del motor.
+- **Consecuencia para el EFE/ECPN**: ambos se generan SIEMPRE, para todo caso — nunca se omiten.
+  Lo que decide la clasificación legal real (`clasificar_par_ejercicios`), NUNCA el segmento
+  solicitado, es el campo `obligatorio: bool` de `EstadoFlujosEfectivo`/`EstadoCambiosPatrimonioNeto`
+  — con fines didácticos el alumnado debe poder ver el estado igual en modelo abreviado, sabiendo
+  que en una presentación real no sería exigible.
+
+## EFE y ECPN (sección 2.2/2.5) — modelo normal PGC, método indirecto
+
+Capas de cálculo puras (`motor/efe.py`, `motor/ecpn.py`) sobre el balance/PyG que el motor ya
+genera para dos `EjercicioEmpresa` consecutivos — no generan ningún dato nuevo. La comprobación
+central de ambos es la reconciliación exacta (no que "tengan buena pinta"): EFE con
+`disponible`, ECPN con `patrimonio_neto`, tolerancia 0,01€. Verificado exhaustivamente: **4.968
+EFE y 4.968 ECPN generados (21 arquetipos solos + 6 combinaciones + 1 caso de intensidad ≈0, 27
+sectores, 4 semillas, 2024 y 2025), 0 descuadres en ambos** — ver decisiones #26.
+
+- **Desagregación de PN** (`EjercicioEmpresa.capital_social_eur`/`.reservas_eur`, expuesta en
+  CUALQUIER balance, no solo el ECPN): capital social fijo desde 2023 (fracción de PN2023,
+  redondeado a cifra vistosa — ver `empresa_base._generar_capital_social`), constante en
+  2024/2025; reservas = PN(t) − capital − resultado_ejercicio(t), por resta, no por ruido propio.
+  Ver decisiones #24 (criterio + comprobación de que "Reservas" no sale absurdamente negativa).
+- **Desagregación de `activo_no_corriente`** (`.activo_no_corriente_perfil_pct`/
+  `.activo_no_corriente_desglose_eur`, también en cualquier balance): perfil FIJO por caso
+  (sorteo único), por CATEGORÍA de sector (9 categorías de PERFIL sobre los 8 bloques de la
+  sección 2.22 — "servicios profesionales/TIC" se sub-divide en "servicios_profesionales"
+  69.2/70.2 y "servicios_tic" 62, ver decisiones #33; el catálogo de sectores en sí sigue en 8
+  bloques, es solo un refinamiento interno de este perfil), aplicado cada año al total
+  de ese año — el salto del arquetipo 18 (`.incremento_activo_adquisicion_eur`) se mantiene
+  aparte del perfil, nunca mezclado en él. Ver decisiones #25.
+- **Mapeo de mecanismos a líneas del EFE** (detalle completo en decisiones #26): `masa_circulante`
+  → A.3 (existencias/deudores/acreedores); `otras_deudas_corto` (el parche de cuadre general,
+  presente cada año) → A.3.e "Otros pasivos corrientes" — absorbe de forma natural el residuo de
+  `tesoreria` (2/15) y cualquier ajuste de segundo orden; `otras_deudas_largo` → A.3.f; deuda
+  financiera total (`deudas_fin_largo+corto`) → C.10, variación NETA (el motor no distingue
+  emisión/devolución bruta dentro del año, solo la posición neta); `apalancamiento` (9/14) →
+  DOS líneas de financiación que se cancelan, C.10 (deuda nueva, ya incluida en la variación neta
+  de arriba) + C.11.a "Dividendos" (=`-apalancamiento_extra_eur`, la distribución que esa deuda
+  financia); `reclasificacion_deuda` (8/16) → NINGUNA línea, correctamente invisible (no mueve
+  deuda total, no es un flujo real); perfil de `activo_no_corriente` → B.6/7 por componente,
+  aplicado al cambio ORGÁNICO (excluyendo el salto de adquisición del año); adquisición (18) →
+  B.6.a "Empresas del grupo y asociadas", aparte. Líneas sin mecanismo que las alimente (siempre
+  0, documentado, no inventado): correcciones valorativas, provisiones, bajas de inmovilizado,
+  diferencias de cambio, valor razonable, subvenciones, dividendos de terceros, "otros activos
+  corrientes" (A.3.c).
+- **Amortización (A.2.a) — sigue en 0,0 en el EFE, por una razón que YA NO es "no hay ningún
+  activo real detrás"** (eso se arregló, ver "Amortización derivada" abajo y decisiones #27-#32)
+  **sino que el `activo_no_corriente` del BALANCE todavía no se neta de la amortización
+  acumulada** — el gasto de PyG ya es real y deriva de una colección de activos, pero esa
+  colección hoy solo alimenta la PyG, no reduce el `activo_no_corriente` que ve el balance (eso
+  queda para el encargo que reabra `motor/efe.py`, deliberadamente aplazado, ver decisiones #26).
+  Mientras el balance no neta, añadir la amortización en A.2.a duplicaría el efecto que sigue
+  absorbiendo `otras_deudas_corto` — la conclusión práctica (0,0) no cambia todavía, pero la
+  RAZÓN sí: antes era "el motor no modela esto en absoluto", ahora es "el motor ya lo modela, pero
+  el balance no lo refleja aún".
+- **ECPN Documento B**: filas (saldo inicio, total ingresos y gastos reconocidos = resultado del
+  ejercicio ya que el Documento A está aparcado, operaciones con socios = la distribución de
+  apalancamiento si la hay, otras variaciones = siempre 0, saldo final) × columnas (Capital,
+  Reservas y resultados de ejercicios anteriores, Resultado del ejercicio, Total) — el resultado
+  del ejercicio ANTERIOR se reclasifica a reservas al abrir el nuevo ejercicio, consistente por
+  construcción con cómo se deriva `reservas_eur`.
+
+## Amortización derivada de una colección real de activos (`motor/amortizacion.py`)
+
+Arreglo de RAÍZ, no un parche del síntoma detectado en el EFE (`a2a_amortizacion` siempre a 0€
+porque no había ningún activo real detrás del gasto). Antes: `amortizaciones_pct` se sorteaba
+como % independiente de PyG, sin ninguna conexión con `activo_no_corriente`. Ahora: se DERIVA
+sumando las cuotas de una colección de activos generada a partir del desglose de `activo_no_
+corriente` ya existente. Ver decisiones #27-#32 para el detalle completo, verificaciones y
+hallazgos.
+
+- **Qué es amortizable, verificado contra PGC (no asumido)**: terrenos NUNCA (ni en material ni
+  en inversiones inmobiliarias); otros activos financieros NUNCA (instrumentos financieros,
+  sujetos a deterioro, no a amortización); **fondo de comercio SÍ, desde 2016** (corrección sobre
+  la premisa inicial del encargo — PGC norma 6ª, 10 años presuntos, Ley 22/2015 + RD 602/2016 —
+  particularidad española, IFRS para cotizadas sigue sin amortizarlo). Prácticamente todo lo
+  demás de intangible/material/construcción de inversiones inmobiliarias, sí.
+- **Tabla de coeficientes fiscales**: Agencia Tributaria, tabla vigente desde 2015 (Ley 27/2014
+  IS). "Vida fiscal" = `100/coeficiente MÁXIMO` (la más corta) — NO el "período máximo" de la
+  tabla oficial, que corresponde al coeficiente MÍNIMO (velocidad más lenta permitida).
+- **Cohorte por sub-tipo, 3 sub-lotes cada una** (no activos individuales, no una única cohorte
+  por bucket): 7 sub-tipos de material (terrenos_construcciones, instalaciones_maquinaria,
+  equipos_informaticos, elementos_transporte, mobiliario, otro_inmovilizado_material) + 2 de
+  intangible (aplicaciones_informaticas, fondo_comercio_y_otro_intangible) + construcción de
+  inversiones inmobiliarias = 9 buckets amortizables por caso, cada uno con 3 sub-lotes
+  independientes (fecha de compra + "ya totalmente amortizado" sorteados por separado cada uno —
+  corrección aprobada tras detectar que un único sorteo por bucket implicaba comprar toda una
+  categoría el mismo día). Perfiles de sub-tipo por las 9 categorías de PERFIL (ver arriba) — HIPÓTESIS DE
+  DISEÑO razonada (el catálogo ACCID no llega a este nivel), documentada como tal.
+- **`SubLoteActivo.año_compra` es FRACCIONAL** (no un año entero + una instantánea de acumulada)
+  — `acumulada_en(año) = min(valor_bruto, cuota_anual × (año − año_compra))`, una única fórmula
+  continua válida para cualquier año — el "gasto del año" sale de la diferencia entre dos
+  evaluaciones consecutivas, incluido el propio año base 2023 (bug real detectado y corregido
+  durante la implementación: una primera versión con "año_ancla entero + acumulada ya
+  instantánea" confundía "acumulada total desde la compra" con "gasto del año 2023" — daba un
+  gasto del 54% del valor bruto en un solo año).
+- **RNG propio e independiente** (`sector|segmento|amortizacion[_sufijo]`) — no desplaza ningún
+  sorteo de `balance_pct`/`rotacion_activo`/PyG ya existente. La única posición que SÍ se quitó
+  del bucle de primitivas de PyG es "amortizaciones" en sí (ya no se sortea) — desplaza
+  `resultado_extraordinario`/`ingresos_financieros`/`impuesto_beneficios` una posición, y por
+  cascada (PN distinto → endeudamiento distinto → contención distinta) puede desplazar
+  existencias/realizable de 2024/2025 en los casos donde la contención se activa — el año base
+  2023 (balance) nunca se ve afectado.
+- **Capex (17) y adquisición (18) generan cohortes NUEVAS** con `año_compra` = el propio año del
+  suceso (tratado como comprado al inicio de ese año, un año completo de cuota ya ese año —
+  mismo criterio que `ventas_inorganicas_eur` del 18, sin prorratear). 17 usa el 100% del
+  incremento como `instalaciones_maquinaria`; 18 usa el perfil COMPLETO de la categoría (los
+  mismos perfiles ya generados para el caso, sin volver a sortear).
+- **Balance sigue mostrando `activo_no_corriente` NETO tal cual ya se calculaba** (sin restar la
+  amortización acumulada todavía) — la colección de cohortes queda expuesta internamente
+  (`EjercicioEmpresa.coleccion_activos_amortizables`) para cuando se reabra el EFE y se decida
+  netear de verdad.
+- **Bienes totalmente amortizados** (`bienes_totalmente_amortizados_en`): preparado para la
+  futura nota de memoria PGC punto 2.l (bienes totalmente amortizados en uso, distinguiendo
+  construcciones de resto de elementos) — tipo, `es_construccion`, valor bruto, año en que se
+  agotó, expuesto pero sin redactar la nota todavía.
+- **Reconexión con `amortizaciones_pct` calibrado — resuelto, ver decisiones #29/#33**: la
+  mayoría de sectores caen en 0,7x-2,5x el huber (variabilidad razonable). Contabilidad/auditoría
+  (69.2) y Consultoría (70.2) se desviaban 8-10x — causa raíz: `rotacion_activo` inusualmente
+  bajo de esos 2 sectores en el catálogo (activo_no_corriente = 2,5-2,8x los ingresos), combinado
+  con tratarlos como la misma categoría de nivel superior que TIC (62), con 55% de `activo_no_
+  corriente` asignado a intangible. **Corregido separando "servicios_profesionales_tic" en dos
+  categorías**: "servicios_profesionales" (69.2/70.2 — `otros_financieros` dominante, 65%,
+  bajo la hipótesis de estructuras de holding/participaciones, no oficinas ni software) y
+  "servicios_tic" (62 — mantiene intangible alto, 50%, sin cambios sustanciales). Resultado:
+  69.2 10,1x→3,9x, 70.2 7,8x→3,3x — mismo orden de magnitud que otros sectores capital-intensivos
+  ya aceptados (construcción 41.2 en 4,1x); 62 sin cambio (1,0x, nunca tuvo el problema).
 
 ## Otros documentos de este índice
 

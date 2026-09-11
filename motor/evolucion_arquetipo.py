@@ -487,11 +487,17 @@ from motor.arquetipos import (
     EfectoTesoreria,
     cargar_arquetipos,
 )
+from motor.amortizacion import (
+    amortizacion_eur_del_año,
+    generar_cohortes_adquisicion,
+    generar_cohortes_capex,
+)
 from motor.catalogo import cargar_y_validar_catalogo
 from motor.empresa_base import (
     TOLERANCIA_CUADRE_EUR,
     EmpresaBase,
     EmpresaBaseError,
+    categoria_de_sector,
     generar_empresa_base,
     resolver_fila_sector,
 )
@@ -826,6 +832,18 @@ class EjercicioEmpresa:
     # único valor) desde la combinación de arquetipos (sección 2.12): un caso combinado puede tener varias.
     ventas_organicas_eur: float | None = None  # solo en AÑO_ADQUISICION (18): ventas sin la operación
     ventas_inorganicas_eur: float | None = None  # solo en AÑO_ADQUISICION (18): aportación de la unidad adquirida
+    capital_social_eur: float = 0.0  # fijo desde el año base (2023), constante en 2024/2025 — ver empresa_base.py
+    reservas_eur: float = 0.0  # = patrimonio_neto - capital_social_eur - pyg_eur["resultado_ejercicio"], por resta
+    activo_no_corriente_perfil_pct: dict[str, float] = field(default_factory=dict)  # fijo desde 2023, ver empresa_base.py
+    activo_no_corriente_desglose_eur: dict[str, float] = field(default_factory=dict)  # SIN el salto de adquisición (18)
+    incremento_activo_adquisicion_eur: float = 0.0  # solo en AÑO_ADQUISICION (18) — mantenido aparte del desglose
+    # Amortización derivada de una colección real de activos (motor/amortizacion.py) — la
+    # colección de ESTE año (base + cualquier cohorte nueva de capex/adquisición ya incorporada),
+    # más los perfiles de sub-tipo (constantes, igual que el perfil de nivel superior) para que
+    # una adquisición en 2025 pueda seguir generando cohortes sin re-sortear "el perfil completo".
+    coleccion_activos_amortizables: tuple = ()
+    perfil_subtipos_material_pct: dict[str, float] = field(default_factory=dict)
+    perfil_subtipos_intangible_pct: dict[str, float] = field(default_factory=dict)
 
     @property
     def rotacion_existencias(self) -> float:
@@ -879,6 +897,13 @@ def _ejercicio_desde_empresa_base(empresa: EmpresaBase) -> EjercicioEmpresa:
         deuda_extra_por_nof_eur=0.0,
         endeudamiento=_endeudamiento(empresa.balance_eur),
         cobertura_gastos_financieros=_cobertura_gastos_financieros(empresa.pyg_eur),
+        capital_social_eur=empresa.capital_social_eur,
+        reservas_eur=empresa.reservas_eur,
+        activo_no_corriente_perfil_pct=dict(empresa.activo_no_corriente_perfil_pct),
+        activo_no_corriente_desglose_eur=dict(empresa.activo_no_corriente_desglose_eur),
+        coleccion_activos_amortizables=empresa.coleccion_activos_amortizables,
+        perfil_subtipos_material_pct=dict(empresa.perfil_subtipos_material_pct),
+        perfil_subtipos_intangible_pct=dict(empresa.perfil_subtipos_intangible_pct),
     )
 
 
@@ -1057,6 +1082,9 @@ def _evolucionar_un_año(
     crecimiento_ventas: float,
     año_evento_puntual: int | None,
     efectos_activos: tuple[EfectoActivo, ...],
+    sector: str,
+    segmento: str,
+    semilla: int,
 ) -> EjercicioEmpresa:
     """`efectos_activos` ya viene fusionado (uno o varios arquetipos combinados, cada `Efecto`
     emparejado con la intensidad de SU PROPIO arquetipo de origen, y los `masa_circulante` que
@@ -1182,6 +1210,7 @@ def _evolucionar_un_año(
     # aquí). A diferencia del efecto "apalancamiento" (arquetipo 9), esta deuda nueva NO financia
     # una distribución a PN: financia la COMPRA del propio activo, así que no se resta nada de
     # patrimonio_neto — el activo y el pasivo suben exactamente lo mismo, sin romper el cuadre.
+    exceso_capex_eur = 0.0
     if efectos_capex:
         exceso_capex_eur = max(0.0, activo_no_corriente_eur - activo_no_corriente_proporcional_eur)
         deudas_fin_largo_proporcional_eur += exceso_capex_eur
@@ -1206,6 +1235,24 @@ def _evolucionar_un_año(
         indice_nota = rng_nota.integers(len(NOTAS_MEMORIA_ADQUISICION))
         texto, etiquetas = NOTAS_MEMORIA_ADQUISICION[indice_nota]
         notas_memoria.append(NotaMemoria(arquetipo_id=ea_adquisicion.arquetipo_id, numero=ea_adquisicion.numero, texto=texto, etiquetas=etiquetas))
+
+    # --- Amortización derivada de una colección real de activos (motor/amortizacion.py) —
+    # arreglo de raíz, no un parche: el gasto de la PyG ya no se sortea como % independiente. La
+    # colección de ESTE año es la del año anterior (las cohortes del año base no cambian de
+    # valor — solo se reevalúa la misma fórmula continua en un año distinto, ver `SubLoteActivo.
+    # acumulada_en`) más las cohortes NUEVAS que genere el capex (17) o la adquisición (18) de
+    # ESTE año concreto, si los hay — con `año_ancla` = este año, sin sorteo de fecha/ya-
+    # amortizado (activos recién comprados). ---
+    coleccion_activos_amortizables = anterior.coleccion_activos_amortizables
+    if exceso_capex_eur > 0:
+        coleccion_activos_amortizables += generar_cohortes_capex(sector, segmento, semilla, año, exceso_capex_eur)
+    if incremento_activo_adquisicion_eur > 0:
+        categoria = categoria_de_sector(sector)
+        coleccion_activos_amortizables += generar_cohortes_adquisicion(
+            sector, segmento, semilla, año, incremento_activo_adquisicion_eur, categoria,
+            anterior.activo_no_corriente_perfil_pct, anterior.perfil_subtipos_material_pct, anterior.perfil_subtipos_intangible_pct,
+        )
+    amortizacion_eur_año = amortizacion_eur_del_año(coleccion_activos_amortizables, año)
 
     # --- PyG: primitivas no financieras + tipo de interés, sorteadas UNA sola vez. Las que el
     # arquetipo toca (efecto pyg_primitiva) se fuerzan por continuidad en vez de sortearse, y
@@ -1242,7 +1289,9 @@ def _evolucionar_un_año(
         if subtotal_topado is not None:
             riesgo_plausibilidad_pyg = True
             pyg_subtotales_sin_contener[subtotal_topado] = subtotal_sin_contener
-    parcial_pyg = _generar_pyg_hasta_baii(rng_pyg, fila, ventas, primitivas_forzadas=primitivas_forzadas)
+    parcial_pyg = _generar_pyg_hasta_baii(
+        rng_pyg, fila, ventas, primitivas_forzadas=primitivas_forzadas, amortizaciones_eur=amortizacion_eur_año
+    )
     for ea in efectos_pyg_base_dinamica:
         efecto = ea.efecto
         subtotal = SUBTOTAL_PYG_BASE_DINAMICA_DE_PRIMITIVA[efecto.primitiva]
@@ -1524,6 +1573,23 @@ def _evolucionar_un_año(
         notas_memoria=tuple(notas_memoria),
         ventas_organicas_eur=ventas_organicas_eur,
         ventas_inorganicas_eur=ventas_inorganicas_eur,
+        capital_social_eur=anterior.capital_social_eur,
+        reservas_eur=balance_eur["patrimonio_neto"] - anterior.capital_social_eur - pyg_eur["resultado_ejercicio"],
+        activo_no_corriente_perfil_pct=anterior.activo_no_corriente_perfil_pct,
+        # Desglose del TOTAL de activo_no_corriente de ESTE año (incluye cualquier salto de
+        # adquisición ya absorbido, de este año o de años anteriores) — instantánea informativa.
+        # `motor/efe.py` calcula el flujo de inversión "orgánico" restando `incremento_activo_
+        # adquisicion_eur` del cambio total, con el perfil (constante) aplicado a ESE delta, no a
+        # la diferencia entre dos desgloses ya guardados — evita duplicar el salto de un año en
+        # el "crecimiento orgánico" del año siguiente.
+        activo_no_corriente_desglose_eur={
+            componente: fraccion * balance_eur["activo_no_corriente"]
+            for componente, fraccion in anterior.activo_no_corriente_perfil_pct.items()
+        },
+        incremento_activo_adquisicion_eur=incremento_activo_adquisicion_eur,
+        coleccion_activos_amortizables=coleccion_activos_amortizables,
+        perfil_subtipos_material_pct=anterior.perfil_subtipos_material_pct,
+        perfil_subtipos_intangible_pct=anterior.perfil_subtipos_intangible_pct,
     )
 
 
@@ -1745,6 +1811,9 @@ def generar_evolucion_combinada(
             crecimiento_ventas,
             año_evento_puntual,
             tuple(efectos_activos),
+            sector,
+            segmento,
+            semilla,
         )
         ejercicios[año] = ejercicio
         anterior = ejercicio

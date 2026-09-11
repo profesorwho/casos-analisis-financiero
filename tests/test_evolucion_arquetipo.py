@@ -341,26 +341,24 @@ def test_catalogo_version_es_la_del_catalogo_pasado_explicitamente(catalogo, arq
 
 def test_reimplementacion_generica_reproduce_los_valores_de_referencia(catalogo, arquetipos):
     # Regresión dura: valores exactos del arquetipo 1 para este caso concreto (sector 24.1,
-    # semilla 5, fuerte). Los valores originales (capturados con la versión hardcodeada, antes
-    # de generalizar el motor) se re-pinnearon a los actuales tras corregir un sesgo real en la
-    # semilla del RNG: `generar_empresa_base` y `generar_evolucion_arquetipo` sembraban el
-    # generador solo con `semilla`, sin mezclar sector/segmento — cualquier sector con la misma
-    # semilla partía del mismo estado de RNG y consumía la MISMA secuencia de sorteos (el modo
-    # típico/atípico y el valor z de cada partida no dependen de huber/mad, solo su escalado
-    # posterior), así que compartían más aleatoriedad de la debida entre sí. Corregido mezclando
-    # un hash estable (zlib.crc32) de sector+segmento en la semilla — ver docstring de
-    # motor.empresa_base y motor.evolucion_arquetipo. Si este test vuelve a fallar SIN que se
-    # haya tocado la semilla del RNG deliberadamente, sí es una regresión real del mecanismo del
-    # arquetipo 1 — el objetivo explícito de la generalización era que no cambiara su
-    # comportamiento.
+    # semilla 5, fuerte). Los valores 2024/2025 se RE-PINNEARON tras el encargo que sustituyó el
+    # sorteo independiente de `amortizaciones_pct` por un gasto DERIVADO de una colección real de
+    # activos (ver motor/amortizacion.py) — el mecanismo del arquetipo 1 (existencias por
+    # continuidad) no cambió, pero el nuevo resultado_ejercicio (amortización real, no sorteada)
+    # cambia patrimonio_neto, que cambia endeudamiento, que cambia CUÁNTO amortigua la
+    # contención de plausibilidad sobre existencias — 2023 no se mueve (la amortización de 2023
+    # no afecta al balance de 2023, solo a su PyG) pero 2024/2025 sí, por este efecto en cascada
+    # legítimo, no por un cambio en el mecanismo del propio arquetipo 1. Si este test vuelve a
+    # fallar SIN que se haya tocado deliberadamente ni la semilla del RNG ni el mecanismo de
+    # amortización, sí es una regresión real del arquetipo 1.
     evolucion = _generar(catalogo, arquetipos, "24.1", 5, "fuerte")
     ej = evolucion.ejercicios
     assert ej[2023].balance_eur["existencias"] == pytest.approx(2_344_937, abs=1)
-    assert ej[2024].balance_eur["existencias"] == pytest.approx(3_325_814, abs=1)
-    assert ej[2025].balance_eur["existencias"] == pytest.approx(3_978_012, abs=1)
+    assert ej[2024].balance_eur["existencias"] == pytest.approx(2_861_635, abs=1)
+    assert ej[2025].balance_eur["existencias"] == pytest.approx(3_422_807, abs=1)
     assert ej[2023].endeudamiento == pytest.approx(0.600, abs=1e-3)
-    assert ej[2024].endeudamiento == pytest.approx(0.672, abs=1e-3)
-    assert ej[2025].endeudamiento == pytest.approx(0.716, abs=1e-3)
+    assert ej[2024].endeudamiento == pytest.approx(0.677, abs=1e-3)
+    assert ej[2025].endeudamiento == pytest.approx(0.747, abs=1e-3)
 
 
 def test_sectores_distintos_no_comparten_crecimiento_pleno_objetivo(catalogo, arquetipos):

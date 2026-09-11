@@ -29,13 +29,23 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from motor.amortizacion import AÑO_BASE as _AÑO_BASE_AMORTIZACION
+from motor.amortizacion import amortizacion_eur_del_año, generar_coleccion_y_perfiles_base
 from motor.catalogo import cargar_y_validar_catalogo
+# Reexportados (no solo usados aquí): otros módulos (p. ej. motor/clasificacion_legal.py,
+# motor/amortizacion.py) los importan como motor.empresa_base.<nombre> — mover la definición a
+# motor/ruido.py (para que motor/amortizacion.py pueda reutilizarlos sin crear una importación
+# circular con este módulo) no les obliga a cambiar su propio import.
+from motor.ruido import (  # noqa: F401
+    DESVIACIONES_ATIPICO,
+    DESVIACIONES_TIPICO,
+    PROB_ATIPICO,
+    _generar_partida,
+    _normal_truncada,
+    _renormalizar_a_total,
+)
 
 SEGMENTOS_VALIDOS = frozenset({"grandes_medianas", "pequeñas"})
-
-PROB_ATIPICO = 0.15
-DESVIACIONES_TIPICO = 1.5
-DESVIACIONES_ATIPICO = 3.0
 
 TOLERANCIA_CUADRE_EUR = 0.01
 SUELO_PORCENTAJE = 0.01
@@ -84,6 +94,133 @@ SUBTOTALES_PYG = ("ingresos_explotacion", "margen_bruto", "valor_añadido", "bai
 
 _RE_CODIGO_SECTOR = re.compile(r"\(([^()]+)\)\s*$")
 
+# --------------------------------------------------------------------------------------------
+# Desagregación de patrimonio neto (Capital / Reservas y resultados de ejercicios anteriores /
+# Resultado del ejercicio) — HIPÓTESIS DE DISEÑO, no un dato del catálogo ACCID (que solo da el
+# agregado `patrimonio_neto_pct`). El capital social es un atributo de la EMPRESA, fijado una
+# única vez al generar el año base (2023) y constante en 2024/2025 — no varía porque cambien los
+# resultados anuales, igual que en la realidad (una ampliación/reducción de capital es un hecho
+# discreto, no algo que este motor modela). Las reservas se derivan por resta, no son una fuente
+# de ruido propia: reservas(t) = PN(t) - capital_social - resultado_del_ejercicio(t).
+# --------------------------------------------------------------------------------------------
+CAPITAL_SOCIAL_FRACCION_PN_CENTRO = 0.40
+CAPITAL_SOCIAL_FRACCION_PN_SPREAD = 0.06
+CAPITAL_SOCIAL_FRACCION_PN_SUELO = 0.30
+CAPITAL_SOCIAL_FRACCION_PN_TECHO = 0.50
+
+# --------------------------------------------------------------------------------------------
+# Desagregación de `activo_no_corriente` (material / intangible / inversiones inmobiliarias /
+# otros activos financieros) — HIPÓTESIS DE DISEÑO, no un dato del catálogo ACCID (que nunca
+# desglosó activo_no_corriente más allá del agregado). Necesaria para poder rellenar el desglose
+# de inversión que exige el modelo oficial del EFE (sección B). Perfil por CATEGORÍA de sector
+# (las 8 categorías de la sección 2.22 del documento de especificaciones), no un único reparto
+# para los 27 sectores — cada perfil suma exactamente 1.0. El salto de activo del arquetipo 18
+# (adquisición) se mantiene aparte de este reparto, ver `motor/efe.py`.
+# --------------------------------------------------------------------------------------------
+CATEGORIA_SECTOR: dict[str, str] = {
+    # Industria (9)
+    "24.1": "industria", "29": "industria", "10.1": "industria", "20.1": "industria",
+    "28": "industria", "30.3": "industria", "30.2": "industria", "19": "industria", "35.1": "industria",
+    # Servicios industriales (4)
+    "33.1": "servicios_industriales", "33.2": "servicios_industriales",
+    "71": "servicios_industriales", "72": "servicios_industriales",
+    # Servicios profesionales / TIC (3) — sub-divididos en dos PERFILES (no dos bloques nuevos
+    # de la sección 2.22, que se mantiene en 8 bloques a efectos del catálogo de sectores): el
+    # perfil de `activo_no_corriente` de contabilidad/auditoría/consultoría (69.2/70.2) resultó
+    # muy distinto del de programación/TIC (62) — ver decisiones_plausibilidad.md #29/#33.
+    "69.2": "servicios_profesionales", "70.2": "servicios_profesionales", "62": "servicios_tic",
+    # Transporte y logística (2)
+    "52": "transporte_logistica", "4941": "transporte_logistica",
+    # Comercio y hostelería (4)
+    "47.1": "comercio_hosteleria", "46": "comercio_hosteleria",
+    "56.1": "comercio_hosteleria", "55.1": "comercio_hosteleria",
+    # Construcción (2)
+    "41.2": "construccion", "43.2": "construccion",
+    # Administración, educación y sanidad (2)
+    "85": "administracion_educacion_sanidad", "86.1": "administracion_educacion_sanidad",
+    # Inmobiliario (1)
+    "68": "inmobiliario",
+}
+
+# Cada perfil suma exactamente 1.0. Criterio contable orientativo (documentado como hipótesis,
+# no dato ACCID): sectores intensivos en capital físico (industria, transporte, comercio,
+# construcción, administración/sanidad) llevan `material` dominante; servicios profesionales/TIC
+# invierten más en intangible (software, patentes, fondo de comercio); inmobiliario lleva
+# `inversiones_inmobiliarias` dominante por definición del propio sector.
+PERFIL_ACTIVO_NO_CORRIENTE_POR_CATEGORIA: dict[str, dict[str, float]] = {
+    "industria": {"material": 0.80, "intangible": 0.10, "inversiones_inmobiliarias": 0.02, "otros_financieros": 0.08},
+    "servicios_industriales": {"material": 0.55, "intangible": 0.25, "inversiones_inmobiliarias": 0.03, "otros_financieros": 0.17},
+    # Contabilidad/auditoría/consultoría (69.2/70.2): pese a ser "servicios profesionales", el
+    # activo_no_corriente típico de estos 2 sectores en el catálogo es MUY grande respecto a sus
+    # ingresos (rotacion_activo inusualmente baja, ~0,28-0,30 — activo_no_corriente 2,5-2,8x los
+    # ingresos, ver decisiones #29). No es plausible que una consultora tenga ese volumen de
+    # activo en oficinas/software: lo más razonable es que la mayor parte sea PARTICIPACIONES/
+    # inversiones financieras (estructuras de holding, habituales en redes de auditoría/
+    # consultoría con oficinas asociadas) — `otros_financieros` dominante, material e intangible
+    # bajos. Ver #33 para la verificación cuantificada de que esto corrige el hallazgo #29.
+    "servicios_profesionales": {"material": 0.15, "intangible": 0.15, "inversiones_inmobiliarias": 0.05, "otros_financieros": 0.65},
+    # Programación/consultoría informática (62): el sector "TIC" propiamente dicho — aquí sí
+    # tiene sentido un intangible alto (software propio, propiedad intelectual) — y su rotacion_
+    # activo en el catálogo ya era razonable (no mostraba el mismo problema que 69.2/70.2).
+    "servicios_tic": {"material": 0.20, "intangible": 0.50, "inversiones_inmobiliarias": 0.03, "otros_financieros": 0.27},
+    "transporte_logistica": {"material": 0.80, "intangible": 0.08, "inversiones_inmobiliarias": 0.04, "otros_financieros": 0.08},
+    "comercio_hosteleria": {"material": 0.75, "intangible": 0.10, "inversiones_inmobiliarias": 0.05, "otros_financieros": 0.10},
+    "construccion": {"material": 0.70, "intangible": 0.05, "inversiones_inmobiliarias": 0.05, "otros_financieros": 0.20},
+    "administracion_educacion_sanidad": {"material": 0.75, "intangible": 0.15, "inversiones_inmobiliarias": 0.02, "otros_financieros": 0.08},
+    "inmobiliario": {"material": 0.10, "intangible": 0.03, "inversiones_inmobiliarias": 0.80, "otros_financieros": 0.07},
+}
+
+# Dispersión sintética (no hay MAD del catálogo para esto) aplicada a cada componente del
+# perfil antes de renormalizar a 100% — evita que dos empresas del mismo sector salgan con el
+# reparto idéntico, sin cambiar el perfil CENTRAL de la categoría.
+DISPERSION_PERFIL_ACTIVO_NO_CORRIENTE = 0.20  # fracción relativa del propio valor del componente
+SUELO_COMPONENTE_ACTIVO_NO_CORRIENTE_PCT = 0.005  # 0,5%: evita un componente en cero o negativo
+
+
+def categoria_de_sector(sector_codigo: str) -> str:
+    if sector_codigo not in CATEGORIA_SECTOR:
+        raise EmpresaBaseError(f"Sector '{sector_codigo}' no tiene categoría asignada en CATEGORIA_SECTOR.")
+    return CATEGORIA_SECTOR[sector_codigo]
+
+
+def _redondear_cifra_vistosa(valor: float) -> float:
+    """Redondea a una cifra de aspecto realista para capital social (los importes reales suelen
+    ser números redondos: 60.000€, 3.000.000€, no 2.847.193,17€) — redondeo a 2 cifras
+    significativas."""
+    if valor <= 0:
+        return 0.0
+    import math
+
+    magnitud = 10 ** math.floor(math.log10(valor))
+    paso = magnitud / 10
+    return round(valor / paso) * paso
+
+
+def _generar_capital_social(rng: np.random.Generator, patrimonio_neto_eur: float) -> float:
+    fraccion, _ = _generar_partida(
+        rng,
+        CAPITAL_SOCIAL_FRACCION_PN_CENTRO,
+        CAPITAL_SOCIAL_FRACCION_PN_SPREAD,
+        suelo=CAPITAL_SOCIAL_FRACCION_PN_SUELO,
+        techo=CAPITAL_SOCIAL_FRACCION_PN_TECHO,
+    )
+    return _redondear_cifra_vistosa(max(0.0, patrimonio_neto_eur) * fraccion)
+
+
+def generar_perfil_activo_no_corriente(rng: np.random.Generator, categoria: str) -> dict[str, float]:
+    """Las 4 fracciones (material/intangible/inversiones_inmobiliarias/otros_financieros) para
+    UN caso — sorteo único por empresa (no por año), con ruido alrededor del perfil central de
+    su categoría de sector, renormalizado para sumar exactamente 1.0."""
+    perfil_centro = PERFIL_ACTIVO_NO_CORRIENTE_POR_CATEGORIA[categoria]
+    brutos = {}
+    for componente, centro in perfil_centro.items():
+        valor, _ = _generar_partida(
+            rng, centro, centro * DISPERSION_PERFIL_ACTIVO_NO_CORRIENTE,
+            suelo=SUELO_COMPONENTE_ACTIVO_NO_CORRIENTE_PCT,
+        )
+        brutos[componente] = valor
+    return _renormalizar_a_total(brutos, 1.0)
+
 
 class EmpresaBaseError(ValueError):
     """Parámetros de entrada inválidos o sector/segmento no encontrado en el catálogo."""
@@ -104,6 +241,17 @@ class EmpresaBase:
     pyg_eur: dict[str, float]
     modos: dict[str, str] = field(repr=False)
     ajuste_cuadre_eur: float = 0.0
+    capital_social_eur: float = 0.0
+    reservas_eur: float = 0.0
+    activo_no_corriente_perfil_pct: dict[str, float] = field(default_factory=dict)
+    activo_no_corriente_desglose_eur: dict[str, float] = field(default_factory=dict)
+    # Amortización derivada de una colección real de activos (ver motor/amortizacion.py) — la
+    # colección en sí (para evolucionarla año a año) y los perfiles de sub-tipo ya sorteados
+    # (para que el arquetipo 18 -adquisición- pueda reutilizarlos sin volver a sortear "el
+    # perfil completo de la categoría").
+    coleccion_activos_amortizables: tuple = ()
+    perfil_subtipos_material_pct: dict[str, float] = field(default_factory=dict)
+    perfil_subtipos_intangible_pct: dict[str, float] = field(default_factory=dict)
 
 
 def _mapa_codigo_sector(catalogo: pd.DataFrame) -> dict[str, str]:
@@ -136,37 +284,6 @@ def resolver_fila_sector(catalogo: pd.DataFrame, sector_codigo: str, segmento: s
             f"Se esperaba exactamente 1 fila para ({sector_nombre!r}, {segmento!r}) y hay {len(filas)}."
         )
     return filas.iloc[0]
-
-
-def _normal_truncada(rng: np.random.Generator, max_desviaciones: float) -> float:
-    while True:
-        z = rng.normal()
-        if abs(z) <= max_desviaciones:
-            return float(z)
-
-
-def _generar_partida(
-    rng: np.random.Generator,
-    huber_9y: float,
-    huber_scale_mad: float,
-    suelo: float | None = None,
-    techo: float | None = None,
-) -> tuple[float, str]:
-    atipico = rng.random() < PROB_ATIPICO
-    max_desviaciones = DESVIACIONES_ATIPICO if atipico else DESVIACIONES_TIPICO
-    z = _normal_truncada(rng, max_desviaciones)
-    valor = huber_9y + z * huber_scale_mad
-    if suelo is not None:
-        valor = max(valor, suelo)
-    if techo is not None:
-        valor = min(valor, techo)
-    return valor, ("atipico" if atipico else "tipico")
-
-
-def _renormalizar_a_total(valores: dict[str, float], total_objetivo: float) -> dict[str, float]:
-    suma = sum(valores.values())
-    factor = total_objetivo / suma
-    return {clave: valor * factor for clave, valor in valores.items()}
 
 
 def _generar_balance_pct(
@@ -236,6 +353,7 @@ def _generar_pyg_hasta_baii(
     fila: pd.Series,
     ventas_objetivo: float,
     primitivas_forzadas: dict[str, float] | None = None,
+    amortizaciones_eur: float | None = None,
 ) -> _PygParcial:
     """Sortea las primitivas de la PyG que no dependen de deuda, y el tipo de interés del
     ejercicio (mismo mecanismo típico/atípico que el resto de partidas, anclado a
@@ -247,11 +365,22 @@ def _generar_pyg_hasta_baii(
     margen sobre consumos_explotacion_pct), el valor ya calculado con continuidad respecto al
     año anterior — sustituye el sorteo de esa partida en concreto. Se registra con modo
     "arquetipo" en vez de "tipico"/"atipico" (no es ruido, es el efecto del arquetipo).
+
+    `amortizaciones_eur`: OBLIGATORIO en la práctica desde que la amortización dejó de sortearse
+    como % independiente (ver `motor/amortizacion.py`) — el gasto ya calculado a partir de la
+    colección real de activos del caso, en EUROS (no en %, a diferencia de `primitivas_forzadas`:
+    la conversión a % requeriría conocer `ingresos_explotacion_eur`, que todavía no está
+    calculado en este punto — ver más abajo). "amortizaciones" se excluye del sorteo/bucle de
+    primitivas en ese caso (no consume ningún draw de `rng`) y su modo queda registrado como
+    "derivado".
     """
     primitivas_forzadas = primitivas_forzadas or {}
     brutos: dict[str, float] = {}
     modos: dict[str, str] = {}
     for nombre_salida, variable in PRIMITIVAS_PYG.items():
+        if nombre_salida == "amortizaciones" and amortizaciones_eur is not None:
+            modos[f"pyg.{nombre_salida}"] = "derivado"
+            continue
         if nombre_salida in primitivas_forzadas:
             brutos[nombre_salida] = primitivas_forzadas[nombre_salida]
             modos[f"pyg.{nombre_salida}"] = "arquetipo"
@@ -281,14 +410,16 @@ def _generar_pyg_hasta_baii(
     consumos_explotacion_eur = brutos["consumos_explotacion"] / 100 * ingresos_explotacion_eur
     otros_gastos_explot_eur = brutos["otros_gastos_explot"] / 100 * ingresos_explotacion_eur
     gastos_personal_eur = brutos["gastos_personal"] / 100 * ingresos_explotacion_eur
-    amortizaciones_eur = brutos["amortizaciones"] / 100 * ingresos_explotacion_eur
+    amortizaciones_eur_final = (
+        amortizaciones_eur if amortizaciones_eur is not None else brutos["amortizaciones"] / 100 * ingresos_explotacion_eur
+    )
     resultado_extraordinario_eur = brutos["resultado_extraordinario"] / 100 * ingresos_explotacion_eur
     ingresos_financieros_eur = brutos["ingresos_financieros"] / 100 * ingresos_explotacion_eur
     impuesto_beneficios_eur = brutos["impuesto_beneficios"] / 100 * ingresos_explotacion_eur
 
     margen_bruto_eur = ingresos_explotacion_eur - consumos_explotacion_eur
     valor_añadido_eur = margen_bruto_eur - otros_gastos_explot_eur
-    baii_eur = valor_añadido_eur - gastos_personal_eur - amortizaciones_eur + resultado_extraordinario_eur
+    baii_eur = valor_añadido_eur - gastos_personal_eur - amortizaciones_eur_final + resultado_extraordinario_eur
 
     return _PygParcial(
         ingresos_explotacion_eur=ingresos_explotacion_eur,
@@ -299,7 +430,7 @@ def _generar_pyg_hasta_baii(
         otros_gastos_explot_eur=otros_gastos_explot_eur,
         valor_añadido_eur=valor_añadido_eur,
         gastos_personal_eur=gastos_personal_eur,
-        amortizaciones_eur=amortizaciones_eur,
+        amortizaciones_eur=amortizaciones_eur_final,
         resultado_extraordinario_eur=resultado_extraordinario_eur,
         baii_eur=baii_eur,
         ingresos_financieros_eur=ingresos_financieros_eur,
@@ -396,10 +527,35 @@ def generar_empresa_base(
     # deuda financiera se mantuvo estable durante el año, es decir inicio = fin = la del propio
     # balance ya generado. En `evolucion_arquetipo` sí hay inicio/fin distintos (ver ese módulo).
     deuda_financiera_eur = balance_eur["deudas_fin_largo"] + balance_eur["deudas_fin_corto"]
-    parcial_pyg = _generar_pyg_hasta_baii(rng, fila, ventas_objetivo)
+
+    # Perfil de activo_no_corriente y colección de activos amortizables — RNG PROPIO E
+    # INDEPENDIENTE del `rng` compartido de balance/PyG (no desplaza ningún sorteo ya existente
+    # de balance_pct/rotacion_activo/cifra_negocios/consumos_explotacion/gastos_personal). Tiene
+    # que calcularse ANTES de la PyG porque el gasto de amortización ahora se DERIVA de esta
+    # colección en vez de sortearse — ver motor/amortizacion.py (arreglo de raíz, no un parche:
+    # antes `amortizaciones_pct` se sorteaba sin ninguna conexión con el inmovilizado real).
+    categoria = categoria_de_sector(sector)
+    rng_perfil = np.random.default_rng([semilla, zlib.crc32(f"{sector}|{segmento}|perfil_activo_no_corriente".encode("utf-8"))])
+    perfil_activo_no_corriente = generar_perfil_activo_no_corriente(rng_perfil, categoria)
+    activo_no_corriente_desglose_eur = {
+        componente: fraccion * balance_eur["activo_no_corriente"]
+        for componente, fraccion in perfil_activo_no_corriente.items()
+    }
+    coleccion_activos_amortizables, perfil_subtipos_material, perfil_subtipos_intangible = generar_coleccion_y_perfiles_base(
+        sector, segmento, semilla, categoria, activo_no_corriente_desglose_eur
+    )
+    amortizacion_eur_2023 = amortizacion_eur_del_año(coleccion_activos_amortizables, _AÑO_BASE_AMORTIZACION)
+
+    parcial_pyg = _generar_pyg_hasta_baii(rng, fila, ventas_objetivo, amortizaciones_eur=amortizacion_eur_2023)
     pyg_pct, pyg_eur = _completar_pyg_con_deuda(parcial_pyg, deuda_financiera_eur)
 
     modos = {**modos_balance, "rotacion_activo": modo_rotacion, **parcial_pyg.modos}
+
+    # Desagregación de PN (ver docstrings de las constantes arriba) — sorteo AÑADIDO AL FINAL de
+    # la secuencia de rng ya existente, después de todo lo demás: no desplaza ningún sorteo
+    # anterior, así que no cambia ningún valor de balance/PyG previo a este punto.
+    capital_social_eur = _generar_capital_social(rng, balance_eur["patrimonio_neto"])
+    reservas_eur = balance_eur["patrimonio_neto"] - capital_social_eur - pyg_eur["resultado_ejercicio"]
 
     return EmpresaBase(
         sector_codigo=sector,
@@ -415,4 +571,11 @@ def generar_empresa_base(
         pyg_eur=pyg_eur,
         modos=modos,
         ajuste_cuadre_eur=ajuste_cuadre_eur,
+        capital_social_eur=capital_social_eur,
+        reservas_eur=reservas_eur,
+        activo_no_corriente_perfil_pct=perfil_activo_no_corriente,
+        activo_no_corriente_desglose_eur=activo_no_corriente_desglose_eur,
+        coleccion_activos_amortizables=coleccion_activos_amortizables,
+        perfil_subtipos_material_pct=perfil_subtipos_material,
+        perfil_subtipos_intangible_pct=perfil_subtipos_intangible,
     )
