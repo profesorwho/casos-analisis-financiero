@@ -29,6 +29,7 @@ TIPOS_EFECTO_VALIDOS = frozenset(
         "evento_puntual",
         "capex",
         "adquisicion",
+        "cobertura",
     }
 )
 FORMULAS_MASA_CIRCULANTE_VALIDAS = frozenset({"rotacion", "dias"})
@@ -141,6 +142,20 @@ class EfectoAdquisicion:
     direccion: int
 
 
+@dataclass(frozen=True)
+class EfectoCobertura:
+    """Cobertura de flujos de efectivo por tipo de interés (arquetipo 21, "Coberturas") — un
+    swap paga-fijo/recibe-variable sobre deuda a tipo variable. NO sigue el patrón de
+    continuidad del resto de efectos (no hay un "ratio ancla" que desplazar): la magnitud se
+    deriva cada año de la sensibilidad del propio swap (nocional x duración modificada x Δtipo
+    de interés del sector) — ver `motor.coberturas_subvenciones.evolucionar_cobertura`.
+    `ratio_catalogo`/`direccion` son solo trazabilidad (igual que en EfectoTesoreria/
+    EfectoAdquisicion), sin uso en la fórmula."""
+
+    ratio_catalogo: str
+    direccion: int
+
+
 Efecto = (
     EfectoMasaCirculante
     | EfectoPygPrimitiva
@@ -150,6 +165,7 @@ Efecto = (
     | EfectoEventoPuntual
     | EfectoCapex
     | EfectoAdquisicion
+    | EfectoCobertura
 )
 
 
@@ -215,7 +231,10 @@ def _construir_efecto(bruto: dict, arquetipo_id: str, indice: int) -> Efecto:
     if tipo == "capex":
         return EfectoCapex(ratio_catalogo=ratio_catalogo, direccion=direccion)
 
-    return EfectoAdquisicion(ratio_catalogo=ratio_catalogo, direccion=direccion)
+    if tipo == "adquisicion":
+        return EfectoAdquisicion(ratio_catalogo=ratio_catalogo, direccion=direccion)
+
+    return EfectoCobertura(ratio_catalogo=ratio_catalogo, direccion=direccion)
 
 
 def cargar_arquetipos(ruta: str | Path = RUTA_ARQUETIPOS_POR_DEFECTO) -> dict[str, DefinicionArquetipo]:

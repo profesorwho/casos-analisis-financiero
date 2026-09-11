@@ -558,4 +558,24 @@ def generar_caso_combinado(
         notas_memoria_pura.append(nota)
         etiquetas_usadas.update(nota.etiquetas)
 
+    # "coberturas" (21) es `clase="cuantitativo"` desde el encargo de coberturas/subvenciones
+    # (dispara el ajuste numérico de PN vía EfectoCobertura, ver motor.evolucion_arquetipo) pero
+    # SIGUE generando la nota de memoria cualitativa de siempre (motor.memoria.
+    # generar_nota_coberturas) — no pasa por `ids_memoria_pura`, así que se añade aquí como caso
+    # especial en vez de perder la nota. El % del nocional citado en la nota se sortea de forma
+    # independiente del nocional realmente modelado en el balance (ver decisiones_
+    # plausibilidad.md): ambos plausibles dentro del mismo rango, no forzados a coincidir.
+    if "coberturas" in ids_cuantitativos:
+        nota_cobertura = generar_nota_coberturas(
+            sector,
+            segmento,
+            ids_cuantitativos["coberturas"],
+            semilla,
+            ejercicio_referencia,
+            etiquetas_ya_usadas=frozenset(etiquetas_usadas),
+        )
+        notas_memoria_pura.append(nota_cobertura)
+        etiquetas_usadas.update(nota_cobertura.etiquetas)
+        notas_memoria_pura.sort(key=lambda n: n.numero)
+
     return dataclasses.replace(evolucion, notas_memoria_pura=tuple(notas_memoria_pura))

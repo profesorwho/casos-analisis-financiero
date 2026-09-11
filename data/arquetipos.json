@@ -258,8 +258,14 @@
       "id": "coberturas",
       "numero": 21,
       "nombre": "Coberturas",
-      "clase": "memoria_pura",
-      "efectos": []
+      "clase": "cuantitativo",
+      "efectos": [
+        {
+          "tipo": "cobertura",
+          "ratio_catalogo": "ratios.endeudamiento",
+          "direccion": 1
+        }
+      ]
     },
     {
       "id": "informacion_relevante_memoria",

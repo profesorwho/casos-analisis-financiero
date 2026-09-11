@@ -31,7 +31,7 @@ CUANTITATIVOS_A_PROBAR = [
     "crecimiento_destruccion_caja", "beneficio_sin_cash_flow", "aumento_nof", "deterioro_ciclo_caja",
     "exceso_stock", "aumento_clientes", "refinanciacion", "apalancamiento", "mejora_ebitda",
     "mejora_margen", "resultado_extraordinario", "roe_elevado_apalancamiento",
-    "riesgo_liquidez_pese_beneficio", "riesgo_refinanciacion", "capex_elevado", "adquisicion",
+    "riesgo_liquidez_pese_beneficio", "riesgo_refinanciacion", "capex_elevado", "adquisicion", "coberturas",
 ]
 
 COMBOS_RECOMENDADOS = {
@@ -55,7 +55,17 @@ def arquetipos():
 
 
 def _identidad_pn(ejercicio) -> bool:
-    suma = ejercicio.capital_social_eur + ejercicio.reservas_eur + ejercicio.pyg_eur["resultado_ejercicio"]
+    # Incluye las dos líneas de PN de grupo89 (ajustes por cambio de valor, subvenciones — ver
+    # motor/coberturas_subvenciones.py), añadidas por el encargo de coberturas/subvenciones:
+    # 0.0 en los casos sin cobertura/subvención activa, pero la propensión de fondo de la
+    # subvención puede activarse en CUALQUIER caso (no solo los arquetipos 17/21).
+    suma = (
+        ejercicio.capital_social_eur
+        + ejercicio.reservas_eur
+        + ejercicio.pyg_eur["resultado_ejercicio"]
+        + ejercicio.ajustes_cambio_valor_pn_eur
+        + ejercicio.subvenciones_pn_eur
+    )
     return abs(suma - ejercicio.balance_eur["patrimonio_neto"]) < 1e-6
 
 

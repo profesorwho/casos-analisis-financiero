@@ -492,6 +492,20 @@ from motor.amortizacion import (
     generar_cohortes_adquisicion,
     generar_cohortes_capex,
 )
+from motor.coberturas_subvenciones import (
+    TIPO_IMPOSITIVO_GENERAL,
+    activo_por_impuesto_diferido_eur,
+    ajuste_gastos_financieros_cobertura_eur,
+    capex_subvencionable_baseline_eur,
+    evolucionar_cobertura,
+    evolucionar_subvencion,
+    generar_activo_subvencionado,
+    pasivo_por_impuesto_diferido_eur,
+    presentacion_neta_eur,
+    sortear_parametros_cobertura,
+    sortear_pct_cofinanciacion,
+    sortear_subvencion_baseline,
+)
 from motor.catalogo import cargar_y_validar_catalogo
 from motor.empresa_base import (
     TOLERANCIA_CUADRE_EUR,
@@ -844,6 +858,48 @@ class EjercicioEmpresa:
     coleccion_activos_amortizables: tuple = ()
     perfil_subtipos_material_pct: dict[str, float] = field(default_factory=dict)
     perfil_subtipos_intangible_pct: dict[str, float] = field(default_factory=dict)
+    tipo_interes: float = 0.0  # ver empresa_base.EmpresaBase.tipo_interes — expuesto para el Δr de la cobertura
+
+    # --- Cobertura de flujos de efectivo (arquetipo 21) — ver motor/coberturas_subvenciones.py.
+    # Estado bruto (antes de impuesto) que se traslada año a año; los importes NETOS de PN y las
+    # cuentas de impuesto diferido son propiedades derivadas más abajo, no se guardan aparte. ---
+    cobertura_activa: bool = False
+    cobertura_pct_deuda: float = 0.0  # % de la deuda financiera cubierta, fijo por caso
+    cobertura_eficacia_pct: float = 0.0  # fijo por caso
+    cobertura_nocional_vivo_eur: float = 0.0
+    cobertura_plazo_residual_años: float = 0.0
+    cobertura_valor_swap_eur: float = 0.0  # V(t): valor razonable BRUTO del derivado (con signo)
+    cobertura_saldo_1340_bruto_eur: float = 0.0  # B(t): reserva de PN bruta (con signo)
+    cobertura_eficaz_bruto_eur: float = 0.0  # flujo de ESTE año (Documento A, fila B.2)
+    cobertura_transferencia_bruto_eur: float = 0.0  # flujo de ESTE año (Documento A, fila C.2)
+    cobertura_ineficaz_bruto_eur: float = 0.0  # flujo de ESTE año, directo a PyG, informativo
+
+    # --- Subvención de capital (transversal, disparada por el arquetipo 17) — mismo módulo. ---
+    subvencion_activo_asociado: tuple = ()  # sub-lotes de motor.amortizacion ligados a esta subvención
+    subvencion_pct_cofinanciacion: float = 0.0
+    subvencion_saldo_130_bruto_eur: float = 0.0
+    subvencion_importe_concedido_eur: float = 0.0  # flujo de ESTE año (Documento A, fila B.7) — 0 salvo el año de concesión
+    subvencion_transferencia_bruto_eur: float = 0.0  # flujo de ESTE año (Documento A, fila C.7)
+
+    @property
+    def ajustes_cambio_valor_pn_eur(self) -> float:
+        """A-2 del balance — saldo de la cobertura NETO de su efecto impositivo."""
+        return presentacion_neta_eur(self.cobertura_saldo_1340_bruto_eur)
+
+    @property
+    def subvenciones_pn_eur(self) -> float:
+        """A-3 del balance — saldo de la subvención NETO de su efecto impositivo."""
+        return presentacion_neta_eur(self.subvencion_saldo_130_bruto_eur)
+
+    @property
+    def activos_por_impuesto_diferido_eur(self) -> float:
+        return activo_por_impuesto_diferido_eur(self.cobertura_saldo_1340_bruto_eur)
+
+    @property
+    def pasivos_por_impuesto_diferido_eur(self) -> float:
+        return pasivo_por_impuesto_diferido_eur(self.cobertura_saldo_1340_bruto_eur) + pasivo_por_impuesto_diferido_eur(
+            self.subvencion_saldo_130_bruto_eur
+        )
 
     @property
     def rotacion_existencias(self) -> float:
@@ -904,6 +960,12 @@ def _ejercicio_desde_empresa_base(empresa: EmpresaBase) -> EjercicioEmpresa:
         coleccion_activos_amortizables=empresa.coleccion_activos_amortizables,
         perfil_subtipos_material_pct=dict(empresa.perfil_subtipos_material_pct),
         perfil_subtipos_intangible_pct=dict(empresa.perfil_subtipos_intangible_pct),
+        tipo_interes=empresa.tipo_interes,
+        # Cobertura/subvención: en el año base (2023) todo el estado parte de cero — Δr no
+        # existe todavía (no hay "año anterior" dentro de la serie) y la subvención nunca se
+        # concede en 2023 (año_concesion siempre 2024 o 2025, ver
+        # motor.coberturas_subvenciones) — los valores por defecto de EjercicioEmpresa ya son
+        # correctos, no hace falta pasarlos aquí explícitamente.
     )
 
 
@@ -1073,6 +1135,27 @@ def _disponible_proporcional_con_efecto(
     return disponible_proporcional_eur * factor
 
 
+@dataclass(frozen=True)
+class ParametrosGrupo89:
+    """Parámetros de cobertura/subvención sorteados UNA vez por caso (no por año) — ver
+    `generar_evolucion_combinada`, que los calcula, y `motor/coberturas_subvenciones.py`, que
+    define los rangos. `subvencion_via_capex17` y `subvencion_baseline_activa` son mutuamente
+    excluyentes por diseño (ver docstring de `_evolucionar_un_año`, sección subvención): nunca
+    ambas ni ninguna "por suerte" si el arquetipo 17 está activo en el caso."""
+
+    cobertura_activa: bool = False
+    cobertura_pct_deuda: float = 0.0
+    cobertura_plazo_residual_inicial_años: float = 0.0
+    cobertura_eficacia_pct: float = 0.0
+    subvencion_via_capex17: bool = False
+    subvencion_baseline_activa: bool = False
+    subvencion_baseline_año_concesion: int | None = None
+    subvencion_pct_cofinanciacion: float = 0.0
+
+
+PARAMETROS_GRUPO89_INACTIVOS = ParametrosGrupo89()
+
+
 def _evolucionar_un_año(
     año: int,
     anterior: EjercicioEmpresa,
@@ -1085,6 +1168,7 @@ def _evolucionar_un_año(
     sector: str,
     segmento: str,
     semilla: int,
+    parametros_grupo89: ParametrosGrupo89 = PARAMETROS_GRUPO89_INACTIVOS,
 ) -> EjercicioEmpresa:
     """`efectos_activos` ya viene fusionado (uno o varios arquetipos combinados, cada `Efecto`
     emparejado con la intensidad de SU PROPIO arquetipo de origen, y los `masa_circulante` que
@@ -1151,7 +1235,18 @@ def _evolucionar_un_año(
     acreedores_comerciales_proporcional_eur = proporcional_circulante["acreedores_comerciales"]
 
     # --- Resto de masas: crecen en línea con las ventas (patrimonio neto se trata aparte) ---
-    activo_no_corriente_proporcional_eur = anterior.balance_eur["activo_no_corriente"] * (1 + crecimiento_ventas)
+    # Cobertura/subvención (grupo 8/9, ver motor/coberturas_subvenciones.py): el derivado de la
+    # cobertura (si es activo) y el activo por impuesto diferido son valoraciones a mercado, no
+    # partidas que deban crecer proporcional a ventas de un año a otro — se excluyen de la base
+    # proporcional y se añaden después como un NIVEL ya recalculado de este año (igual criterio
+    # en el lado del pasivo con `otras_deudas_largo_eur`). Si no hay grupo89 activo, esto es 0 y
+    # no cambia nada del comportamiento anterior.
+    anterior_activo_grupo89_eur = max(0.0, anterior.cobertura_valor_swap_eur) + anterior.activos_por_impuesto_diferido_eur
+    anterior_pasivo_grupo89_eur = max(0.0, -anterior.cobertura_valor_swap_eur) + anterior.pasivos_por_impuesto_diferido_eur
+
+    activo_no_corriente_proporcional_eur = (
+        anterior.balance_eur["activo_no_corriente"] - anterior_activo_grupo89_eur
+    ) * (1 + crecimiento_ventas)
     activo_no_corriente_eur = activo_no_corriente_proporcional_eur
     if efectos_capex:
         ea_capex = efectos_capex[0]
@@ -1159,7 +1254,7 @@ def _evolucionar_un_año(
             ea_capex.efecto, anterior, ventas, fila, ea_capex.intensidad_efectiva
         )
     deudas_fin_largo_proporcional_eur = anterior.balance_eur["deudas_fin_largo"] * (1 + crecimiento_ventas)
-    otras_deudas_largo_eur = anterior.balance_eur["otras_deudas_largo"] * (1 + crecimiento_ventas)
+    otras_deudas_largo_eur = (anterior.balance_eur["otras_deudas_largo"] - anterior_pasivo_grupo89_eur) * (1 + crecimiento_ventas)
     otras_deudas_corto_eur = anterior.balance_eur["otras_deudas_corto"] * (1 + crecimiento_ventas)
     deudas_fin_corto_proporcional_eur = anterior.balance_eur["deudas_fin_corto"] * (1 + crecimiento_ventas)
     disponible_proporcional_eur = _disponible_proporcional_con_efecto(
@@ -1244,14 +1339,50 @@ def _evolucionar_un_año(
     # ESTE año concreto, si los hay — con `año_ancla` = este año, sin sorteo de fecha/ya-
     # amortizado (activos recién comprados). ---
     coleccion_activos_amortizables = anterior.coleccion_activos_amortizables
+    cohortes_capex_este_año: tuple = ()
     if exceso_capex_eur > 0:
-        coleccion_activos_amortizables += generar_cohortes_capex(sector, segmento, semilla, año, exceso_capex_eur)
+        cohortes_capex_este_año = generar_cohortes_capex(sector, segmento, semilla, año, exceso_capex_eur)
+        coleccion_activos_amortizables += cohortes_capex_este_año
     if incremento_activo_adquisicion_eur > 0:
         categoria = categoria_de_sector(sector)
         coleccion_activos_amortizables += generar_cohortes_adquisicion(
             sector, segmento, semilla, año, incremento_activo_adquisicion_eur, categoria,
             anterior.activo_no_corriente_perfil_pct, anterior.perfil_subtipos_material_pct, anterior.perfil_subtipos_intangible_pct,
         )
+
+    # --- Subvención de capital pendiente de imputar (transversal, ver
+    # motor/coberturas_subvenciones.py) — disparada por el arquetipo 17 ("capex elevado") como
+    # vía principal, ligada a la MISMA cohorte que ya genera el capex de este año (no se crea
+    # una cohorte duplicada): se concede una única vez, en 2024, sobre el primer exceso de
+    # capex del caso (simplificación deliberada y documentada — un capex_elevado que siga
+    # generando exceso en 2025 no genera una segunda subvención). Si el caso NO tiene el 17
+    # activo, se evalúa en su lugar la probabilidad de fondo (sorteada una única vez por caso en
+    # `generar_evolucion_combinada`, mutuamente excluyente con la vía "17" — ver
+    # ParametrosGrupo89). ---
+    subvencion_activo_asociado = anterior.subvencion_activo_asociado
+    subvencion_importe_concedido_eur = 0.0
+    subvencion_pct_cofinanciacion = anterior.subvencion_pct_cofinanciacion
+    if parametros_grupo89.subvencion_via_capex17 and año == 2024 and exceso_capex_eur > 0:
+        subvencion_pct_cofinanciacion = sortear_pct_cofinanciacion(sector, segmento, semilla)
+        subvencion_activo_asociado = cohortes_capex_este_año
+        subvencion_importe_concedido_eur = subvencion_pct_cofinanciacion * exceso_capex_eur
+    elif (
+        parametros_grupo89.subvencion_baseline_activa
+        and not parametros_grupo89.subvencion_via_capex17
+        and año == parametros_grupo89.subvencion_baseline_año_concesion
+    ):
+        subvencion_pct_cofinanciacion = sortear_pct_cofinanciacion(sector, segmento, semilla)
+        capex_baseline_eur = capex_subvencionable_baseline_eur(
+            sector, segmento, semilla, anterior.balance_eur["activo_no_corriente"]
+        )
+        subvencion_activo_asociado = generar_activo_subvencionado(sector, segmento, semilla, año, capex_baseline_eur)
+        coleccion_activos_amortizables += subvencion_activo_asociado
+        subvencion_importe_concedido_eur = subvencion_pct_cofinanciacion * capex_baseline_eur
+
+    paso_subvencion = evolucionar_subvencion(anterior.subvencion_saldo_130_bruto_eur, subvencion_activo_asociado, año)
+    subvencion_saldo_130_bruto_eur = paso_subvencion.saldo_130_bruto_eur + subvencion_importe_concedido_eur
+    subvencion_transferencia_bruto_eur = paso_subvencion.transferencia_bruto_eur
+
     amortizacion_eur_año = amortizacion_eur_del_año(coleccion_activos_amortizables, año)
 
     # --- PyG: primitivas no financieras + tipo de interés, sorteadas UNA sola vez. Las que el
@@ -1316,6 +1447,76 @@ def _evolucionar_un_año(
                 indice_nota = rng_nota.integers(len(NOTAS_MEMORIA_GASTOS_PERSONAL_AL_LIMITE))
                 texto, etiquetas = NOTAS_MEMORIA_GASTOS_PERSONAL_AL_LIMITE[indice_nota]
                 notas_memoria.append(NotaMemoria(arquetipo_id=ea.arquetipo_id, numero=ea.numero, texto=texto, etiquetas=etiquetas))
+
+    # --- Cobertura de flujos de efectivo (arquetipo 21, ver motor/coberturas_subvenciones.py):
+    # necesita el tipo de interés YA sorteado de este año (parcial_pyg.tipo_interes) para el
+    # Δr, así que se calcula aquí, después de la PyG hasta BAII y antes del enlace deuda-interés
+    # (que no depende de esto: la cobertura no participa en la contención de endeudamiento ni en
+    # el bucle de apalancamiento, se añade como un nivel ya resuelto sobre el balance final). El
+    # nocional de CIERRE de este año usa la deuda financiera PROPORCIONAL (no la ya cuadrada tras
+    # el déficit de NOF/apalancamiento): aproximación deliberada y documentada — el nocional de
+    # cierre solo alimenta el Δr del año SIGUIENTE, no el cuadre de este año. ---
+    deuda_financiera_actual_grupo89_eur = deudas_fin_largo_proporcional_eur + deudas_fin_corto_proporcional_eur
+    if parametros_grupo89.cobertura_activa:
+        plazo_residual_anterior = (
+            anterior.cobertura_plazo_residual_años
+            if anterior.cobertura_activa
+            else parametros_grupo89.cobertura_plazo_residual_inicial_años
+        )
+        paso_cobertura = evolucionar_cobertura(
+            año,
+            deuda_financiera_actual_grupo89_eur,
+            parcial_pyg.tipo_interes,
+            anterior.tipo_interes,
+            anterior.cobertura_nocional_vivo_eur,
+            plazo_residual_anterior,
+            anterior.cobertura_valor_swap_eur,
+            anterior.cobertura_saldo_1340_bruto_eur,
+            parametros_grupo89.cobertura_pct_deuda,
+            parametros_grupo89.cobertura_eficacia_pct,
+        )
+        cobertura_nocional_vivo_eur = paso_cobertura.nocional_vivo_eur
+        cobertura_plazo_residual_años = paso_cobertura.plazo_residual_años
+        cobertura_valor_swap_eur = paso_cobertura.valor_swap_eur
+        cobertura_saldo_1340_bruto_eur = paso_cobertura.saldo_1340_bruto_eur
+        cobertura_eficaz_bruto_eur = paso_cobertura.eficaz_bruto_eur
+        cobertura_transferencia_bruto_eur = paso_cobertura.transferencia_bruto_eur
+        cobertura_ineficaz_bruto_eur = paso_cobertura.ineficaz_bruto_eur
+        ajuste_gastos_financieros_grupo89_eur = ajuste_gastos_financieros_cobertura_eur(paso_cobertura)
+    else:
+        cobertura_nocional_vivo_eur = 0.0
+        cobertura_plazo_residual_años = 0.0
+        cobertura_valor_swap_eur = 0.0
+        cobertura_saldo_1340_bruto_eur = 0.0
+        cobertura_eficaz_bruto_eur = 0.0
+        cobertura_transferencia_bruto_eur = 0.0
+        cobertura_ineficaz_bruto_eur = 0.0
+        ajuste_gastos_financieros_grupo89_eur = 0.0
+
+    ajuste_otros_ingresos_explot_grupo89_eur = subvencion_transferencia_bruto_eur
+
+    # Colocación en balance del grupo89 de ESTE año (nivel, no delta — ver más arriba por qué
+    # se excluyó del crecimiento proporcional): el derivado y el activo por impuesto diferido
+    # (si procede) suman a activo_no_corriente; el derivado si es pasivo y AMBOS pasivos por
+    # impuesto diferido (cobertura + subvención) suman a otras_deudas_largo (pasivo_no_corriente).
+    activos_por_impuesto_diferido_eur = activo_por_impuesto_diferido_eur(cobertura_saldo_1340_bruto_eur)
+    pasivos_por_impuesto_diferido_eur = pasivo_por_impuesto_diferido_eur(cobertura_saldo_1340_bruto_eur) + pasivo_por_impuesto_diferido_eur(
+        subvencion_saldo_130_bruto_eur
+    )
+    activo_no_corriente_eur += max(0.0, cobertura_valor_swap_eur) + activos_por_impuesto_diferido_eur
+    otras_deudas_largo_eur += max(0.0, -cobertura_valor_swap_eur) + pasivos_por_impuesto_diferido_eur
+
+    # Subvención: el cobro de la ayuda es caja real, entra en el ejercicio de concesión y se
+    # queda (la imputación posterior a la PyG es un reciclaje de PN -> resultado, no una salida
+    # de caja) — ver docstring del módulo `motor.coberturas_subvenciones`.
+    disponible_proporcional_eur += subvencion_importe_concedido_eur
+
+    ajustes_cambio_valor_pn_eur = presentacion_neta_eur(cobertura_saldo_1340_bruto_eur)
+    subvenciones_pn_eur = presentacion_neta_eur(subvencion_saldo_130_bruto_eur)
+    delta_pn_grupo89_eur = (
+        (ajustes_cambio_valor_pn_eur - anterior.ajustes_cambio_valor_pn_eur)
+        + (subvenciones_pn_eur - anterior.subvenciones_pn_eur)
+    )
 
     def _deficit_y_deuda_corto(existencias_eur: float, realizable_eur: float, acreedores_comerciales_eur: float) -> tuple[float, float, float]:
         # Presión neta sobre la NOF: las masas de ACTIVO (existencias, realizable) la suben
@@ -1406,8 +1607,29 @@ def _evolucionar_un_año(
         deuda_financiera_fin_eur = deudas_fin_largo_eur + deudas_fin_corto_eur
         deuda_financiera_media_eur = (deuda_financiera_inicio_eur + deuda_financiera_fin_eur) / 2
         pyg_pct, pyg_eur = _completar_pyg_con_deuda(parcial_pyg, deuda_financiera_media_eur)
+
+        # Ajuste de grupo89 (cobertura/subvención) — importe BRUTO completo, desacoplado del
+        # `impuesto_beneficios` ya sorteado (que no debe gravar dos veces esta partida ni
+        # dejarla sin gravar del todo): ver docstring de motor.coberturas_subvenciones, punto 1
+        # del diseño de cuadre. Se aplica DESPUÉS de `_completar_pyg_con_deuda` para no alterar
+        # la base sobre la que se sorteó `impuesto_beneficios_pct`.
+        if ajuste_gastos_financieros_grupo89_eur != 0.0 or ajuste_otros_ingresos_explot_grupo89_eur != 0.0:
+            pyg_eur = dict(pyg_eur)
+            pyg_eur["otros_ingresos_explot"] += ajuste_otros_ingresos_explot_grupo89_eur
+            pyg_eur["ingresos_explotacion"] += ajuste_otros_ingresos_explot_grupo89_eur
+            pyg_eur["margen_bruto"] += ajuste_otros_ingresos_explot_grupo89_eur
+            pyg_eur["valor_añadido"] += ajuste_otros_ingresos_explot_grupo89_eur
+            pyg_eur["baii"] += ajuste_otros_ingresos_explot_grupo89_eur
+            pyg_eur["gastos_financieros"] -= ajuste_gastos_financieros_grupo89_eur
+            pyg_eur["bai"] += ajuste_otros_ingresos_explot_grupo89_eur + ajuste_gastos_financieros_grupo89_eur
+            pyg_eur["resultado_ejercicio"] += ajuste_otros_ingresos_explot_grupo89_eur + ajuste_gastos_financieros_grupo89_eur
+            pyg_pct = {k: v / pyg_eur["ingresos_explotacion"] * 100 for k, v in pyg_eur.items()}
+
         patrimonio_neto_eur = (
-            anterior.balance_eur["patrimonio_neto"] + pyg_eur["resultado_ejercicio"] - extra_deuda_largo_eur
+            anterior.balance_eur["patrimonio_neto"]
+            + pyg_eur["resultado_ejercicio"]
+            - extra_deuda_largo_eur
+            + delta_pn_grupo89_eur
         )
         balance, ajuste_cuadre_eur = _construir_balance(
             existencias_eur,
@@ -1574,7 +1796,16 @@ def _evolucionar_un_año(
         ventas_organicas_eur=ventas_organicas_eur,
         ventas_inorganicas_eur=ventas_inorganicas_eur,
         capital_social_eur=anterior.capital_social_eur,
-        reservas_eur=balance_eur["patrimonio_neto"] - anterior.capital_social_eur - pyg_eur["resultado_ejercicio"],
+        # Reservas por resta, igual criterio que siempre — ahora también se excluyen las dos
+        # líneas nuevas de PN (ajustes por cambio de valor, subvenciones): son masas propias,
+        # no deben quedar absorbidas dentro de reservas.
+        reservas_eur=(
+            balance_eur["patrimonio_neto"]
+            - anterior.capital_social_eur
+            - pyg_eur["resultado_ejercicio"]
+            - ajustes_cambio_valor_pn_eur
+            - subvenciones_pn_eur
+        ),
         activo_no_corriente_perfil_pct=anterior.activo_no_corriente_perfil_pct,
         # Desglose del TOTAL de activo_no_corriente de ESTE año (incluye cualquier salto de
         # adquisición ya absorbido, de este año o de años anteriores) — instantánea informativa.
@@ -1590,6 +1821,22 @@ def _evolucionar_un_año(
         coleccion_activos_amortizables=coleccion_activos_amortizables,
         perfil_subtipos_material_pct=anterior.perfil_subtipos_material_pct,
         perfil_subtipos_intangible_pct=anterior.perfil_subtipos_intangible_pct,
+        tipo_interes=parcial_pyg.tipo_interes,
+        cobertura_activa=parametros_grupo89.cobertura_activa,
+        cobertura_pct_deuda=parametros_grupo89.cobertura_pct_deuda,
+        cobertura_eficacia_pct=parametros_grupo89.cobertura_eficacia_pct,
+        cobertura_nocional_vivo_eur=cobertura_nocional_vivo_eur,
+        cobertura_plazo_residual_años=cobertura_plazo_residual_años,
+        cobertura_valor_swap_eur=cobertura_valor_swap_eur,
+        cobertura_saldo_1340_bruto_eur=cobertura_saldo_1340_bruto_eur,
+        cobertura_eficaz_bruto_eur=cobertura_eficaz_bruto_eur,
+        cobertura_transferencia_bruto_eur=cobertura_transferencia_bruto_eur,
+        cobertura_ineficaz_bruto_eur=cobertura_ineficaz_bruto_eur,
+        subvencion_activo_asociado=subvencion_activo_asociado,
+        subvencion_pct_cofinanciacion=subvencion_pct_cofinanciacion,
+        subvencion_saldo_130_bruto_eur=subvencion_saldo_130_bruto_eur,
+        subvencion_importe_concedido_eur=subvencion_importe_concedido_eur,
+        subvencion_transferencia_bruto_eur=subvencion_transferencia_bruto_eur,
     )
 
 
@@ -1778,6 +2025,59 @@ def generar_evolucion_combinada(
     if any(isinstance(e, EfectoEventoPuntual) for definicion in definiciones.values() for e in definicion.efectos):
         año_evento_puntual = 2024 if rng_tendencia.integers(2) == 0 else 2025
 
+    # --- Cobertura/subvención (grupo 8/9, ver motor/coberturas_subvenciones.py) — parámetros
+    # sorteados UNA vez por caso (no por año), igual criterio que crecimiento_pleno_objetivo/
+    # año_evento_puntual: son rasgos estructurales del caso, no algo que deba re-sortearse cada
+    # ejercicio. ---
+    cobertura_activa = "coberturas" in definiciones
+    if cobertura_activa:
+        cobertura_pct_deuda, cobertura_plazo_residual_inicial_años, cobertura_eficacia_pct = sortear_parametros_cobertura(
+            sector, segmento, semilla, arquetipos_intensidades["coberturas"]
+        )
+    else:
+        cobertura_pct_deuda = cobertura_plazo_residual_inicial_años = cobertura_eficacia_pct = 0.0
+
+    # Subvención: vía "17" (capex_elevado activo en el caso) y vía "de fondo" (propensión por
+    # categoría de sector, evaluada solo si el 17 NO está activo) son mutuamente excluyentes —
+    # ver docstring de `_evolucionar_un_año`.
+    subvencion_via_capex17 = "capex_elevado" in definiciones
+    if subvencion_via_capex17:
+        subvencion_baseline_activa = False
+        subvencion_baseline_año_concesion = None
+    else:
+        categoria_sector_caso = categoria_de_sector(sector)
+        subvencion_baseline_activa, subvencion_baseline_año_concesion = sortear_subvencion_baseline(
+            sector, segmento, semilla, categoria_sector_caso
+        )
+
+    parametros_grupo89 = ParametrosGrupo89(
+        cobertura_activa=cobertura_activa,
+        cobertura_pct_deuda=cobertura_pct_deuda,
+        cobertura_plazo_residual_inicial_años=cobertura_plazo_residual_inicial_años,
+        cobertura_eficacia_pct=cobertura_eficacia_pct,
+        subvencion_via_capex17=subvencion_via_capex17,
+        subvencion_baseline_activa=subvencion_baseline_activa,
+        subvencion_baseline_año_concesion=subvencion_baseline_año_concesion,
+    )
+    if cobertura_activa:
+        # El nocional (y el plazo residual) de la cobertura se establecen YA en el año base
+        # (2023) — si se dejaran en su valor por defecto (0.0), el primer Δr real (2024) se
+        # multiplicaría por un nocional nulo y la cobertura quedaría inerte un año entero. El
+        # valor razonable del swap (`cobertura_valor_swap_eur`/`..._saldo_1340_bruto_eur`) SÍ
+        # se queda en 0 en 2023: no hay Δr que computar contra un año anterior a la serie (se
+        # trata 2023 como el origen de medición, hipótesis de diseño ya documentada).
+        deuda_financiera_2023_eur = (
+            ejercicios[AÑO_BASE].balance_eur["deudas_fin_largo"] + ejercicios[AÑO_BASE].balance_eur["deudas_fin_corto"]
+        )
+        ejercicios[AÑO_BASE] = replace(
+            ejercicios[AÑO_BASE],
+            cobertura_activa=True,
+            cobertura_pct_deuda=cobertura_pct_deuda,
+            cobertura_eficacia_pct=cobertura_eficacia_pct,
+            cobertura_nocional_vivo_eur=cobertura_pct_deuda * deuda_financiera_2023_eur,
+            cobertura_plazo_residual_años=cobertura_plazo_residual_inicial_años,
+        )
+
     anterior = ejercicios[AÑO_BASE]
     for año in (2024, 2025):
         fraccion = FRACCION_AÑO[año]
@@ -1814,6 +2114,7 @@ def generar_evolucion_combinada(
             sector,
             segmento,
             semilla,
+            parametros_grupo89,
         )
         ejercicios[año] = ejercicio
         anterior = ejercicio

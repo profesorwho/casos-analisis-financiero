@@ -68,7 +68,7 @@ class EstadoFlujosEfectivo:
     b8_flujo_inversion: float
 
     # C) Flujos de efectivo de las actividades de financiación
-    c9_instrumentos_patrimonio: float  # SIEMPRE 0.0 — capital social fijo, sin ampliaciones/reducciones modeladas
+    c9_instrumentos_patrimonio: float  # = cobro de subvenciones de capital en el año de concesión (ver motor/coberturas_subvenciones.py) — 0.0 si no hay subvención; capital social sigue fijo, sin ampliaciones/reducciones modeladas
     c10_variacion_neta_deuda_financiera: float  # neto emisión/devolución — el motor no distingue gross issuance/repayment dentro del año
     c11a_dividendos: float  # arquetipo 9/14 (apalancamiento): la distribución financiada con la deuda nueva de C.10
     c12_flujo_financiacion: float
@@ -91,14 +91,32 @@ def generar_efe(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligatori
     a2a = 0.0  # ver docstring del módulo
     a2g = -actual.pyg_eur["ingresos_financieros"]
     a2h = actual.pyg_eur["gastos_financieros"]
-    a2k = 0.0
+    # A.2.k ("otros ajustes") — reversa el importe BRUTO que la cobertura/subvención inyectó en
+    # el resultado antes de impuestos (A.1) vía `otros_ingresos_explot`/`gastos_financieros`
+    # (imputación anual de la subvención + ineficacia y transferencia por vencimiento de la
+    # cobertura, ver motor/coberturas_subvenciones.py): es una reclasificación contable pura
+    # desde una reserva de PN (130/1340) hacia el resultado del ejercicio, SIN flujo de caja
+    # alguno — igual naturaleza que a2a (amortización), que también se revierte por no tener
+    # contrapartida de caja. Sin este reverso, A.1 arrastraría el importe como si fuera caja
+    # operativa real y el EFE dejaría de cuadrar exactamente en ese importe.
+    a2k = -(actual.subvencion_transferencia_bruto_eur + actual.cobertura_ineficaz_bruto_eur + actual.cobertura_transferencia_bruto_eur)
 
     a3a = -(actual.balance_eur["existencias"] - anterior.balance_eur["existencias"])
     a3b = -(actual.balance_eur["realizable"] - anterior.balance_eur["realizable"])
     a3c = 0.0
     a3d = actual.balance_eur["acreedores_comerciales"] - anterior.balance_eur["acreedores_comerciales"]
     a3e = actual.balance_eur["otras_deudas_corto"] - anterior.balance_eur["otras_deudas_corto"]
-    a3f = actual.balance_eur["otras_deudas_largo"] - anterior.balance_eur["otras_deudas_largo"]
+    # A.3.f excluye el grupo89 (cobertura si es pasivo + impuesto diferido de cobertura y
+    # subvención, ver motor/coberturas_subvenciones.py) alojado dentro de `otras_deudas_largo`:
+    # son valoraciones/reclasificaciones puramente contables sin ningún flujo de caja detrás
+    # (a diferencia de un pasivo operativo real) — su contrapartida es la línea de PN
+    # correspondiente, no caja, así que tratarlas aquí como "fuente de caja" duplicaría un
+    # movimiento que no existe. Mismo criterio que ya se aplica a la amortización (a2a).
+    grupo89_pasivo_no_corriente_actual = actual.pasivos_por_impuesto_diferido_eur + max(0.0, -actual.cobertura_valor_swap_eur)
+    grupo89_pasivo_no_corriente_anterior = anterior.pasivos_por_impuesto_diferido_eur + max(0.0, -anterior.cobertura_valor_swap_eur)
+    a3f = (actual.balance_eur["otras_deudas_largo"] - grupo89_pasivo_no_corriente_actual) - (
+        anterior.balance_eur["otras_deudas_largo"] - grupo89_pasivo_no_corriente_anterior
+    )
 
     a4a = -actual.pyg_eur["gastos_financieros"]
     a4b = 0.0
@@ -112,10 +130,15 @@ def generar_efe(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligatori
     # financieros), constante para el caso, aplicado al cambio ORGÁNICO de activo_no_corriente
     # (excluyendo el salto de adquisición del año actual, si lo hay, que se muestra aparte en
     # B.6.a). Ver docstring de EjercicioEmpresa.activo_no_corriente_desglose_eur.
+    # Excluye, igual que A.3.f, el grupo89 alojado dentro de `activo_no_corriente` (el derivado
+    # de la cobertura si es activo + su impuesto diferido) — sin flujo de caja detrás, ver más
+    # arriba.
+    grupo89_activo_no_corriente_actual = actual.activos_por_impuesto_diferido_eur + max(0.0, actual.cobertura_valor_swap_eur)
+    grupo89_activo_no_corriente_anterior = anterior.activos_por_impuesto_diferido_eur + max(0.0, anterior.cobertura_valor_swap_eur)
     delta_activo_no_corriente_organico = (
-        actual.balance_eur["activo_no_corriente"]
+        (actual.balance_eur["activo_no_corriente"] - grupo89_activo_no_corriente_actual)
         - actual.incremento_activo_adquisicion_eur
-        - anterior.balance_eur["activo_no_corriente"]
+        - (anterior.balance_eur["activo_no_corriente"] - grupo89_activo_no_corriente_anterior)
     )
     perfil = actual.activo_no_corriente_perfil_pct
     b_intangible = -perfil["intangible"] * delta_activo_no_corriente_organico
@@ -130,7 +153,12 @@ def generar_efe(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligatori
     deuda_financiera_actual = actual.balance_eur["deudas_fin_largo"] + actual.balance_eur["deudas_fin_corto"]
     deuda_financiera_anterior = anterior.balance_eur["deudas_fin_largo"] + anterior.balance_eur["deudas_fin_corto"]
     c10 = deuda_financiera_actual - deuda_financiera_anterior
-    c9 = 0.0
+    # C.9 ("Cobros y pagos por instrumentos de patrimonio... subvenciones, donaciones y legados
+    # recibidos") — antes siempre 0.0 por no existir ningún mecanismo detrás; el encargo de
+    # coberturas/subvenciones lo rellena con el cobro real de caja del año de concesión (ver
+    # motor/coberturas_subvenciones.py y motor/evolucion_arquetipo.py — el importe se añade
+    # directamente a `disponible` ese año, C.9 es la contrapartida que lo explica en el EFE).
+    c9 = actual.subvencion_importe_concedido_eur
     c11a = -actual.apalancamiento_extra_eur
     c12 = c9 + c10 + c11a
 

@@ -49,7 +49,7 @@ CUANTITATIVOS_A_PROBAR = [
     "crecimiento_destruccion_caja", "beneficio_sin_cash_flow", "aumento_nof", "deterioro_ciclo_caja",
     "exceso_stock", "aumento_clientes", "refinanciacion", "apalancamiento", "mejora_ebitda",
     "mejora_margen", "resultado_extraordinario", "roe_elevado_apalancamiento",
-    "riesgo_liquidez_pese_beneficio", "riesgo_refinanciacion", "capex_elevado", "adquisicion",
+    "riesgo_liquidez_pese_beneficio", "riesgo_refinanciacion", "capex_elevado", "adquisicion", "coberturas",
 ]
 
 

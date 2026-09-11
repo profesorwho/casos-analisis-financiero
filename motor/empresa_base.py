@@ -252,6 +252,10 @@ class EmpresaBase:
     coleccion_activos_amortizables: tuple = ()
     perfil_subtipos_material_pct: dict[str, float] = field(default_factory=dict)
     perfil_subtipos_intangible_pct: dict[str, float] = field(default_factory=dict)
+    # Tipo de interés del ejercicio (ya sorteado dentro de _generar_pyg_hasta_baii, antes solo
+    # local a esa función) — expuesto para el Δr de la cobertura de tipos de interés (arquetipo
+    # 21, motor/coberturas_subvenciones.py): no es un sorteo nuevo, solo se deja de descartar.
+    tipo_interes: float = 0.0
 
 
 def _mapa_codigo_sector(catalogo: pd.DataFrame) -> dict[str, str]:
@@ -578,4 +582,5 @@ def generar_empresa_base(
         coleccion_activos_amortizables=coleccion_activos_amortizables,
         perfil_subtipos_material_pct=perfil_subtipos_material,
         perfil_subtipos_intangible_pct=perfil_subtipos_intangible,
+        tipo_interes=parcial_pyg.tipo_interes,
     )

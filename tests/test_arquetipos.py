@@ -33,18 +33,21 @@ IDS_ESPERADOS = {
     "riesgo_refinanciacion": 16,
     "capex_elevado": 17,
     "adquisicion": 18,
+    # "coberturas" (21) pasó de memoria_pura a cuantitativo con el encargo de coberturas/
+    # subvenciones (dispara EfectoCobertura) — sigue generando también su nota de memoria
+    # cualitativa como caso especial en motor.memoria.generar_caso_combinado.
+    "coberturas": 21,
 }
 
 IDS_MEMORIA_PURA = {
     "dependencia_pocos_clientes": 7,
     "activo_mantenido_venta": 19,
     "operaciones_vinculadas": 20,
-    "coberturas": 21,
     "informacion_relevante_memoria": 22,
 }
 
 
-def test_carga_los_16_arquetipos_cuantitativos():
+def test_carga_los_17_arquetipos_cuantitativos():
     arquetipos = cargar_arquetipos()
     assert set(id_ for id_, d in arquetipos.items() if d.clase == "cuantitativo") == set(IDS_ESPERADOS)
     for id_, numero in IDS_ESPERADOS.items():
@@ -57,7 +60,7 @@ def test_tipo_de_efecto_adquisicion():
     assert all(isinstance(e, EfectoAdquisicion) for e in arquetipos["adquisicion"].efectos)
 
 
-def test_carga_los_5_arquetipos_de_memoria_pura():
+def test_carga_los_4_arquetipos_de_memoria_pura():
     arquetipos = cargar_arquetipos()
     assert set(id_ for id_, d in arquetipos.items() if d.clase == "memoria_pura") == set(IDS_MEMORIA_PURA)
     for id_, numero in IDS_MEMORIA_PURA.items():
