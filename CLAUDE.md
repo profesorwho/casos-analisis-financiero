@@ -18,7 +18,7 @@ Especificación funcional completa: `docs/especificaciones_proyecto_casos_balanc
 |---|---|---|---|
 | `catalogo.py` | Carga y valida el catálogo de ratios sectoriales (CSV, 27 sectores × 2 segmentos, `huber_9y`/`huber_scale_mad` por ratio). | `cargar_y_validar_catalogo(ruta=...) -> DataFrame`; `version_catalogo(ruta=...) -> str` (hash usado como `catalogo_version`, sección 2.15). | Base de todo — sin arquetipos. |
 | `ruido.py` | Mecanismo de ruido mixto típico/atípico (85%/15%, normal truncada) — extraído de `empresa_base.py` a su propio módulo para que `amortizacion.py` pueda reutilizarlo sin crear una importación circular. Sin dependencias de otros módulos del motor. | `_generar_partida(rng, huber_9y, huber_scale_mad, suelo=None, techo=None) -> (float, str)`; `_normal_truncada`; `_renormalizar_a_total` | Nada de generación — `empresa_base.py` los reexporta (`from motor.ruido import ...`), así que el resto del código sigue importándolos como `motor.empresa_base.<nombre>` sin cambios. |
-| `empresa_base.py` | Genera balance + PyG de **una** empresa, **un** ejercicio, a partir del catálogo + ruido típico/atípico. Sin arquetipos, sin serie temporal. | `generar_empresa_base(sector, segmento, ventas_objetivo, semilla, catalogo=None) -> EmpresaBase`; `resolver_fila_sector(catalogo, sector_codigo, segmento) -> pd.Series`; `categoria_de_sector(sector_codigo) -> str` | Año base 2023 de **cualquier** caso, con o sin arquetipo. Desde el arreglo de raíz de la amortización, importa `motor.amortizacion` para derivar `pyg_eur["amortizaciones"]` — ver "Amortización derivada" abajo. |
+| `empresa_base.py` | Genera balance + PyG de **una** empresa, **un** ejercicio, a partir del catálogo + ruido típico/atípico. Sin arquetipos, sin serie temporal. `tipo_interes` (para `gastos_financieros`) ya NO sale de `ratios.coste_deuda` del catálogo — ver "Tipo de interés de mercado" abajo. | `generar_empresa_base(sector, segmento, ventas_objetivo, semilla, catalogo=None) -> EmpresaBase`; `resolver_fila_sector(catalogo, sector_codigo, segmento) -> pd.Series`; `categoria_de_sector(sector_codigo) -> str` | Año base 2023 de **cualquier** caso, con o sin arquetipo. Desde el arreglo de raíz de la amortización, importa `motor.amortizacion` para derivar `pyg_eur["amortizaciones"]` — ver "Amortización derivada" abajo. |
 | `amortizacion.py` | Deriva el gasto de amortización de la PyG a partir de una colección REAL de activos (sub-lotes con vida fiscal, fecha de compra sorteada, posible "ya totalmente amortizado") — sustituye el antiguo sorteo independiente de `amortizaciones_pct`. Ver sección "Amortización derivada" abajo para el diseño completo. | `generar_coleccion_y_perfiles_base(sector, segmento, semilla, categoria, activo_no_corriente_desglose_eur) -> (coleccion, perfil_material, perfil_intangible)`; `generar_cohortes_capex(...)`/`generar_cohortes_adquisicion(...)` (cohortes nuevas de los arquetipos 17/18); `amortizacion_eur_del_año(coleccion, año) -> float`; `bienes_totalmente_amortizados_en(coleccion, año) -> tuple[BienTotalmenteAmortizado,...]` | `empresa_base.py` (año base) y `evolucion_arquetipo.py` (2024/2025, cohortes nuevas de capex/adquisición) — consume el desglose de `activo_no_corriente` ya generado, no genera balance por sí mismo. |
 | `arquetipos.py` | Carga y valida `data/arquetipos.json` como dataclasses tipadas. **Sin lógica de generación.** | `cargar_arquetipos(ruta=...) -> dict[str, DefinicionArquetipo]` | Tipos de efecto: `EfectoMasaCirculante`, `EfectoPygPrimitiva`, `EfectoApalancamiento`, `EfectoTesoreria`, `EfectoReclasificacionDeuda`, `EfectoEventoPuntual`, `EfectoCapex`, `EfectoAdquisicion`, `EfectoCobertura`. |
 | `evolucion_arquetipo.py` | Motor genérico: evoluciona una empresa 3 ejercicios (2023 base + 2024/2025 con el/los arquetipo(s) aplicado(s)), interpretando cada tipo de `Efecto`. Contiene toda la lógica de mecanismo — **no releer para saber qué arquetipos toca cada mecanismo, ver tabla de mecanismos abajo**. `generar_evolucion_arquetipo` (un solo arquetipo) es un wrapper de una línea sobre `generar_evolucion_combinada` con un dict de 1 elemento — **garantía estructural**: cualquier test de un arquetipo en solitario que siga pasando prueba que la combinación no le cambió el comportamiento. | `generar_evolucion_combinada(sector, segmento, ventas_objetivo_2023, semilla, arquetipos_intensidades: dict[str,str], catalogo=None, arquetipos=None) -> EvolucionArquetipo` (motor general); `generar_evolucion_arquetipo(sector, segmento, ventas_objetivo_2023, semilla, intensidad, arquetipo_id, catalogo=None, arquetipos=None) -> EvolucionArquetipo` (caso de 1 arquetipo) | Todos los arquetipos de `clase="cuantitativo"` (17 desde el encargo de coberturas/subvenciones — "coberturas", 21, pasó de `memoria_pura` a `cuantitativo`, ver `docs/indice_arquetipos.md`); rechaza `clase="memoria_pura"` con `EvolucionArquetipoError`. |
@@ -230,10 +230,12 @@ deterioro, no a una reserva de PN).
   `reservas_eur` se calcula ahora restando también estas dos líneas (antes solo capital +
   resultado).
 - **Plausibilidad de la cobertura — verificación OBLIGATORIA que SÍ hacía falta** (ver
-  decisiones #36): sin acotar `Δtipo_interes` (que en este motor mezcla tipo de referencia +
-  spread de crédito, con volatilidad mucho mayor que un Euríbor real), el peor caso de un
-  barrido de 27×4×3 llegaba al 13,7% del balance total. `TECHO_DELTA_R_ANUAL = 0.03` lo baja al
-  2,1%.
+  decisiones #36): con la fuente de `tipo_interes` de ENTONCES (`ratios.coste_deuda` del
+  catálogo, contaminada — ya sustituida, ver sección "Tipo de interés de mercado" más abajo), el
+  peor caso de un barrido de 27×4×3 llegaba al 13,7% del balance total. `TECHO_DELTA_R_ANUAL =
+  0.03` lo bajó al 2,1% en su momento. Con la fuente de mercado actual, el techo directamente NO
+  se activa nunca en el mismo barrido (0/972, ver decisiones #44) — se mantiene como salvaguarda
+  residual, no como límite que haga falta recalibrar.
 - **EFE**: `c9_instrumentos_patrimonio` = cobro de la subvención en su año de concesión (antes
   siempre 0). `a2k_otros_ingresos_gastos` (antes siempre 0) reversa el importe bruto que la
   cobertura/subvención inyectó en `a1` vía PyG — es una reclasificación contable pura sin caja
@@ -250,6 +252,57 @@ deterioro, no a una reserva de PN).
   NO existe un umbral "gran empresa" distinto de modelo normal/abreviado (Art. 257 LSC) — ambos
   documentos comparten el mismo flag `obligatorio`. Ver decisiones #37 para la verificación
   externa que corrige la afirmación previa.
+
+## Tipo de interés de mercado (`motor/empresa_base.py`, sustituye `ratios.coste_deuda`)
+
+`gastos_financieros = deuda_financiera_media × tipo_interes` (sección "EFE y ECPN" y
+"Coberturas y subvenciones" arriba) ya NO sortea `tipo_interes` desde `ratios.coste_deuda` del
+catálogo ACCID — diagnóstico cerrado: ese ratio (`Gastos financieros / Préstamos`) mezcla en el
+numerador partidas ajenas a intereses reales (deterioros de activos financieros, diferencias de
+cambio, pérdidas en enajenación de instrumentos financieros) y su denominador puede ser una
+fracción minúscula del pasivo en sectores financiados mayoritariamente con pasivo no financiero
+— produce valores reales de hasta 110% (verificado a mano contra el PDF de ACCID, sector
+Construcción aeronáutica, ver decisiones #38-40). Fuente nueva, en `_generar_pyg_hasta_baii`,
+MISMA posición en la secuencia de `rng` (no desplaza ningún otro sorteo de la PyG):
+
+`tipo_interes = Euríbor_12M[año] + prima_riesgo[categoría_sector] + recargo_pequeñas(si aplica) + ruido_mixto(±0,50pp)`
+
+- **Euríbor 12M por año** (`REFERENCIA_EURIBOR_12M_POR_AÑO`), verificado externamente (Banco de
+  España / fuentes agregadas, no de memoria): 2023=3,87%, 2024=3,27%, 2025=2,22% — refleja la
+  forma real (pico post-subidas BCE en 2023, primeros recortes en 2024, estabilización más baja
+  en 2025).
+- **Prima de riesgo por categoría** (`PRIMA_RIESGO_POR_CATEGORIA`, las mismas 9 categorías de
+  perfil de `activo_no_corriente`/propensión de subvención) — hipótesis de diseño razonada
+  (colateral/estabilidad de demanda más alto → prima menor), pero con el NIVEL MEDIO anclado a
+  una fuente externa independiente de ACCID: Banco de España, Boletín Estadístico, tabla 19.6
+  (tipos TAE de nuevas operaciones a sociedades no financieras POR TRAMO DE IMPORTE del
+  préstamo) — tramo >1M€ (correlaciona con "grandes_medianas") implica una prima media real de
+  ~1,20pp sobre Euríbor; tramo <250k€ (correlaciona con "pequeñas") implica ~1,87pp. Las 9
+  primas y el recargo plano de "pequeñas" (`RECARGO_TIPO_INTERES_PEQUEÑAS_PP=0,75pp`) se
+  calibraron para que su media coincida con esos anclajes, conservando el orden relativo
+  cualitativo entre categorías.
+- **Ruido entre empresas**: mismo mecanismo mixto típico/atípico de siempre, dispersión de
+  diseño `DISPERSION_TIPO_INTERES_PP=0,50pp` (sin MAD de catálogo detrás — no hay fuente limpia
+  de la que derivarla). `SUELO_TIPO_INTERES=1,5%`/`TECHO_TIPO_INTERES=12%` (antes 1%/40%: el
+  40% se alcanzaba rutinariamente con la fuente contaminada, ahora es un techo que casi nunca se
+  toca).
+- **Validación** (decisiones #44-46): tipo medio generado vs. tabla 19.6 de BdE, por segmento y
+  año — desviación ≤0,4pp en los 6 puntos comprobados (3 años × 2 segmentos). `gastos_financieros
+  / deuda_financiera` (el cálculo exacto de ACCID) recalculado sobre 8.262 ejercicios generados
+  (17 arquetipos cuantitativos × 27 sectores × 3 semillas × 2 segmentos): máximo 6,81% — el
+  hallazgo original (74%-110%) no se reproduce. Cross-check contra `ratios.cobertura_gastos_fin`
+  del catálogo (BAII/Gastos financieros) NO es una validación limpia — ese ratio comparte el
+  MISMO denominador contaminado que `coste_deuda`, así que diverge más cuanto más contaminado
+  estaba `coste_deuda` para ese sector (correlación 0,375, confirmando la explicación, no un
+  fallo nuevo de calibración) — tratado como evidencia débil/consistente, no como confirmación
+  fuerte.
+- **Re-pin necesario**: 1 solo test (`test_reimplementacion_generica_reproduce_los_valores_de_
+  referencia`, endeudamiento 2024/2025 del arquetipo 1 sector 24.1 semilla 5 — 2023 y existencias
+  sin cambios), por el mismo tipo de cascada legítima ya vista con la amortización
+  (tipo_interes → gastos_financieros → resultado_ejercicio → PN → endeudamiento → contención).
+  2 tests que comparaban contra `ratios.coste_deuda.huber_9y`/`MAD` se REESCRIBIERON (no solo
+  re-pinnearon) para validar contra la fuente nueva — con la vieja referencia habían quedado
+  vacíos de contenido real (el techo/suelo absoluto dominaba la cota, no el huber contaminado).
 
 ## Amortización derivada de una colección real de activos (`motor/amortizacion.py`)
 

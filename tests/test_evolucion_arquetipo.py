@@ -2,7 +2,15 @@ import pytest
 
 from motor.arquetipos import cargar_arquetipos
 from motor.catalogo import cargar_y_validar_catalogo, version_catalogo
-from motor.empresa_base import SUELO_TIPO_INTERES, TECHO_TIPO_INTERES, resolver_fila_sector
+from motor.empresa_base import (
+    DISPERSION_TIPO_INTERES_PP,
+    PRIMA_RIESGO_POR_CATEGORIA,
+    REFERENCIA_EURIBOR_12M_POR_AÑO,
+    SUELO_TIPO_INTERES,
+    TECHO_TIPO_INTERES,
+    categoria_de_sector,
+    resolver_fila_sector,
+)
 from motor.evolucion_arquetipo import (
     AÑO_BASE,
     N_DESVIACIONES_TECHO_ENDEUDAMIENTO,
@@ -228,18 +236,18 @@ def test_gastos_financieros_dependen_de_la_deuda_tomada(catalogo, arquetipos, se
 @pytest.mark.parametrize("sector", SECTORES)
 @pytest.mark.parametrize("intensidad", INTENSIDADES)
 def test_tipo_de_interes_implicito_es_razonable_para_el_sector(catalogo, arquetipos, sector, intensidad):
-    fila = resolver_fila_sector(catalogo, sector, "grandes_medianas")
-    huber_coste_deuda = fila["ratios.coste_deuda.huber_9y"]
-    mad_coste_deuda = fila["ratios.coste_deuda.huber_scale_mad"]
-    # Mismas cotas que aplica _generar_pyg_hasta_baii al sortear el tipo de interés: huber +/-
-    # hasta 3 desviaciones (MAD), recortado al suelo/techo defensivo absoluto.
-    cota_inferior = max(SUELO_TIPO_INTERES, huber_coste_deuda - 3 * mad_coste_deuda) - 1e-6
-    cota_superior = min(TECHO_TIPO_INTERES, huber_coste_deuda + 3 * mad_coste_deuda) + 1e-6
+    # Cotas de la fuente de mercado (Euríbor 12M + prima de riesgo por categoría, ver
+    # motor/empresa_base.py) — ya NO de `ratios.coste_deuda` del catálogo (diagnóstico cerrado,
+    # decisiones_plausibilidad.md #41-43). El centro depende del año (Euríbor distinto cada año).
+    categoria = categoria_de_sector(sector)
 
     for evolucion in _casos(catalogo, arquetipos, sector, intensidad):
         anterior = evolucion.ejercicios[AÑO_BASE]
         for año in (2024, 2025):
             ej = evolucion.ejercicios[año]
+            centro = REFERENCIA_EURIBOR_12M_POR_AÑO[año] + PRIMA_RIESGO_POR_CATEGORIA[categoria]
+            cota_inferior = max(SUELO_TIPO_INTERES, centro - 3 * DISPERSION_TIPO_INTERES_PP) - 1e-6
+            cota_superior = min(TECHO_TIPO_INTERES, centro + 3 * DISPERSION_TIPO_INTERES_PP) + 1e-6
             deuda_inicio = anterior.balance_eur["deudas_fin_largo"] + anterior.balance_eur["deudas_fin_corto"]
             deuda_fin = ej.balance_eur["deudas_fin_largo"] + ej.balance_eur["deudas_fin_corto"]
             deuda_media = (deuda_inicio + deuda_fin) / 2
@@ -353,24 +361,25 @@ def test_catalogo_version_es_la_del_catalogo_pasado_explicitamente(catalogo, arq
 
 def test_reimplementacion_generica_reproduce_los_valores_de_referencia(catalogo, arquetipos):
     # Regresión dura: valores exactos del arquetipo 1 para este caso concreto (sector 24.1,
-    # semilla 5, fuerte). Los valores 2024/2025 se RE-PINNEARON tras el encargo que sustituyó el
-    # sorteo independiente de `amortizaciones_pct` por un gasto DERIVADO de una colección real de
-    # activos (ver motor/amortizacion.py) — el mecanismo del arquetipo 1 (existencias por
-    # continuidad) no cambió, pero el nuevo resultado_ejercicio (amortización real, no sorteada)
-    # cambia patrimonio_neto, que cambia endeudamiento, que cambia CUÁNTO amortigua la
-    # contención de plausibilidad sobre existencias — 2023 no se mueve (la amortización de 2023
-    # no afecta al balance de 2023, solo a su PyG) pero 2024/2025 sí, por este efecto en cascada
-    # legítimo, no por un cambio en el mecanismo del propio arquetipo 1. Si este test vuelve a
-    # fallar SIN que se haya tocado deliberadamente ni la semilla del RNG ni el mecanismo de
-    # amortización, sí es una regresión real del arquetipo 1.
+    # semilla 5, fuerte). endeudamiento 2024/2025 RE-PINNEADO tras el encargo que sustituyó la
+    # fuente de `tipo_interes` (antes `ratios.coste_deuda` del catálogo, contaminado — ver
+    # decisiones_plausibilidad.md #41-43 — ahora Euríbor 12M + prima de riesgo por categoría/
+    # tamaño, motor/empresa_base.py). El mecanismo del arquetipo 1 (existencias por continuidad)
+    # NO cambió — existencias 2023/2024/2025 idénticas a antes — pero el nuevo tipo_interes
+    # cambia gastos_financieros, que cambia resultado_ejercicio/PN, que cambia endeudamiento, que
+    # cambia CUÁNTO amortigua la contención de plausibilidad sobre existencias en 2024/2025
+    # (2023 no se mueve: el tipo_interes de 2023 no afecta al BALANCE de 2023, solo a su PyG,
+    # igual que ya pasó con la amortización). Si este test vuelve a fallar SIN que se haya tocado
+    # deliberadamente ni la semilla del RNG ni la fuente de tipo_interes, sí es una regresión real
+    # del arquetipo 1.
     evolucion = _generar(catalogo, arquetipos, "24.1", 5, "fuerte")
     ej = evolucion.ejercicios
     assert ej[2023].balance_eur["existencias"] == pytest.approx(2_344_937, abs=1)
     assert ej[2024].balance_eur["existencias"] == pytest.approx(2_861_635, abs=1)
     assert ej[2025].balance_eur["existencias"] == pytest.approx(3_422_807, abs=1)
     assert ej[2023].endeudamiento == pytest.approx(0.600, abs=1e-3)
-    assert ej[2024].endeudamiento == pytest.approx(0.677, abs=1e-3)
-    assert ej[2025].endeudamiento == pytest.approx(0.747, abs=1e-3)
+    assert ej[2024].endeudamiento == pytest.approx(0.672, abs=1e-3)
+    assert ej[2025].endeudamiento == pytest.approx(0.724, abs=1e-3)
 
 
 def test_sectores_distintos_no_comparten_crecimiento_pleno_objetivo(catalogo, arquetipos):

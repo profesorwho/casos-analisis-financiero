@@ -50,8 +50,79 @@ SEGMENTOS_VALIDOS = frozenset({"grandes_medianas", "pequeñas"})
 TOLERANCIA_CUADRE_EUR = 0.01
 SUELO_PORCENTAJE = 0.01
 SUELO_ROTACION_ACTIVO = 0.05
-SUELO_TIPO_INTERES = 0.01  # 1%: floor defensivo, evita coste de deuda nulo o negativo
-TECHO_TIPO_INTERES = 0.40  # 40%: techo defensivo frente a sectores con MAD grande
+
+# --------------------------------------------------------------------------------------------
+# Tipo de interés — fuente de mercado, NO `ratios.coste_deuda` del catálogo ACCID (diagnóstico
+# cerrado: ese ratio mezcla en "gastos financieros" partidas ajenas a intereses reales —
+# deterioros de activos financieros, diferencias de cambio, pérdidas en enajenación de
+# instrumentos financieros — y su denominador, "Préstamos", puede ser una fracción minúscula
+# del pasivo en sectores financiados mayoritariamente con pasivo no financiero; produce valores
+# de 74%-110% en datos reales de ACCID para sectores concretos, ver docs/decisiones_
+# plausibilidad.md). Reconstruido en 3 capas: tipo de referencia (Euríbor 12M, con su variación
+# histórica real) + prima de riesgo por categoría de sector y tamaño (hipótesis de diseño,
+# ancladas al orden de magnitud de una fuente EXTERNA independiente, Banco de España — ver más
+# abajo) + ruido mixto típico/atípico entre empresas del mismo caso (mismo mecanismo de
+# siempre). Único punto de sorteo (misma posición en la secuencia de `rng` que el `tipo_interes`
+# anterior, ver `_generar_pyg_hasta_baii`) — no es un mecanismo nuevo, es una fuente distinta
+# para el mismo sorteo.
+# --------------------------------------------------------------------------------------------
+
+# Euríbor a 12 meses, media anual — verificado externamente (no de memoria), búsqueda cruzada
+# Banco de España / euribor.com.es / hipotecasyeuribor.com, septiembre de 2026. Refleja la forma
+# real de estos 3 años: 2023 todavía cerca del pico post-subidas del BCE (llegó a ~4,16% en
+# octubre de 2023), 2024 con las primeras bajadas (el BCE empezó a recortar en junio de 2024),
+# 2025 estabilizado más abajo (~2,0%-2,3%, con ligero repunte a final de año).
+REFERENCIA_EURIBOR_12M_POR_AÑO: dict[int, float] = {
+    2023: 0.0387,
+    2024: 0.0327,
+    2025: 0.0222,
+}
+
+# Prima de riesgo por categoría de sector (mismas 9 categorías que CATEGORIA_SECTOR/
+# PERFIL_ACTIVO_NO_CORRIENTE_POR_CATEGORIA), en puntos porcentuales sobre el Euríbor 12M, para
+# "grandes_medianas" — HIPÓTESIS DE DISEÑO razonada con conocimiento financiero general (no hay
+# dato de catálogo que la respalde, igual que otros perfiles ya construidos), pero ANCLADA en
+# nivel medio a una fuente externa independiente: Banco de España, Boletín Estadístico, tabla
+# 19.6 ("Tipos de interés TAE de nuevas operaciones... Sociedades no financieras", por tramo de
+# importe del préstamo — bde.es/webbe/es/estadisticas/compartido/datos/pdf/a1906.pdf). El tramo
+# "más de 1 millón de euros" (el que mejor correlaciona con financiación de gran empresa) dio
+# 5,24% (2023), 4,35% (2024) y ~3,4% (media 2025) — con el Euríbor 12M de esos mismos años, la
+# prima MEDIA implícita en el dato real de BdE es de ~1,2 puntos porcentuales. Los valores de
+# abajo se calibraron para que su media (1,20pp) coincida con ese ancla externa, conservando el
+# ORDEN relativo entre categorías (que sí es una hipótesis solo cualitativa, no verificada punto
+# por punto): más colateral tangible/demanda estable = prima menor (administración/sanidad,
+# inmobiliario); menos activo pignorable o mayor riesgo percibido por la banca = prima mayor
+# (TIC por intangibilidad, construcción por riesgo cíclico histórico en España).
+PRIMA_RIESGO_POR_CATEGORIA: dict[str, float] = {
+    "administracion_educacion_sanidad": 0.0060,
+    "inmobiliario": 0.0080,
+    "industria": 0.0100,
+    "transporte_logistica": 0.0110,
+    "servicios_industriales": 0.0110,
+    "comercio_hosteleria": 0.0135,
+    "servicios_profesionales": 0.0150,
+    "construccion": 0.0160,
+    "servicios_tic": 0.0175,
+}
+
+# Recargo plano para "pequeñas" (no diferenciado por categoría — no hay base razonada sólida
+# para variar la penalización por tamaño según sector, a diferencia de la prima sectorial en sí,
+# así que se evita una matriz 9×2 sin justificación adicional). Ancla: BdE tabla 19.6, tramo
+# "hasta 250 mil euros" (el que mejor correlaciona con financiación de pequeña empresa) dio
+# 5,99% (2023), 4,79% (2024), ~4,2% (media 2025) — prima media implícita ~1,87pp, frente a
+# ~1,20pp de "grandes_medianas": diferencia de ~0,7pp, redondeada aquí a 0,75pp.
+RECARGO_TIPO_INTERES_PEQUEÑAS_PP = 0.0075
+
+# Dispersión entre empresas del mismo sector/segmento/año — mismo mecanismo de ruido mixto
+# típico/atípico (85%/15%) que el resto del motor, pero con una dispersión de DISEÑO (no MAD de
+# catálogo: no existe un dato de catálogo limpio del que derivarla). 0,50pp: el 85% de los casos
+# cae dentro de ±0,75pp del centro, el 15% atípico hasta ±1,50pp — variación de tipo entre
+# empresas comparables del mismo sector/tamaño/año, coherente con diferencias reales de historial
+# crediticio, relación bancaria y calidad de garantías.
+DISPERSION_TIPO_INTERES_PP = 0.0050
+
+SUELO_TIPO_INTERES = 0.015  # 1,5%: floor defensivo — un tipo por debajo del Euríbor+prima mínima no tiene sentido económico
+TECHO_TIPO_INTERES = 0.12  # 12%: techo defensivo para una empresa en dificultades genuinas — ya no un valor que se alcance rutinariamente (antes 40%, con la fuente contaminada)
 
 # Nombre de salida -> nombre de variable en el catálogo (prefijo "balance.")
 MASAS_BALANCE = {
@@ -356,12 +427,17 @@ def _generar_pyg_hasta_baii(
     rng: np.random.Generator,
     fila: pd.Series,
     ventas_objetivo: float,
+    año: int,
     primitivas_forzadas: dict[str, float] | None = None,
     amortizaciones_eur: float | None = None,
 ) -> _PygParcial:
     """Sortea las primitivas de la PyG que no dependen de deuda, y el tipo de interés del
-    ejercicio (mismo mecanismo típico/atípico que el resto de partidas, anclado a
-    ratios.coste_deuda del sector). No calcula gastos financieros ni nada de BAI en adelante:
+    ejercicio (mismo mecanismo típico/atípico que el resto de partidas, pero YA NO anclado a
+    `ratios.coste_deuda` del catálogo — fuente de mercado propia, ver el bloque de constantes
+    `REFERENCIA_EURIBOR_12M_POR_AÑO`/`PRIMA_RIESGO_POR_CATEGORIA` más arriba y decisiones
+    #41-43 en docs/decisiones_plausibilidad.md). `año` determina el nivel de Euríbor 12M;
+    `segmento`/categoría de sector (ambos derivables de `fila`, no hace falta pasarlos aparte)
+    determinan la prima. No calcula gastos financieros ni nada de BAI en adelante:
     eso depende de la deuda financiera media del ejercicio, que en `evolucion_arquetipo` no se
     conoce hasta después de decidir si hay contención de endeudamiento.
 
@@ -396,10 +472,14 @@ def _generar_pyg_hasta_baii(
         brutos[nombre_salida] = valor
         modos[f"pyg.{nombre_salida}"] = modo
 
+    codigo_sector = _RE_CODIGO_SECTOR.search(fila["sector"]).group(1)
+    categoria = categoria_de_sector(codigo_sector)
+    recargo_segmento = RECARGO_TIPO_INTERES_PEQUEÑAS_PP if fila["segmento"] == "pequeñas" else 0.0
+    centro_tipo_interes = REFERENCIA_EURIBOR_12M_POR_AÑO[año] + PRIMA_RIESGO_POR_CATEGORIA[categoria] + recargo_segmento
     tipo_interes, modo_tipo_interes = _generar_partida(
         rng,
-        fila["ratios.coste_deuda.huber_9y"],
-        fila["ratios.coste_deuda.huber_scale_mad"],
+        centro_tipo_interes,
+        DISPERSION_TIPO_INTERES_PP,
         suelo=SUELO_TIPO_INTERES,
         techo=TECHO_TIPO_INTERES,
     )
@@ -550,7 +630,7 @@ def generar_empresa_base(
     )
     amortizacion_eur_2023 = amortizacion_eur_del_año(coleccion_activos_amortizables, _AÑO_BASE_AMORTIZACION)
 
-    parcial_pyg = _generar_pyg_hasta_baii(rng, fila, ventas_objetivo, amortizaciones_eur=amortizacion_eur_2023)
+    parcial_pyg = _generar_pyg_hasta_baii(rng, fila, ventas_objetivo, _AÑO_BASE_AMORTIZACION, amortizaciones_eur=amortizacion_eur_2023)
     pyg_pct, pyg_eur = _completar_pyg_con_deuda(parcial_pyg, deuda_financiera_eur)
 
     modos = {**modos_balance, "rotacion_activo": modo_rotacion, **parcial_pyg.modos}

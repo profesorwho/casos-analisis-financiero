@@ -1421,7 +1421,7 @@ def _evolucionar_un_año(
             riesgo_plausibilidad_pyg = True
             pyg_subtotales_sin_contener[subtotal_topado] = subtotal_sin_contener
     parcial_pyg = _generar_pyg_hasta_baii(
-        rng_pyg, fila, ventas, primitivas_forzadas=primitivas_forzadas, amortizaciones_eur=amortizacion_eur_año
+        rng_pyg, fila, ventas, año, primitivas_forzadas=primitivas_forzadas, amortizaciones_eur=amortizacion_eur_año
     )
     for ea in efectos_pyg_base_dinamica:
         efecto = ea.efecto

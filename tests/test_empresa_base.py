@@ -2,11 +2,15 @@ import pytest
 
 from motor.catalogo import cargar_y_validar_catalogo
 from motor.empresa_base import (
+    DISPERSION_TIPO_INTERES_PP,
     MASAS_BALANCE,
+    PRIMA_RIESGO_POR_CATEGORIA,
     PRIMITIVAS_PYG_NO_NEGATIVAS,
+    REFERENCIA_EURIBOR_12M_POR_AÑO,
     SUELO_TIPO_INTERES,
     TECHO_TIPO_INTERES,
     EmpresaBaseError,
+    categoria_de_sector,
     generar_empresa_base,
     resolver_fila_sector,
 )
@@ -94,11 +98,13 @@ def test_gastos_financieros_derivan_de_la_deuda_financiera(catalogo, sector):
     # Los gastos financieros ya no son un % de PyG sorteado de forma independiente: deben
     # coincidir con deuda financiera (largo+corto) x tipo de interés del sector, dentro de las
     # cotas que aplica _generar_pyg_hasta_baii al sortear ese tipo de interés.
-    fila = resolver_fila_sector(catalogo, sector, "grandes_medianas")
-    huber_coste_deuda = fila["ratios.coste_deuda.huber_9y"]
-    mad_coste_deuda = fila["ratios.coste_deuda.huber_scale_mad"]
-    cota_inferior = max(SUELO_TIPO_INTERES, huber_coste_deuda - 3 * mad_coste_deuda) - 1e-6
-    cota_superior = min(TECHO_TIPO_INTERES, huber_coste_deuda + 3 * mad_coste_deuda) + 1e-6
+    # Cotas de la fuente de mercado (Euríbor 12M + prima de riesgo por categoría, ver
+    # motor/empresa_base.py) — ya NO de `ratios.coste_deuda` del catálogo (diagnóstico cerrado,
+    # ver decisiones_plausibilidad.md #41-43).
+    categoria = categoria_de_sector(sector)
+    centro = REFERENCIA_EURIBOR_12M_POR_AÑO[2023] + PRIMA_RIESGO_POR_CATEGORIA[categoria]
+    cota_inferior = max(SUELO_TIPO_INTERES, centro - 3 * DISPERSION_TIPO_INTERES_PP) - 1e-6
+    cota_superior = min(TECHO_TIPO_INTERES, centro + 3 * DISPERSION_TIPO_INTERES_PP) + 1e-6
 
     for empresa in _generar_lote(catalogo, sector):
         deuda_financiera_eur = empresa.balance_eur["deudas_fin_largo"] + empresa.balance_eur["deudas_fin_corto"]
