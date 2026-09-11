@@ -24,14 +24,28 @@ ni arquetipo) porque aquí el objetivo es el opuesto: estas notas podrán combin
 vez sobre el mismo caso en una fase futura (sección 2.12), y cada arquetipo de memoria debe
 sortear su propio texto de forma independiente de los demás, no compartir estado con ellos.
 
-**Etiquetado temático.** Cada `NotaMemoria` lleva `etiquetas: tuple[str, ...]` — qué temas o
-variables toca (p. ej. `("clientes", "concentracion")`). Es deliberadamente un conjunto FIJO
-por arquetipo (no varía plantilla a plantilla dentro del mismo arquetipo), salvo en el 22
-("comodín narrativo"), donde cada una de las 10 redacciones trata un tema distinto y por tanto
-lleva su propia etiqueta — es la naturaleza del propio arquetipo, no una inconsistencia. Estas
-etiquetas NO se usan todavía para detectar contradicciones entre notas activas a la vez (eso es
-el siguiente paso, sección 2.12) — aquí solo se garantiza que queden asignadas de forma
-consistente y reutilizable para cuando se construya esa lógica.
+**Etiquetado temático y resolución de colisiones (combinación de arquetipos, sección 2.12).**
+Cada `NotaMemoria` (definida en `motor.evolucion_arquetipo`, no aquí — la generan también los
+arquetipos 10/16/18 de ese módulo, así que vive donde ambos la puedan importar sin dependencia
+circular) lleva `etiquetas: tuple[str, ...]` — qué temas toca (p. ej. `("clientes",
+"concentracion")`). Es un conjunto FIJO por arquetipo en 7/19/20/21 y en 10/16/18 (no varía
+plantilla a plantilla), salvo en el 22 ("comodín narrativo"), donde cada una de las 10
+redacciones trata un tema distinto y por tanto lleva su propia etiqueta.
+
+Esto tiene una consecuencia importante para `resolver_colisiones_notas` (más abajo): la
+"amortiguación eligiendo otra plantilla" solo puede evitar una colisión para un arquetipo cuyo
+POOL de candidatos tenga etiquetas que varíen según la plantilla — hoy, únicamente el 22. Para
+el resto (7/19/20/21/10/16/18), cambiar de plantilla no cambia sus etiquetas fijas, así que si
+colisionan, colisionan pase lo que pase — no hay "otra opción" que probar (ni por diseño ni por
+casualidad: comprobado programáticamente en `tests/test_combinacion_arquetipos.py`, no
+solo revisado a mano). El algoritmo es el MISMO para los 8 arquetipos, sin ningún caso especial
+en el código — la diferencia de comportamiento sale de los DATOS (qué pools tienen variedad de
+etiquetas), no de una rama condicional para "el caso 7/22". Esto es deliberado y generaliza sin
+tocar código: cualquier arquetipo futuro con un pool de etiquetas variables participará en la
+resolución automáticamente; uno con etiquetas fijas seguirá sin tener "otra opción" que probar,
+y esa ausencia de alternativa es, en sí misma, información para la futura matriz de
+compatibilidad (sección 2.25) — qué parejas de arquetipos NUNCA deberían combinarse porque
+comparten un tema sin salida.
 
 **Formato de cifras en el texto**: importes en euros redondeados al millar más cercano,
 porcentajes al entero más cercano — una memoria real no mostraría "34.728.193,47 €" ni
@@ -42,19 +56,10 @@ por quien lea el caso.
 from __future__ import annotations
 
 import zlib
-from dataclasses import dataclass
 
 import numpy as np
 
-from motor.evolucion_arquetipo import EjercicioEmpresa
-
-
-@dataclass(frozen=True)
-class NotaMemoria:
-    arquetipo_id: str
-    numero: int
-    texto: str
-    etiquetas: tuple[str, ...]
+from motor.evolucion_arquetipo import EjercicioEmpresa, NotaMemoria
 
 
 def _rng_memoria(sector: str, segmento: str, intensidad: str, arquetipo_id: str, semilla: int) -> np.random.Generator:
@@ -71,6 +76,26 @@ def _fmt_eur(valor: float) -> str:
 
 def _fmt_pct(valor: float) -> str:
     return f"{round(valor)}"
+
+
+def _elegir_indice_evitando_colision(
+    rng: np.random.Generator, etiquetas_por_indice: list[tuple[str, ...]], etiquetas_ya_usadas: frozenset[str]
+) -> int:
+    """Núcleo genérico de la resolución de colisiones (sección 2.12) — el MISMO para los 8
+    arquetipos que generan notas (7/19/20/21/22 aquí, 10/16/18 en evolucion_arquetipo.py, que
+    llaman a esta misma función). Baraja los índices posibles con `rng` (reproducible por
+    semilla, no aleatorio en cada ejecución) y devuelve el primero cuyas etiquetas NO intersequen
+    con `etiquetas_ya_usadas`. Si ninguno libra la colisión — incluidos los arquetipos con
+    etiquetas FIJAS (7/19/20/21/10/16/18: `etiquetas_por_indice` repite la misma tupla en las N
+    posiciones, así que o colisionan todas o ninguna) — se devuelve el primero del orden
+    barajado igualmente: una nota redundante es preferible a bloquear la generación del caso, y
+    es el mismo patrón ya establecido en todo el proyecto (señal honesta cuando no se puede
+    corregir del todo, nunca un fallo silencioso ni una excepción que rompe el caso)."""
+    orden = rng.permutation(len(etiquetas_por_indice))
+    for indice in orden:
+        if not (set(etiquetas_por_indice[indice]) & etiquetas_ya_usadas):
+            return int(indice)
+    return int(orden[0])
 
 
 # --------------------------------------------------------------------------------------------
@@ -106,17 +131,26 @@ PLANTILLAS_DEPENDENCIA_CLIENTES = (
 
 
 def generar_nota_dependencia_clientes(
-    sector: str, segmento: str, intensidad: str, semilla: int, ejercicio: EjercicioEmpresa
+    sector: str,
+    segmento: str,
+    intensidad: str,
+    semilla: int,
+    ejercicio: EjercicioEmpresa,
+    etiquetas_ya_usadas: frozenset[str] = frozenset(),
 ) -> NotaMemoria:
     """Arquetipo 7. `ejercicio` no se usa (la concentración se expresa en % de ventas, no en
     euros) — se mantiene en la firma por consistencia con el resto de funciones de este módulo
-    y por si una plantilla futura quisiera citar la cifra de ventas absoluta."""
+    y por si una plantilla futura quisiera citar la cifra de ventas absoluta. `etiquetas_ya_usadas`:
+    ver `resolver_colisiones_notas` — las etiquetas de este arquetipo son FIJAS (no varían con
+    la plantilla), así que no hay "otra opción" que probar si colisiona (ver docstring del
+    módulo)."""
     del ejercicio
     rng = _rng_memoria(sector, segmento, intensidad, "dependencia_pocos_clientes", semilla)
     rango = RANGOS_CONCENTRACION_CLIENTES[intensidad]
     n_clientes = int(rng.integers(rango["clientes"][0], rango["clientes"][1] + 1))
     pct = round(rng.uniform(*rango["pct"]))
-    indice = rng.integers(len(PLANTILLAS_DEPENDENCIA_CLIENTES))
+    etiquetas_por_indice = [("clientes", "concentracion")] * len(PLANTILLAS_DEPENDENCIA_CLIENTES)
+    indice = _elegir_indice_evitando_colision(rng, etiquetas_por_indice, etiquetas_ya_usadas)
     texto = PLANTILLAS_DEPENDENCIA_CLIENTES[indice].format(n_clientes=n_clientes, pct=pct)
     return NotaMemoria(
         arquetipo_id="dependencia_pocos_clientes", numero=7, texto=texto, etiquetas=("clientes", "concentracion")
@@ -149,13 +183,20 @@ PLANTILLAS_ACTIVO_MANTENIDO_VENTA = (
 
 
 def generar_nota_activo_mantenido_venta(
-    sector: str, segmento: str, intensidad: str, semilla: int, ejercicio: EjercicioEmpresa
+    sector: str,
+    segmento: str,
+    intensidad: str,
+    semilla: int,
+    ejercicio: EjercicioEmpresa,
+    etiquetas_ya_usadas: frozenset[str] = frozenset(),
 ) -> NotaMemoria:
     """Arquetipo 19. `ejercicio` no se usa (el tipo de activo y el motivo son cualitativos, sin
-    cifra asociada) — se mantiene en la firma por la misma razón que en el arquetipo 7."""
+    cifra asociada) — se mantiene en la firma por la misma razón que en el arquetipo 7.
+    Etiquetas FIJAS — ver `generar_nota_dependencia_clientes`."""
     del ejercicio
     rng = _rng_memoria(sector, segmento, intensidad, "activo_mantenido_venta", semilla)
-    indice = rng.integers(len(PLANTILLAS_ACTIVO_MANTENIDO_VENTA))
+    etiquetas_por_indice = [("activo", "desinversion")] * len(PLANTILLAS_ACTIVO_MANTENIDO_VENTA)
+    indice = _elegir_indice_evitando_colision(rng, etiquetas_por_indice, etiquetas_ya_usadas)
     texto = PLANTILLAS_ACTIVO_MANTENIDO_VENTA[indice]
     return NotaMemoria(arquetipo_id="activo_mantenido_venta", numero=19, texto=texto, etiquetas=("activo", "desinversion"))
 
@@ -223,16 +264,23 @@ def _magnitud_referencia(ejercicio: EjercicioEmpresa, nombre: str) -> float:
 
 
 def generar_nota_operaciones_vinculadas(
-    sector: str, segmento: str, intensidad: str, semilla: int, ejercicio: EjercicioEmpresa
+    sector: str,
+    segmento: str,
+    intensidad: str,
+    semilla: int,
+    ejercicio: EjercicioEmpresa,
+    etiquetas_ya_usadas: frozenset[str] = frozenset(),
 ) -> NotaMemoria:
     """Arquetipo 20. El importe se calcula como % (rango por intensidad) de la magnitud de
     balance/PyG que corresponda al tipo de operación de la plantilla elegida — así el importe
     siempre queda coherente con el tamaño real de la empresa generada, nunca un número
     arbitrario. Topado por abajo en SUELO_IMPORTE_VINCULADAS_EUR: el `{pct}` mostrado en el
     texto se RECALCULA sobre el importe ya topado (no el % originalmente sorteado), para que el
-    texto nunca sea internamente inconsistente (un importe y un % que no se correspondan)."""
+    texto nunca sea internamente inconsistente (un importe y un % que no se correspondan).
+    Etiquetas FIJAS — ver `generar_nota_dependencia_clientes`."""
     rng = _rng_memoria(sector, segmento, intensidad, "operaciones_vinculadas", semilla)
-    indice = rng.integers(len(_OPERACIONES_VINCULADAS))
+    etiquetas_por_indice = [("vinculadas", "partes_relacionadas")] * len(_OPERACIONES_VINCULADAS)
+    indice = _elegir_indice_evitando_colision(rng, etiquetas_por_indice, etiquetas_ya_usadas)
     plantilla, magnitud_nombre = _OPERACIONES_VINCULADAS[indice]
     rango_pct = RANGOS_IMPORTE_VINCULADAS_PCT[intensidad]
     pct_objetivo = rng.uniform(*rango_pct)
@@ -288,20 +336,27 @@ PLANTILLAS_COBERTURAS = (
 
 
 def generar_nota_coberturas(
-    sector: str, segmento: str, intensidad: str, semilla: int, ejercicio: EjercicioEmpresa
+    sector: str,
+    segmento: str,
+    intensidad: str,
+    semilla: int,
+    ejercicio: EjercicioEmpresa,
+    etiquetas_ya_usadas: frozenset[str] = frozenset(),
 ) -> NotaMemoria:
     """Arquetipo 21. El nocional se calcula como % (rango por intensidad) de la deuda financiera
     total real de la empresa generada — nunca un importe desconectado de cuánta deuda tiene la
     empresa que, en teoría, se está cubriendo. Topado por abajo en SUELO_NOCIONAL_COBERTURA_EUR;
     el `{pct}` mostrado se recalcula sobre el nocional ya topado, por la misma razón de
-    consistencia interna que en `generar_nota_operaciones_vinculadas`."""
+    consistencia interna que en `generar_nota_operaciones_vinculadas`. Etiquetas FIJAS — ver
+    `generar_nota_dependencia_clientes`."""
     rng = _rng_memoria(sector, segmento, intensidad, "coberturas", semilla)
     rango_pct = RANGOS_COBERTURA_PCT_DEUDA[intensidad]
     pct_objetivo = rng.uniform(*rango_pct)
     deuda_financiera_total = ejercicio.balance_eur["deudas_fin_largo"] + ejercicio.balance_eur["deudas_fin_corto"]
     importe = max(deuda_financiera_total * pct_objetivo / 100, SUELO_NOCIONAL_COBERTURA_EUR)
     pct_mostrado = importe / deuda_financiera_total * 100
-    indice_plantilla = rng.integers(len(PLANTILLAS_COBERTURAS))
+    etiquetas_por_indice = [("deuda", "cobertura_riesgo")] * len(PLANTILLAS_COBERTURAS)
+    indice_plantilla = _elegir_indice_evitando_colision(rng, etiquetas_por_indice, etiquetas_ya_usadas)
     indice_referencia = rng.integers(len(TIPOS_REFERENCIA_COBERTURA))
     tipo_referencia = TIPOS_REFERENCIA_COBERTURA[indice_referencia]
     texto = PLANTILLAS_COBERTURAS[indice_plantilla].format(
@@ -383,13 +438,22 @@ _NOTAS_COMODIN = (
 
 
 def generar_nota_informacion_relevante(
-    sector: str, segmento: str, intensidad: str, semilla: int, ejercicio: EjercicioEmpresa
+    sector: str,
+    segmento: str,
+    intensidad: str,
+    semilla: int,
+    ejercicio: EjercicioEmpresa,
+    etiquetas_ya_usadas: frozenset[str] = frozenset(),
 ) -> NotaMemoria:
     """Arquetipo 22 (comodín). `ejercicio` no se usa: ninguno de los 10 temas necesita una cifra
-    de la empresa generada — se mantiene en la firma por consistencia con el resto del módulo."""
+    de la empresa generada — se mantiene en la firma por consistencia con el resto del módulo.
+    A diferencia de los otros 4 arquetipos de memoria pura, SUS etiquetas SÍ varían plantilla a
+    plantilla — es el único arquetipo hoy donde `etiquetas_ya_usadas` puede cambiar de verdad
+    qué tema se elige (ver docstring del módulo)."""
     del ejercicio
     rng = _rng_memoria(sector, segmento, intensidad, "informacion_relevante_memoria", semilla)
-    indice = rng.integers(len(_NOTAS_COMODIN))
+    etiquetas_por_indice = [etiquetas for _, etiquetas in _NOTAS_COMODIN]
+    indice = _elegir_indice_evitando_colision(rng, etiquetas_por_indice, etiquetas_ya_usadas)
     texto, etiquetas = _NOTAS_COMODIN[indice]
     return NotaMemoria(arquetipo_id="informacion_relevante_memoria", numero=22, texto=texto, etiquetas=etiquetas)
 
@@ -408,9 +472,90 @@ _GENERADORES = {
 
 
 def generar_nota_memoria_pura(
-    arquetipo_id: str, sector: str, segmento: str, intensidad: str, semilla: int, ejercicio: EjercicioEmpresa
+    arquetipo_id: str,
+    sector: str,
+    segmento: str,
+    intensidad: str,
+    semilla: int,
+    ejercicio: EjercicioEmpresa,
+    etiquetas_ya_usadas: frozenset[str] = frozenset(),
 ) -> NotaMemoria:
     """Despacha a la función concreta según `arquetipo_id` (uno de los 5 arquetipos de
     `clase="memoria_pura"` en data/arquetipos.json). Lanza KeyError si `arquetipo_id` no es
     ninguno de los 5 — igual de explícito que dejar que el lookup del dict falle."""
-    return _GENERADORES[arquetipo_id](sector, segmento, intensidad, semilla, ejercicio)
+    return _GENERADORES[arquetipo_id](sector, segmento, intensidad, semilla, ejercicio, etiquetas_ya_usadas)
+
+
+def generar_caso_combinado(
+    sector: str,
+    segmento: str,
+    ventas_objetivo_2023: float,
+    semilla: int,
+    arquetipos_intensidades: dict[str, str],
+    catalogo=None,
+    arquetipos=None,
+):
+    """Punto de entrada general para un caso con uno o varios arquetipos activos, de cualquier
+    clase — orquesta `motor.evolucion_arquetipo.generar_evolucion_combinada` para los
+    `clase="cuantitativo"` y las funciones de este módulo para los `clase="memoria_pura"`,
+    resolviendo colisiones temáticas sobre el conjunto COMPLETO de notas resultantes (las de
+    10/16/18 en `EjercicioEmpresa.notas_memoria`, si las hay, más las de 7/19/20/21/22), en orden
+    de número de arquetipo — no solo por parejas (sección 2.12). Requiere al menos un arquetipo
+    `cuantitativo` activo (necesario para tener una empresa de referencia sobre la que anclar los
+    importes de 20/21); para generar un arquetipo de memoria pura en solitario sin ninguno
+    numérico, usar `generar_nota_memoria_pura` directamente sobre una `EjercicioEmpresa` ya
+    generada (p. ej. con cualquier arquetipo cuantitativo "neutro", como hace
+    `tests/test_memoria.py`).
+
+    Devuelve el `EvolucionArquetipo` de los arquetipos cuantitativos, con `notas_memoria_pura`
+    ya poblado con las notas de los arquetipos de memoria pura (vacío si no hay ninguno activo)."""
+    import dataclasses
+
+    from motor.arquetipos import cargar_arquetipos
+    from motor.catalogo import cargar_y_validar_catalogo
+    from motor.evolucion_arquetipo import generar_evolucion_combinada
+
+    if arquetipos is None:
+        arquetipos = cargar_arquetipos()
+    if catalogo is None:
+        catalogo = cargar_y_validar_catalogo()
+
+    ids_cuantitativos = {aid: i for aid, i in arquetipos_intensidades.items() if arquetipos[aid].clase == "cuantitativo"}
+    ids_memoria_pura = {aid: i for aid, i in arquetipos_intensidades.items() if arquetipos[aid].clase == "memoria_pura"}
+    if not ids_cuantitativos:
+        raise ValueError(
+            "generar_caso_combinado requiere al menos un arquetipo cuantitativo activo — "
+            "ver docstring de la función"
+        )
+
+    evolucion = generar_evolucion_combinada(
+        sector, segmento, ventas_objetivo_2023, semilla, ids_cuantitativos, catalogo=catalogo, arquetipos=arquetipos
+    )
+
+    # Etiquetas ya "ocupadas" por las notas numéricas (10/16/18, si las hay, en 2024 y/o 2025):
+    # cuentan como ya usadas para las de memoria pura que se generan a continuación, en orden de
+    # número de arquetipo — pero (ver docstring del módulo) esas notas numéricas YA están
+    # comprometidas en este punto: si colisionan entre sí, no se pueden volver a sortear aquí
+    # (eso ocurriría, como mucho, dentro de la propia evolución numérica — no pasa en los 6
+    # combos recomendados, ninguno activa dos de 10/16/18 a la vez).
+    etiquetas_usadas: set[str] = set()
+    for ejercicio in evolucion.ejercicios.values():
+        for nota in ejercicio.notas_memoria:
+            etiquetas_usadas.update(nota.etiquetas)
+
+    ejercicio_referencia = evolucion.ejercicios[2025]
+    notas_memoria_pura: list[NotaMemoria] = []
+    for arquetipo_id in sorted(ids_memoria_pura, key=lambda aid: arquetipos[aid].numero):
+        nota = generar_nota_memoria_pura(
+            arquetipo_id,
+            sector,
+            segmento,
+            ids_memoria_pura[arquetipo_id],
+            semilla,
+            ejercicio_referencia,
+            etiquetas_ya_usadas=frozenset(etiquetas_usadas),
+        )
+        notas_memoria_pura.append(nota)
+        etiquetas_usadas.update(nota.etiquetas)
+
+    return dataclasses.replace(evolucion, notas_memoria_pura=tuple(notas_memoria_pura))

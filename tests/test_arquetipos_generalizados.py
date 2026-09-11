@@ -293,9 +293,13 @@ def test_riesgo_liquidez_el_resultado_suele_ser_positivo(catalogo, arquetipos, s
 
 
 def test_estres_sin_excepciones_ni_descuadres(catalogo, arquetipos):
+    # Solo arquetipos "cuantitativo": los de clase "memoria_pura" (7/19/20/21/22) no tienen
+    # ninguna huella numérica que este barrido pueda ejercitar — generar_evolucion_arquetipo
+    # los rechaza explícitamente (ver EvolucionArquetipoError en generar_evolucion_combinada);
+    # su propio stress test de plausibilidad vive en tests/test_memoria.py.
     sectores_amplios = ["24.1", "62", "47.1", "29", "20.1", "68", "19"]
     problemas = []
-    for arquetipo_id in arquetipos:
+    for arquetipo_id in [aid for aid, d in arquetipos.items() if d.clase == "cuantitativo"]:
         for sector in sectores_amplios:
             for intensidad in ("leve", "moderado", "fuerte"):
                 for semilla in range(6):
@@ -615,10 +619,10 @@ def test_mejora_ebitda_nota_memoria_solo_aparece_con_pyg_contencion_al_limite(ca
         evolucion = _generar(catalogo, arquetipos, "mejora_ebitda", "24.1", semilla)
         for ejercicio in evolucion.ejercicios.values():
             if ejercicio.pyg_contencion_al_limite:
-                assert ejercicio.nota_memoria is not None
-                assert ejercicio.nota_memoria in NOTAS_MEMORIA_GASTOS_PERSONAL_AL_LIMITE
+                assert len(ejercicio.notas_memoria) == 1
+                assert ejercicio.notas_memoria[0].texto in {t for t, _ in NOTAS_MEMORIA_GASTOS_PERSONAL_AL_LIMITE}
             else:
-                assert ejercicio.nota_memoria is None
+                assert ejercicio.notas_memoria == ()
 
 
 def test_mejora_ebitda_nota_memoria_es_reproducible_con_la_misma_semilla(catalogo, arquetipos):
@@ -627,7 +631,7 @@ def test_mejora_ebitda_nota_memoria_es_reproducible_con_la_misma_semilla(catalog
         primera = _generar(catalogo, arquetipos, "mejora_ebitda", "24.1", semilla)
         segunda = _generar(catalogo, arquetipos, "mejora_ebitda", "24.1", semilla)
         for año in (2024, 2025):
-            assert primera.ejercicios[año].nota_memoria == segunda.ejercicios[año].nota_memoria
+            assert primera.ejercicios[año].notas_memoria == segunda.ejercicios[año].notas_memoria
 
 
 def test_mejora_ebitda_nota_memoria_varia_entre_las_5_opciones(catalogo, arquetipos):
@@ -656,7 +660,7 @@ def test_mejora_ebitda_nota_memoria_varia_entre_las_5_opciones(catalogo, arqueti
                     ej = evolucion.ejercicios[año]
                     if ej.pyg_contencion_al_limite:
                         casos_con_nota += 1
-                        notas_vistas.add(ej.nota_memoria)
+                        notas_vistas.add(ej.notas_memoria[0].texto)
     assert casos_con_nota > 0, "la muestra no incluyó ningún caso con pyg_contencion_al_limite: ajustar el barrido"
     assert len(notas_vistas) > 1, f"solo apareció una redacción en {casos_con_nota} casos: {notas_vistas}"
 

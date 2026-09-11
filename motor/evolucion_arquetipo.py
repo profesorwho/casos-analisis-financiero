@@ -512,6 +512,30 @@ PGC_VERSION = "PGC RD 1514/2007"
 
 INTENSIDADES_VALIDAS = frozenset({"leve", "moderado", "fuerte"})
 INTENSIDAD_BASE = {"leve": 0.15, "moderado": 0.30, "fuerte": 0.50}
+
+# Escalas de intensidad específicas para los 3 arquetipos cuyo chequeo de plausibilidad actúa
+# sobre un umbral MUCHO más estrecho que el resto (ver decisiones_plausibilidad.md #19): 9/14
+# (apalancamiento) topan el objetivo directamente contra el mismo techo de endeudamiento que
+# dispara `riesgo_endeudamiento`; 11 y 10 (pyg_primitiva) mueven una primitiva grande cuyo
+# subtotal derivado (margen_bruto, baii) tiene una banda de plausibilidad estrecha en puntos
+# porcentuales — la escala genérica (arriba) hacía saturar su señal ya en "leve" (~30-42%, frente
+# al ~1-7% de los arquetipos bien calibrados). Calibradas empíricamente con el mismo método de
+# siempre (barrido 27 sectores x 4 semillas), aprobadas por el usuario tras revisión. 10 tiene un
+# suelo estructural propio (~6,9%, ruido de la base sin ningún arquetipo — ver decisiones_
+# plausibilidad.md #18) que ninguna escala puede bajar más.
+INTENSIDAD_BASE_APALANCAMIENTO = {"leve": 0.02, "moderado": 0.08, "fuerte": 0.25}
+INTENSIDAD_BASE_MEJORA_MARGEN = {"leve": 0.02, "moderado": 0.07, "fuerte": 0.22}
+INTENSIDAD_BASE_MEJORA_EBITDA = {"leve": 0.015, "moderado": 0.06, "fuerte": 0.22}
+
+# 14 (roe_elevado_apalancamiento) es una variante exacta de 9 (mismo EfectoApalancamiento, mismo
+# ratio_catalogo y dirección — ver docstring del módulo) y comparte su escala automáticamente.
+INTENSIDAD_BASE_POR_ARQUETIPO: dict[str, dict[str, float]] = {
+    "apalancamiento": INTENSIDAD_BASE_APALANCAMIENTO,
+    "roe_elevado_apalancamiento": INTENSIDAD_BASE_APALANCAMIENTO,
+    "mejora_margen": INTENSIDAD_BASE_MEJORA_MARGEN,
+    "mejora_ebitda": INTENSIDAD_BASE_MEJORA_EBITDA,
+}
+
 FRACCION_AÑO = {2024: 0.6, 2025: 1.0}
 
 # Crecimiento de ventas para arquetipos que no definen su propio rango_crecimiento_pleno (ver
@@ -594,22 +618,41 @@ SUBTOTAL_PYG_BASE_DINAMICA_DE_PRIMITIVA = {
 # semilla+año en vez de una elección uniforme por caso) — mismo caso (sector, segmento,
 # intensidad, semilla, año), siempre la misma redacción; entre casos distintos, variedad
 # uniforme entre las 5.
+# Formato (texto, etiquetas) — igual que _NOTAS_COMODIN en motor.memoria, desde la combinación
+# de arquetipos (sección 2.12): etiquetas FIJAS para las 5 (no varían plantilla a plantilla,
+# a diferencia del arquetipo 22) — "gastos_personal", no "resultado" o "pyg" a secas, para no
+# colisionar innecesariamente con otros arquetipos que toquen la PyG por otras vías.
 NOTAS_MEMORIA_GASTOS_PERSONAL_AL_LIMITE = (
-    "El incremento de los gastos de personal respecto al ejercicio anterior se explica por la "
-    "actualización salarial derivada del convenio colectivo aplicable, que absorbió parte de la "
-    "mejora de eficiencia operativa prevista para el ejercicio.",
-    "Durante el ejercicio se incorporó personal cualificado adicional para sostener el "
-    "crecimiento de la actividad, lo que elevó los gastos de personal por encima de lo "
-    "inicialmente previsto, pese a la mejora del margen operativo en el resto de partidas.",
-    "Los gastos de personal del ejercicio incluyen indemnizaciones puntuales asociadas a bajas "
-    "voluntarias y ajustes de plantilla no recurrentes, que no se esperan repetir en próximos "
-    "ejercicios.",
-    "El aumento de los gastos de personal responde en parte al incremento de las cotizaciones "
-    "sociales aplicable durante el ejercicio, un factor ajeno a la gestión operativa de la "
-    "empresa.",
-    "Se liquidaron durante el ejercicio complementos e incentivos variables ligados al "
-    "cumplimiento de objetivos del ejercicio anterior, lo que elevó puntualmente los gastos de "
-    "personal.",
+    (
+        "El incremento de los gastos de personal respecto al ejercicio anterior se explica por la "
+        "actualización salarial derivada del convenio colectivo aplicable, que absorbió parte de la "
+        "mejora de eficiencia operativa prevista para el ejercicio.",
+        ("gastos_personal", "calidad_resultado"),
+    ),
+    (
+        "Durante el ejercicio se incorporó personal cualificado adicional para sostener el "
+        "crecimiento de la actividad, lo que elevó los gastos de personal por encima de lo "
+        "inicialmente previsto, pese a la mejora del margen operativo en el resto de partidas.",
+        ("gastos_personal", "calidad_resultado"),
+    ),
+    (
+        "Los gastos de personal del ejercicio incluyen indemnizaciones puntuales asociadas a bajas "
+        "voluntarias y ajustes de plantilla no recurrentes, que no se esperan repetir en próximos "
+        "ejercicios.",
+        ("gastos_personal", "calidad_resultado"),
+    ),
+    (
+        "El aumento de los gastos de personal responde en parte al incremento de las cotizaciones "
+        "sociales aplicable durante el ejercicio, un factor ajeno a la gestión operativa de la "
+        "empresa.",
+        ("gastos_personal", "calidad_resultado"),
+    ),
+    (
+        "Se liquidaron durante el ejercicio complementos e incentivos variables ligados al "
+        "cumplimiento de objetivos del ejercicio anterior, lo que elevó puntualmente los gastos de "
+        "personal.",
+        ("gastos_personal", "calidad_resultado"),
+    ),
 )
 
 # Redacciones alternativas para `nota_memoria` del arquetipo 16 ("Riesgo de refinanciación"):
@@ -622,22 +665,41 @@ NOTAS_MEMORIA_GASTOS_PERSONAL_AL_LIMITE = (
 # deuda relevante con vencimiento próximo (póliza sindicada pendiente de renovar, endurecimiento
 # de condiciones de financiación, incumplimiento de covenants, sustitución de financiación a
 # largo por líneas a corto, refinanciación en curso no formalizada).
+# Etiquetas FIJAS — deliberadamente "deuda_corto_plazo" + "riesgo_refinanciacion", no "deuda" a
+# secas, para no colisionar innecesariamente con el arquetipo 21 (coberturas) si algún día se
+# combinan: son dos ángulos distintos de la deuda (riesgo de vencimiento vs. cobertura de tipo
+# de interés), no la misma historia repetida.
 NOTAS_MEMORIA_RIESGO_REFINANCIACION = (
-    "Durante el ejercicio venció y se reclasificó a corto plazo una póliza de crédito sindicada "
-    "que la sociedad tiene previsto renovar en los próximos meses, sin que a la fecha de "
-    "formulación de las cuentas se haya formalizado la renovación.",
-    "El endurecimiento de las condiciones de financiación bancaria ha llevado a la entidad a "
-    "priorizar líneas de crédito a corto plazo frente a la refinanciación a largo, lo que "
-    "concentra vencimientos relevantes en los próximos doce meses.",
-    "Parte de la deuda a largo plazo se ha reclasificado a corto plazo al no cumplirse "
-    "determinados ratios financieros (covenants) exigidos por las entidades acreedoras, que "
-    "otorgan a estas el derecho a exigir el vencimiento anticipado.",
-    "La sociedad ha optado por un mayor uso de financiación a corto plazo (pólizas y descuento "
-    "comercial) para cubrir necesidades puntuales de circulante, en sustitución de la "
-    "financiación a largo plazo históricamente empleada.",
-    "Está en curso un proceso de refinanciación con el pool bancario que, a la fecha de cierre "
-    "del ejercicio, aún no se ha formalizado, por lo que la deuda afectada permanece "
-    "clasificada a corto plazo hasta la firma del nuevo acuerdo.",
+    (
+        "Durante el ejercicio venció y se reclasificó a corto plazo una póliza de crédito sindicada "
+        "que la sociedad tiene previsto renovar en los próximos meses, sin que a la fecha de "
+        "formulación de las cuentas se haya formalizado la renovación.",
+        ("deuda_corto_plazo", "riesgo_refinanciacion"),
+    ),
+    (
+        "El endurecimiento de las condiciones de financiación bancaria ha llevado a la entidad a "
+        "priorizar líneas de crédito a corto plazo frente a la refinanciación a largo, lo que "
+        "concentra vencimientos relevantes en los próximos doce meses.",
+        ("deuda_corto_plazo", "riesgo_refinanciacion"),
+    ),
+    (
+        "Parte de la deuda a largo plazo se ha reclasificado a corto plazo al no cumplirse "
+        "determinados ratios financieros (covenants) exigidos por las entidades acreedoras, que "
+        "otorgan a estas el derecho a exigir el vencimiento anticipado.",
+        ("deuda_corto_plazo", "riesgo_refinanciacion"),
+    ),
+    (
+        "La sociedad ha optado por un mayor uso de financiación a corto plazo (pólizas y descuento "
+        "comercial) para cubrir necesidades puntuales de circulante, en sustitución de la "
+        "financiación a largo plazo históricamente empleada.",
+        ("deuda_corto_plazo", "riesgo_refinanciacion"),
+    ),
+    (
+        "Está en curso un proceso de refinanciación con el pool bancario que, a la fecha de cierre "
+        "del ejercicio, aún no se ha formalizado, por lo que la deuda afectada permanece "
+        "clasificada a corto plazo hasta la firma del nuevo acuerdo.",
+        ("deuda_corto_plazo", "riesgo_refinanciacion"),
+    ),
 )
 
 # Redacciones alternativas para `nota_memoria` del arquetipo 18 ("Adquisición") — a diferencia de
@@ -649,22 +711,42 @@ NOTAS_MEMORIA_RIESGO_REFINANCIACION = (
 # para este arquetipo: cada una apunta a un aspecto distinto y verificable de una combinación de
 # negocios (fecha de toma de control, fondo de comercio, compra de activos/cartera a un
 # competidor, estrategia de crecimiento inorgánico, forma de financiación).
+# Etiquetas FIJAS — deliberadamente "adquisicion"/"combinacion_negocios", NO "activo": el
+# arquetipo 19 ("activo mantenido para la venta") usa "activo" como etiqueta, y comprar una
+# unidad de negocio (18) mientras se vende un activo no estratégico distinto (19) es una
+# historia legítima y no redundante (Combo E los combina) — colisionarían en falso si ambos
+# compartieran la etiqueta genérica "activo".
 NOTAS_MEMORIA_ADQUISICION = (
-    "Durante el ejercicio la sociedad formalizó la adquisición de una unidad de negocio "
-    "complementaria a su actividad principal, integrada en el perímetro de consolidación desde "
-    "la fecha de toma de control.",
-    "La operación de adquisición realizada en el ejercicio incluye el reconocimiento de un "
-    "fondo de comercio derivado del exceso del precio pagado sobre el valor razonable de los "
-    "activos netos identificables adquiridos.",
-    "La sociedad adquirió durante el ejercicio los activos y la cartera de clientes de un "
-    "competidor local, ampliando su capacidad productiva e instalada sin necesidad de "
-    "inversión orgánica adicional.",
-    "En el marco de su estrategia de crecimiento inorgánico, la sociedad culminó en el "
-    "ejercicio la compra de una compañía del sector, cuyos activos y resultados se incorporan "
-    "a las cuentas anuales desde la fecha de adquisición.",
-    "La combinación de negocios formalizada en el ejercicio se financió mediante una "
-    "combinación de recursos propios y nueva financiación bancaria a largo plazo, conforme al "
-    "acuerdo de compraventa suscrito.",
+    (
+        "Durante el ejercicio la sociedad formalizó la adquisición de una unidad de negocio "
+        "complementaria a su actividad principal, integrada en el perímetro de consolidación desde "
+        "la fecha de toma de control.",
+        ("adquisicion", "combinacion_negocios"),
+    ),
+    (
+        "La operación de adquisición realizada en el ejercicio incluye el reconocimiento de un "
+        "fondo de comercio derivado del exceso del precio pagado sobre el valor razonable de los "
+        "activos netos identificables adquiridos.",
+        ("adquisicion", "combinacion_negocios"),
+    ),
+    (
+        "La sociedad adquirió durante el ejercicio los activos y la cartera de clientes de un "
+        "competidor local, ampliando su capacidad productiva e instalada sin necesidad de "
+        "inversión orgánica adicional.",
+        ("adquisicion", "combinacion_negocios"),
+    ),
+    (
+        "En el marco de su estrategia de crecimiento inorgánico, la sociedad culminó en el "
+        "ejercicio la compra de una compañía del sector, cuyos activos y resultados se incorporan "
+        "a las cuentas anuales desde la fecha de adquisición.",
+        ("adquisicion", "combinacion_negocios"),
+    ),
+    (
+        "La combinación de negocios formalizada en el ejercicio se financió mediante una "
+        "combinación de recursos propios y nueva financiación bancaria a largo plazo, conforme al "
+        "acuerdo de compraventa suscrito.",
+        ("adquisicion", "combinacion_negocios"),
+    ),
 )
 
 # Mapeo ESTRUCTURAL (no específico de ningún arquetipo): qué masas de circulante puede tocar un
@@ -685,6 +767,35 @@ SIGNO_NOF_MASA_CIRCULANTE = {
 
 class EvolucionArquetipoError(ValueError):
     """Parámetros de entrada inválidos."""
+
+
+@dataclass(frozen=True)
+class NotaMemoria:
+    """Una nota de memoria, con sus etiquetas temáticas — vive aquí (no en motor.memoria) porque
+    la generan tanto motor.memoria (arquetipos 7/19/20/21/22) como este módulo (10/16/18);
+    motor.memoria importa esta clase de aquí para evitar una dependencia circular (este módulo
+    no depende de motor.memoria)."""
+
+    arquetipo_id: str
+    numero: int
+    texto: str
+    etiquetas: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class EfectoActivo:
+    """Un `Efecto` ya emparejado con la intensidad de SU PROPIO arquetipo de origen — necesario
+    para combinar varios arquetipos con intensidades distintas en el mismo caso (sección 2.12).
+    `numero` viene de `DefinicionArquetipo.numero`, para poder generar notas sin necesitar el
+    diccionario completo de arquetipos dentro de `_evolucionar_un_año`. Ver
+    `generar_evolucion_combinada` y la sección "Combinación de arquetipos" del docstring del
+    módulo."""
+
+    efecto: Efecto
+    arquetipo_id: str
+    numero: int
+    intensidad_efectiva: float
+    intensidad_base: float
 
 
 @dataclass(frozen=True)
@@ -710,8 +821,9 @@ class EjercicioEmpresa:
     pyg_contencion_al_limite: bool = False  # True si un efecto de "base dinámica" (baii) tuvo que invertir su
     # sentido para no rebasar el techo/suelo del sector — amortiguar su propia intensidad a cero no bastaba
     # (el desbordamiento venía del ruido de la base ese año, no del arquetipo). Ver docstring del módulo.
-    nota_memoria: str | None = None  # cobertura narrativa de negocio — caso límite raro (10), huella
-    # habitual del propio arquetipo (16), u OBLIGATORIA siempre que el arquetipo esté activo (18)
+    notas_memoria: tuple[NotaMemoria, ...] = ()  # cobertura narrativa de negocio — caso límite raro (10), huella
+    # habitual del propio arquetipo (16), u OBLIGATORIA siempre que el arquetipo esté activo (18). Lista (no un
+    # único valor) desde la combinación de arquetipos (sección 2.12): un caso combinado puede tener varias.
     ventas_organicas_eur: float | None = None  # solo en AÑO_ADQUISICION (18): ventas sin la operación
     ventas_inorganicas_eur: float | None = None  # solo en AÑO_ADQUISICION (18): aportación de la unidad adquirida
 
@@ -736,6 +848,9 @@ class EvolucionArquetipo:
     ejercicios: dict[int, EjercicioEmpresa]
     catalogo_version: str  # hash del CSV del catálogo usado para generar el caso (sección 2.15)
     pgc_version: str = PGC_VERSION
+    notas_memoria_pura: tuple[NotaMemoria, ...] = ()  # notas de arquetipos clase="memoria_pura" (7/19/20/21/22)
+    # activos en el caso, si los hay — no van por año (no son de un ejercicio concreto), las genera y
+    # resuelve motor.memoria.generar_caso_combinado, no este módulo (que no depende de motor.memoria).
 
 
 def _endeudamiento(balance_eur: dict[str, float]) -> float:
@@ -940,23 +1055,27 @@ def _evolucionar_un_año(
     rng_pyg: np.random.Generator,
     rng_nota: np.random.Generator,
     crecimiento_ventas: float,
-    intensidad_efectiva: float,
-    intensidad_base: float,
     año_evento_puntual: int | None,
-    definicion: DefinicionArquetipo,
+    efectos_activos: tuple[EfectoActivo, ...],
 ) -> EjercicioEmpresa:
+    """`efectos_activos` ya viene fusionado (uno o varios arquetipos combinados, cada `Efecto`
+    emparejado con la intensidad de SU PROPIO arquetipo de origen, y los `masa_circulante` que
+    comparten variable+dirección ya sumados en uno solo) — ver `generar_evolucion_combinada` y
+    la sección "Combinación de arquetipos" del docstring del módulo. El caso de un único
+    arquetipo es, literalmente, una lista de un elemento: esta función no distingue los dos
+    casos en ningún punto."""
     ventas = anterior.ventas * (1 + crecimiento_ventas)
 
-    efectos_masa_circulante = [e for e in definicion.efectos if isinstance(e, EfectoMasaCirculante)]
-    efectos_pyg = [e for e in definicion.efectos if isinstance(e, EfectoPygPrimitiva)]
-    efectos_apalancamiento = [e for e in definicion.efectos if isinstance(e, EfectoApalancamiento)]
-    efectos_tesoreria = [e for e in definicion.efectos if isinstance(e, EfectoTesoreria)]
-    efecto_tesoreria = efectos_tesoreria[0] if efectos_tesoreria else None
-    efectos_reclasificacion_deuda = [e for e in definicion.efectos if isinstance(e, EfectoReclasificacionDeuda)]
-    efectos_evento_puntual = [e for e in definicion.efectos if isinstance(e, EfectoEventoPuntual)]
-    efectos_capex = [e for e in definicion.efectos if isinstance(e, EfectoCapex)]
-    efectos_adquisicion = [e for e in definicion.efectos if isinstance(e, EfectoAdquisicion)]
-    nota_memoria: str | None = None
+    efectos_masa_circulante = [ea for ea in efectos_activos if isinstance(ea.efecto, EfectoMasaCirculante)]
+    efectos_pyg = [ea for ea in efectos_activos if isinstance(ea.efecto, EfectoPygPrimitiva)]
+    efectos_apalancamiento = [ea for ea in efectos_activos if isinstance(ea.efecto, EfectoApalancamiento)]
+    efectos_tesoreria = [ea for ea in efectos_activos if isinstance(ea.efecto, EfectoTesoreria)]
+    ea_tesoreria = efectos_tesoreria[0] if efectos_tesoreria else None
+    efectos_reclasificacion_deuda = [ea for ea in efectos_activos if isinstance(ea.efecto, EfectoReclasificacionDeuda)]
+    efectos_evento_puntual = [ea for ea in efectos_activos if isinstance(ea.efecto, EfectoEventoPuntual)]
+    efectos_capex = [ea for ea in efectos_activos if isinstance(ea.efecto, EfectoCapex)]
+    efectos_adquisicion = [ea for ea in efectos_activos if isinstance(ea.efecto, EfectoAdquisicion)]
+    notas_memoria: list[NotaMemoria] = []
 
     # --- Adquisición (arquetipo 18): inyección exógena de activo_no_corriente Y de ventas
     # "inorgánicas", ambas SOLO en AÑO_ADQUISICION (2024, fijo — ver constante). La magnitud se
@@ -970,9 +1089,10 @@ def _evolucionar_un_año(
     incremento_activo_adquisicion_eur = 0.0
     ventas_organicas_eur: float | None = None
     ventas_inorganicas_eur: float | None = None
-    if efectos_adquisicion and año == AÑO_ADQUISICION:
+    ea_adquisicion = efectos_adquisicion[0] if efectos_adquisicion else None
+    if ea_adquisicion is not None and año == AÑO_ADQUISICION:
         activo_total_previo_eur = anterior.balance_eur["activo_no_corriente"] + anterior.balance_eur["activo_corriente"]
-        incremento_activo_adquisicion_eur = intensidad_base * activo_total_previo_eur
+        incremento_activo_adquisicion_eur = ea_adquisicion.intensidad_base * activo_total_previo_eur
         # La aportación de ventas de la unidad adquirida se ancla a ratios.rotacion_activo del
         # sector (ventas/activo total típico) sobre el propio importe adquirido — asume que la
         # unidad comprada opera con una eficiencia de activo similar a la del sector, en vez de
@@ -991,8 +1111,10 @@ def _evolucionar_un_año(
         variable: valor * (1 + crecimiento_ventas) for variable, valor in variables_circulante.items()
     }
     objetivos_circulante = dict(proporcional_circulante)
-    for efecto in efectos_masa_circulante:
-        objetivos_circulante[efecto.variable] = _masa_circulante_objetivo(efecto, anterior, ventas, fila, intensidad_efectiva)
+    for ea in efectos_masa_circulante:
+        objetivos_circulante[ea.efecto.variable] = _masa_circulante_objetivo(
+            ea.efecto, anterior, ventas, fila, ea.intensidad_efectiva
+        )
     existencias_eur = objetivos_circulante["existencias"]
     realizable_eur = objetivos_circulante["realizable"]
     acreedores_comerciales_eur = objetivos_circulante["acreedores_comerciales"]
@@ -1004,15 +1126,18 @@ def _evolucionar_un_año(
     activo_no_corriente_proporcional_eur = anterior.balance_eur["activo_no_corriente"] * (1 + crecimiento_ventas)
     activo_no_corriente_eur = activo_no_corriente_proporcional_eur
     if efectos_capex:
+        ea_capex = efectos_capex[0]
         activo_no_corriente_eur = _activo_no_corriente_objetivo(
-            efectos_capex[0], anterior, ventas, fila, intensidad_efectiva
+            ea_capex.efecto, anterior, ventas, fila, ea_capex.intensidad_efectiva
         )
     deudas_fin_largo_proporcional_eur = anterior.balance_eur["deudas_fin_largo"] * (1 + crecimiento_ventas)
     otras_deudas_largo_eur = anterior.balance_eur["otras_deudas_largo"] * (1 + crecimiento_ventas)
     otras_deudas_corto_eur = anterior.balance_eur["otras_deudas_corto"] * (1 + crecimiento_ventas)
     deudas_fin_corto_proporcional_eur = anterior.balance_eur["deudas_fin_corto"] * (1 + crecimiento_ventas)
     disponible_proporcional_eur = _disponible_proporcional_con_efecto(
-        efecto_tesoreria, anterior.balance_eur["disponible"] * (1 + crecimiento_ventas), intensidad_efectiva
+        ea_tesoreria.efecto if ea_tesoreria else None,
+        anterior.balance_eur["disponible"] * (1 + crecimiento_ventas),
+        ea_tesoreria.intensidad_efectiva if ea_tesoreria else 0.0,
     )
     deuda_financiera_inicio_eur = anterior.balance_eur["deudas_fin_largo"] + anterior.balance_eur["deudas_fin_corto"]
 
@@ -1021,7 +1146,8 @@ def _evolucionar_un_año(
     # importe) — reasigna deudas_fin_largo/corto_proporcional_eur antes de que se usen más
     # abajo. Ver EfectoReclasificacionDeuda en motor/arquetipos.py y el docstring del módulo. ---
     if efectos_reclasificacion_deuda:
-        efecto_reclas = efectos_reclasificacion_deuda[0]
+        ea_reclas = efectos_reclasificacion_deuda[0]
+        efecto_reclas = ea_reclas.efecto
         deuda_financiera_total_proporcional_eur = deudas_fin_largo_proporcional_eur + deudas_fin_corto_proporcional_eur
         deuda_financiera_anterior_eur = anterior.balance_eur["deudas_fin_largo"] + anterior.balance_eur["deudas_fin_corto"]
         calidad_deuda_anterior = (
@@ -1031,7 +1157,7 @@ def _evolucionar_un_año(
         )
         huber_calidad_deuda = fila[f"{efecto_reclas.ratio_catalogo}.huber_9y"]
         calidad_deuda_objetivo = _mover_ratio_continuo(
-            calidad_deuda_anterior, efecto_reclas.direccion, intensidad_efectiva, huber_calidad_deuda
+            calidad_deuda_anterior, efecto_reclas.direccion, ea_reclas.intensidad_efectiva, huber_calidad_deuda
         )
         calidad_deuda_objetivo = min(max(calidad_deuda_objetivo, 0.0), 1.0)  # calidad_deuda es un ratio en [0,1]
         deudas_fin_largo_proporcional_eur = calidad_deuda_objetivo * deuda_financiera_total_proporcional_eur
@@ -1044,7 +1170,8 @@ def _evolucionar_un_año(
             # NOTAS_MEMORIA_GASTOS_PERSONAL_AL_LIMITE (rng_nota dedicado, ver ahí por qué no
             # basta con reutilizar rng_pyg).
             indice_nota = rng_nota.integers(len(NOTAS_MEMORIA_RIESGO_REFINANCIACION))
-            nota_memoria = NOTAS_MEMORIA_RIESGO_REFINANCIACION[indice_nota]
+            texto, etiquetas = NOTAS_MEMORIA_RIESGO_REFINANCIACION[indice_nota]
+            notas_memoria.append(NotaMemoria(arquetipo_id=ea_reclas.arquetipo_id, numero=ea_reclas.numero, texto=texto, etiquetas=etiquetas))
 
     # --- Capex (arquetipo 17, "capex elevado"): el exceso de activo_no_corriente sobre su
     # crecimiento proporcional a ventas se financia con deuda a largo plazo NUEVA, no con el
@@ -1077,7 +1204,8 @@ def _evolucionar_un_año(
         deuda_nueva_adquisicion_eur = incremento_activo_adquisicion_eur - aportacion_caja_adquisicion_eur
         deudas_fin_largo_proporcional_eur += deuda_nueva_adquisicion_eur
         indice_nota = rng_nota.integers(len(NOTAS_MEMORIA_ADQUISICION))
-        nota_memoria = NOTAS_MEMORIA_ADQUISICION[indice_nota]
+        texto, etiquetas = NOTAS_MEMORIA_ADQUISICION[indice_nota]
+        notas_memoria.append(NotaMemoria(arquetipo_id=ea_adquisicion.arquetipo_id, numero=ea_adquisicion.numero, texto=texto, etiquetas=etiquetas))
 
     # --- PyG: primitivas no financieras + tipo de interés, sorteadas UNA sola vez. Las que el
     # arquetipo toca (efecto pyg_primitiva) se fuerzan por continuidad en vez de sortearse, y
@@ -1093,18 +1221,19 @@ def _evolucionar_un_año(
     # código adicional. No pasa por _limitar_por_subtotal (sin techo/suelo de plausibilidad): la
     # propia naturaleza del arquetipo es que ESE año se salga de lo plausible — limitarlo
     # anularía el efecto que se pide generar. Ver _evento_puntual_valor y docstring del módulo. ---
-    for efecto in efectos_evento_puntual:
+    for ea in efectos_evento_puntual:
         if año == año_evento_puntual:
-            primitivas_forzadas[efecto.primitiva] = _evento_puntual_valor(efecto, fila, intensidad_base)
-    efectos_pyg_base_dinamica = []
-    for efecto in efectos_pyg:
-        objetivo = _pyg_primitiva_objetivo(efecto, anterior, fila, intensidad_efectiva)
+            primitivas_forzadas[ea.efecto.primitiva] = _evento_puntual_valor(ea.efecto, fila, ea.intensidad_base)
+    efectos_pyg_base_dinamica: list[EfectoActivo] = []
+    for ea in efectos_pyg:
+        efecto = ea.efecto
+        objetivo = _pyg_primitiva_objetivo(efecto, anterior, fila, ea.intensidad_efectiva)
         if efecto.primitiva in SUBTOTAL_PYG_BASE_DINAMICA_DE_PRIMITIVA:
             # No se puede topar aquí: el subtotal (baii) depende de otras primitivas que
             # todavía no se han sorteado. Se fuerza el objetivo sin contener y se corrige
             # después de generar la PyG completa (ver más abajo).
             primitivas_forzadas[efecto.primitiva] = objetivo
-            efectos_pyg_base_dinamica.append(efecto)
+            efectos_pyg_base_dinamica.append(ea)
             continue
         objetivo, subtotal_topado, subtotal_sin_contener = _limitar_por_subtotal(
             efecto.primitiva, objetivo, fila, efecto.direccion
@@ -1114,7 +1243,8 @@ def _evolucionar_un_año(
             riesgo_plausibilidad_pyg = True
             pyg_subtotales_sin_contener[subtotal_topado] = subtotal_sin_contener
     parcial_pyg = _generar_pyg_hasta_baii(rng_pyg, fila, ventas, primitivas_forzadas=primitivas_forzadas)
-    for efecto in efectos_pyg_base_dinamica:
+    for ea in efectos_pyg_base_dinamica:
+        efecto = ea.efecto
         subtotal = SUBTOTAL_PYG_BASE_DINAMICA_DE_PRIMITIVA[efecto.primitiva]
         gastos_personal_pct_sin_empuje = anterior.pyg_pct[efecto.primitiva]
         parcial_pyg, topado, valor_sin_contener, limite_por_ruido_base = _limitar_gastos_personal_por_baii(
@@ -1135,7 +1265,8 @@ def _evolucionar_un_año(
                 # de una elección uniforme por caso (detectado por sesgo estadístico real, no
                 # ruido de muestra pequeña — ver docstring del módulo).
                 indice_nota = rng_nota.integers(len(NOTAS_MEMORIA_GASTOS_PERSONAL_AL_LIMITE))
-                nota_memoria = NOTAS_MEMORIA_GASTOS_PERSONAL_AL_LIMITE[indice_nota]
+                texto, etiquetas = NOTAS_MEMORIA_GASTOS_PERSONAL_AL_LIMITE[indice_nota]
+                notas_memoria.append(NotaMemoria(arquetipo_id=ea.arquetipo_id, numero=ea.numero, texto=texto, etiquetas=etiquetas))
 
     def _deficit_y_deuda_corto(existencias_eur: float, realizable_eur: float, acreedores_comerciales_eur: float) -> tuple[float, float, float]:
         # Presión neta sobre la NOF: las masas de ACTIVO (existencias, realizable) la suben
@@ -1262,9 +1393,11 @@ def _evolucionar_un_año(
         # la propia base, el objetivo de cada año queda siempre <= techo, sin depender de cuánto
         # se hubiera desviado el año anterior.
         endeudamiento_anterior = min(_endeudamiento(anterior.balance_eur), techo_endeudamiento)
-        efecto_apalancamiento = efectos_apalancamiento[0]
+        ea_apalancamiento = efectos_apalancamiento[0]
+        efecto_apalancamiento = ea_apalancamiento.efecto
         endeudamiento_objetivo = min(
-            endeudamiento_anterior * (1 + efecto_apalancamiento.direccion * intensidad_efectiva), techo_endeudamiento
+            endeudamiento_anterior * (1 + efecto_apalancamiento.direccion * ea_apalancamiento.intensidad_efectiva),
+            techo_endeudamiento,
         )
         activo_base_eur = balance_base["activo_no_corriente"] + balance_base["activo_corriente"]
         pasivo_base_eur = balance_base["pasivo_no_corriente"] + balance_base["pasivo_corriente"]
@@ -1319,12 +1452,12 @@ def _evolucionar_un_año(
         # se pierde en más deuda a corto necesaria (ambas son pasivo_corriente), efecto neto
         # cero sobre el endeudamiento. Ver SIGNO_NOF_MASA_CIRCULANTE y docstring del módulo.
         excesos_eur = {
-            efecto.variable: max(
+            ea.efecto.variable: max(
                 0.0,
-                objetivos_circulante[efecto.variable] - proporcional_circulante[efecto.variable],
+                objetivos_circulante[ea.efecto.variable] - proporcional_circulante[ea.efecto.variable],
             )
-            for efecto in efectos_masa_circulante
-            if SIGNO_NOF_MASA_CIRCULANTE[efecto.variable] == 1
+            for ea in efectos_masa_circulante
+            if SIGNO_NOF_MASA_CIRCULANTE[ea.efecto.variable] == 1
         }
         # Tope real de amortiguación: el menor entre (a) el exceso del propio arquetipo y
         # (b) el punto en el que el déficit de caja llega a cero (más allá, amortiguar más
@@ -1388,9 +1521,254 @@ def _evolucionar_un_año(
         riesgo_plausibilidad_pyg=riesgo_plausibilidad_pyg,
         pyg_subtotales_sin_contener=pyg_subtotales_sin_contener,
         pyg_contencion_al_limite=pyg_contencion_al_limite,
-        nota_memoria=nota_memoria,
+        notas_memoria=tuple(notas_memoria),
         ventas_organicas_eur=ventas_organicas_eur,
         ventas_inorganicas_eur=ventas_inorganicas_eur,
+    )
+
+
+def _fusionar_masa_circulante(efectos_activos: tuple[EfectoActivo, ...]) -> tuple[EfectoActivo, ...]:
+    """Regla de composición para la combinación de arquetipos (sección 2.12) cuando dos o más
+    arquetipos activos declaran un `EfectoMasaCirculante` sobre la MISMA variable (único caso
+    real entre las 6 combinaciones recomendadas de la sección 2.26: arquetipos 1 y 5, ambos
+    sobre `existencias`, Combo F): se combinan en un único `EfectoActivo`, sumando sus
+    `intensidad_efectiva`/`intensidad_base` individuales, y se aplica la fórmula de continuidad
+    (`_masa_circulante_objetivo`) UNA sola vez con la intensidad combinada — no se encadenan dos
+    aplicaciones sucesivas (que sería multiplicativo y dependiente de un orden arbitrario entre
+    arquetipos). El suelo/techo de plausibilidad (`FRACCION_MINIMA/MAXIMA_VS_HUBER`) actúa igual
+    que siempre, como límite conjunto, sin cambios de código: ya protege una intensidad
+    combinada extrema (p. ej. 0,50+0,50 en "fuerte"+"fuerte").
+
+    Requiere que las variables coincidentes compartan también `formula` y `ratio_catalogo` (es
+    el caso de 1 y 5: ambos anclan a `ratios.rotacion_existencias` con `formula="rotacion"`) y
+    la MISMA `direccion` — direcciones opuestas sobre la misma variable no están soportadas
+    (no ocurre en los 6 combos recomendados): se lanza `EvolucionArquetipoError` explícito en
+    vez de elegir una en silencio."""
+    por_variable: dict[str, list[EfectoActivo]] = {}
+    resto: list[EfectoActivo] = []
+    for ea in efectos_activos:
+        if isinstance(ea.efecto, EfectoMasaCirculante):
+            por_variable.setdefault(ea.efecto.variable, []).append(ea)
+        else:
+            resto.append(ea)
+
+    fusionados: list[EfectoActivo] = []
+    for variable, grupo in por_variable.items():
+        if len(grupo) == 1:
+            fusionados.append(grupo[0])
+            continue
+        direcciones = {ea.efecto.direccion for ea in grupo}
+        formulas = {ea.efecto.formula for ea in grupo}
+        ratios = {ea.efecto.ratio_catalogo for ea in grupo}
+        if len(direcciones) > 1:
+            raise EvolucionArquetipoError(
+                f"Combinación no soportada: efectos de masa_circulante con direcciones opuestas "
+                f"sobre '{variable}' ({sorted(ea.arquetipo_id for ea in grupo)})"
+            )
+        if len(formulas) > 1 or len(ratios) > 1:
+            raise EvolucionArquetipoError(
+                f"Combinación no soportada: efectos de masa_circulante sobre '{variable}' con "
+                f"formula/ratio_catalogo distintos ({sorted(ea.arquetipo_id for ea in grupo)})"
+            )
+        base = grupo[0]
+        fusionados.append(
+            EfectoActivo(
+                efecto=base.efecto,
+                arquetipo_id="+".join(sorted(ea.arquetipo_id for ea in grupo)),
+                numero=base.numero,
+                intensidad_efectiva=sum(ea.intensidad_efectiva for ea in grupo),
+                intensidad_base=sum(ea.intensidad_base for ea in grupo),
+            )
+        )
+    return tuple(resto) + tuple(fusionados)
+
+
+def generar_evolucion_combinada(
+    sector: str,
+    segmento: str,
+    ventas_objetivo_2023: float,
+    semilla: int,
+    arquetipos_intensidades: dict[str, str],
+    catalogo: pd.DataFrame | None = None,
+    arquetipos: dict[str, DefinicionArquetipo] | None = None,
+) -> EvolucionArquetipo:
+    """Genera 3 ejercicios combinando los arquetipos CUANTITATIVOS de `arquetipos_intensidades`
+    ({arquetipo_id: intensidad} — una intensidad por arquetipo, sección 2.12), fusionando sus
+    `efectos`. `generar_evolucion_arquetipo` (un único arquetipo) es un envoltorio de esta
+    función con un diccionario de un solo elemento — el caso individual ES, literalmente, una
+    combinación de tamaño 1, no una implementación paralela: cualquier test que siga pasando
+    para el caso individual lo demuestra directamente, no por diseño solamente.
+
+    Solo acepta arquetipos de `clase="cuantitativo"` — los de `clase="memoria_pura"` (7, 19, 20,
+    21, 22) no tienen nada que evolucionar aquí, ver `motor.memoria` y `generar_caso_combinado`,
+    que sí orquesta ambas clases juntas."""
+    if not arquetipos_intensidades:
+        raise EvolucionArquetipoError("No se ha indicado ningún arquetipo")
+    for arquetipo_id, intensidad in arquetipos_intensidades.items():
+        if intensidad not in INTENSIDADES_VALIDAS:
+            raise EvolucionArquetipoError(
+                f"Intensidad '{intensidad}' no válida para '{arquetipo_id}'. Debe ser una de: {sorted(INTENSIDADES_VALIDAS)}"
+            )
+
+    if arquetipos is None:
+        arquetipos = cargar_arquetipos()
+    for arquetipo_id in arquetipos_intensidades:
+        if arquetipo_id not in arquetipos:
+            raise EvolucionArquetipoError(
+                f"Arquetipo '{arquetipo_id}' no reconocido. Disponibles: {sorted(arquetipos)}"
+            )
+        if arquetipos[arquetipo_id].clase != "cuantitativo":
+            raise EvolucionArquetipoError(
+                f"'{arquetipo_id}' no es un arquetipo cuantitativo (clase='{arquetipos[arquetipo_id].clase}') "
+                "— no genera evolución numérica, ver motor.memoria / generar_caso_combinado"
+            )
+    definiciones = {aid: arquetipos[aid] for aid in arquetipos_intensidades}
+
+    if catalogo is None:
+        catalogo = cargar_y_validar_catalogo()
+
+    fila = resolver_fila_sector(catalogo, sector, segmento)
+
+    empresa_2023 = generar_empresa_base(sector, segmento, ventas_objetivo_2023, semilla, catalogo=catalogo)
+    ejercicios: dict[int, EjercicioEmpresa] = {AÑO_BASE: _ejercicio_desde_empresa_base(empresa_2023)}
+
+    # La semilla mezcla `semilla` con un hash estable (zlib.crc32, no `hash()` de Python) de
+    # sector+segmento — NO de intensidad NI del conjunto de arquetipos activos: por diseño, la
+    # misma semilla+sector+segmento debe compartir el mismo "ruido de fondo" (crecimiento_pleno_
+    # objetivo cuando ningún arquetipo activo define rango propio, y la PyG de 2024/2025 para las
+    # primitivas que nadie toca) sea cual sea el arquetipo o la COMBINACIÓN de arquetipos que se
+    # le aplique encima — es la propiedad, ya validada para el caso individual, que permite
+    # comparar "la misma empresa" bajo distintas historias (un arquetipo, u otro, o una
+    # combinación); se preserva sin tocar la fórmula al extenderla a combinaciones. (Se consideró
+    # mezclar también el conjunto de arquetipos activos, como en el sorteo de `nota_memoria` más
+    # abajo, pero se descartó explícitamente: cambiaría el ruido de fondo del caso individual —
+    # que es un caso particular de esta misma función — y rompería los valores de referencia ya
+    # fijados en los tests de regresión, sin ninguna necesidad real: el "ruido de fondo" no es un
+    # sorteo nuevo que arriesgue sesgo por combinación, es el mismo sorteo de siempre.)
+    entropia_sector = zlib.crc32(f"{sector}|{segmento}".encode("utf-8"))
+    semilla_secuencia = np.random.SeedSequence([semilla, entropia_sector])
+    hijo_tendencia, hijo_2024, hijo_2025 = semilla_secuencia.spawn(3)
+    rng_tendencia = np.random.default_rng(hijo_tendencia)
+    rngs_pyg = {2024: np.random.default_rng(hijo_2024), 2025: np.random.default_rng(hijo_2025)}
+
+    # RNG dedicado e independiente para `notas_memoria` (arquetipos 10/16/18): NO reutiliza
+    # rngs_pyg (ver hallazgo de sesgo documentado en docs/decisiones_plausibilidad.md). Uno por
+    # arquetipo activo (cada uno con su propia intensidad) — ya generaliza sin cambios a
+    # combinaciones: cada arquetipo sortea su nota de forma independiente de los demás, mismo
+    # patrón que motor.memoria._rng_memoria (que también mezcla arquetipo_id).
+    rngs_nota_por_arquetipo: dict[str, dict[int, np.random.Generator]] = {}
+    for arquetipo_id, intensidad in arquetipos_intensidades.items():
+        entropia_caso = zlib.crc32(f"{sector}|{segmento}|{intensidad}|{arquetipo_id}".encode("utf-8"))
+        secuencia_notas = np.random.SeedSequence([semilla, entropia_caso])
+        hijo_nota_2024, hijo_nota_2025 = secuencia_notas.spawn(2)
+        rngs_nota_por_arquetipo[arquetipo_id] = {
+            2024: np.random.default_rng(hijo_nota_2024),
+            2025: np.random.default_rng(hijo_nota_2025),
+        }
+
+    def _rng_nota_del_año(año: int) -> np.random.Generator:
+        # El arquetipo (de menor número) cuyo propio efecto puede generar una nota_memoria en
+        # evolucion_arquetipo.py (10 base dinámica, 16 reclasificación con dirección<0, 18
+        # adquisición) recibe SU rng — en los 6 combos recomendados nunca coinciden dos de estos
+        # tres a la vez. Si ninguno de los activos genera nota, se devuelve cualquiera (no se
+        # consumirá).
+        for arquetipo_id in sorted(definiciones, key=lambda aid: definiciones[aid].numero):
+            genera_nota = any(
+                isinstance(e, EfectoAdquisicion)
+                or (isinstance(e, EfectoReclasificacionDeuda) and e.direccion < 0)
+                or (isinstance(e, EfectoPygPrimitiva) and e.primitiva in SUBTOTAL_PYG_BASE_DINAMICA_DE_PRIMITIVA)
+                for e in definiciones[arquetipo_id].efectos
+            )
+            if genera_nota:
+                return rngs_nota_por_arquetipo[arquetipo_id][año]
+        return next(iter(rngs_nota_por_arquetipo.values()))[año]
+
+    # rango_crecimiento_pleno: si algún arquetipo activo define uno propio (hoy, solo el 1), se
+    # usa el de menor número (orden determinista) con SU PROPIA intensidad para escalar por
+    # fracción de año — no hay más de uno en los 6 combos recomendados, así que no hace falta una
+    # regla de desempate más allá de "el de menor número", documentada por si algún día aplica.
+    arquetipo_con_rango = next(
+        (
+            aid
+            for aid in sorted(definiciones, key=lambda a: definiciones[a].numero)
+            if definiciones[aid].rango_crecimiento_pleno is not None
+        ),
+        None,
+    )
+    if arquetipo_con_rango is not None:
+        bajo, alto = definiciones[arquetipo_con_rango].rango_crecimiento_pleno[arquetipos_intensidades[arquetipo_con_rango]]
+    else:
+        bajo, alto = RANGO_CRECIMIENTO_ORGANICO
+    crecimiento_pleno_objetivo = bajo + rng_tendencia.random() * (alto - bajo)
+
+    # Año único del suceso puntual (arquetipo 12, "resultado extraordinario"): sorteado 50/50
+    # entre 2024 y 2025 con rng_tendencia — mismo generador ya independiente por sector+segmento,
+    # NO por intensidad (el año en que ocurrió el suceso es un hecho de la propia empresa: no
+    # debe cambiar solo porque se pida una intensidad distinta del mismo caso, igual que
+    # crecimiento_pleno_objetivo). Solo se consume si algún arquetipo activo tiene un
+    # EfectoEventoPuntual (en los 6 combos, como mucho uno), así que no afecta al estado de
+    # rng_tendencia para el resto de combinaciones.
+    año_evento_puntual: int | None = None
+    if any(isinstance(e, EfectoEventoPuntual) for definicion in definiciones.values() for e in definicion.efectos):
+        año_evento_puntual = 2024 if rng_tendencia.integers(2) == 0 else 2025
+
+    anterior = ejercicios[AÑO_BASE]
+    for año in (2024, 2025):
+        fraccion = FRACCION_AÑO[año]
+        crecimiento_ventas = (
+            crecimiento_pleno_objetivo * fraccion if arquetipo_con_rango is not None else crecimiento_pleno_objetivo
+        )
+
+        efectos_activos: list[EfectoActivo] = []
+        for arquetipo_id, definicion in definiciones.items():
+            escala_intensidad = INTENSIDAD_BASE_POR_ARQUETIPO.get(arquetipo_id, INTENSIDAD_BASE)
+            intensidad_base_arq = escala_intensidad[arquetipos_intensidades[arquetipo_id]]
+            intensidad_efectiva_arq = intensidad_base_arq * fraccion
+            for efecto in definicion.efectos:
+                efectos_activos.append(
+                    EfectoActivo(
+                        efecto=efecto,
+                        arquetipo_id=arquetipo_id,
+                        numero=definicion.numero,
+                        intensidad_efectiva=intensidad_efectiva_arq,
+                        intensidad_base=intensidad_base_arq,
+                    )
+                )
+        efectos_activos = list(_fusionar_masa_circulante(tuple(efectos_activos)))
+
+        ejercicio = _evolucionar_un_año(
+            año,
+            anterior,
+            fila,
+            rngs_pyg[año],
+            _rng_nota_del_año(año),
+            crecimiento_ventas,
+            año_evento_puntual,
+            tuple(efectos_activos),
+        )
+        ejercicios[año] = ejercicio
+        anterior = ejercicio
+
+    if len(arquetipos_intensidades) == 1:
+        # Formato idéntico al histórico (un solo id, una sola intensidad) — no el formato "id:
+        # intensidad" de las combinaciones — para que EvolucionArquetipo.arquetipo/.intensidad
+        # no cambien para ningún caso individual ya existente.
+        (arquetipo_str,) = arquetipos_intensidades.keys()
+        (intensidad_str,) = arquetipos_intensidades.values()
+    else:
+        arquetipo_str = "+".join(sorted(arquetipos_intensidades))
+        intensidad_str = "+".join(f"{aid}:{arquetipos_intensidades[aid]}" for aid in sorted(arquetipos_intensidades))
+
+    return EvolucionArquetipo(
+        sector_codigo=sector,
+        sector_nombre=fila["sector"],
+        segmento=segmento,
+        arquetipo=arquetipo_str,
+        intensidad=intensidad_str,
+        semilla=semilla,
+        crecimiento_pleno_objetivo=crecimiento_pleno_objetivo,
+        ejercicios=ejercicios,
+        catalogo_version=catalogo.attrs.get("catalogo_version", "desconocida"),
     )
 
 
@@ -1407,110 +1785,10 @@ def generar_evolucion_arquetipo(
     """Genera 3 ejercicios (2023 base, 2024 y 2025 con `arquetipo_id` aplicado de forma
     progresiva: 60% de la intensidad en 2024, 100% en 2025), encadenados entre sí.
 
-    `arquetipo_id` es una clave de `data/arquetipos.json` (ver `motor.arquetipos`)."""
-    if intensidad not in INTENSIDADES_VALIDAS:
-        raise EvolucionArquetipoError(
-            f"Intensidad '{intensidad}' no válida. Debe ser una de: {sorted(INTENSIDADES_VALIDAS)}"
-        )
-
-    if arquetipos is None:
-        arquetipos = cargar_arquetipos()
-    if arquetipo_id not in arquetipos:
-        raise EvolucionArquetipoError(
-            f"Arquetipo '{arquetipo_id}' no reconocido. Disponibles: {sorted(arquetipos)}"
-        )
-    definicion = arquetipos[arquetipo_id]
-
-    if catalogo is None:
-        catalogo = cargar_y_validar_catalogo()
-
-    fila = resolver_fila_sector(catalogo, sector, segmento)
-
-    empresa_2023 = generar_empresa_base(sector, segmento, ventas_objetivo_2023, semilla, catalogo=catalogo)
-    ejercicios: dict[int, EjercicioEmpresa] = {AÑO_BASE: _ejercicio_desde_empresa_base(empresa_2023)}
-
-    # La semilla mezcla `semilla` con un hash estable (zlib.crc32, no `hash()` de Python) de
-    # sector+segmento — NO de intensidad: por diseño, la misma semilla+sector+segmento con
-    # distintas intensidades debe compartir el mismo "ruido de fondo" (crecimiento_pleno_objetivo
-    # cuando el arquetipo no define rango propio, y la PyG de 2024/2025 para las primitivas que
-    # el arquetipo no toca), y solo el empuje propio del arquetipo debe variar con la intensidad
-    # (ver test_intensidad_fuerte_tiene_mas_efecto_que_moderado). Sin este mezclado, CUALQUIER
-    # sector/segmento con la misma semilla partía del mismo estado de RNG: verificado que
-    # crecimiento_pleno_objetivo salía bit a bit idéntico entre sectores distintos que
-    # compartieran semilla, para cualquier arquetipo sin rango_crecimiento_pleno propio — mismo
-    # patrón de bug que el corregido en el sorteo de `nota_memoria` (ver más abajo), auditado
-    # explícitamente a raíz de aquel hallazgo.
-    entropia_sector = zlib.crc32(f"{sector}|{segmento}".encode("utf-8"))
-    semilla_secuencia = np.random.SeedSequence([semilla, entropia_sector])
-    hijo_tendencia, hijo_2024, hijo_2025 = semilla_secuencia.spawn(3)
-    rng_tendencia = np.random.default_rng(hijo_tendencia)
-    rngs_pyg = {2024: np.random.default_rng(hijo_2024), 2025: np.random.default_rng(hijo_2025)}
-
-    # RNG dedicado e independiente para `nota_memoria` (arquetipo 10): NO reutiliza rngs_pyg. Su
-    # semilla mezcla `semilla` con un hash estable (zlib.crc32, no `hash()` de Python — este
-    # último varía entre procesos por PYTHONHASHSEED, rompería la reproducibilidad) de
-    # sector+segmento+intensidad, así que el sorteo es específico de cada caso, no solo de
-    # `semilla`. Necesario porque `rngs_pyg[año]` llega al punto donde se sortearía la nota en EL
-    # MISMO estado para cualquier sector/intensidad con la misma semilla (todos los draws previos
-    # de `_generar_pyg_hasta_baii` — típico/atípico, z de la normal truncada — no dependen de
-    # huber/mad ni de intensidad, solo su escalado posterior sí): detectado en pruebas de estrés,
-    # el reparto observado entre las 5 redacciones en 143 casos (12/37/56/33/5) no era ruido de
-    # muestra pequeña (chi-cuadrado ~58 con 4 g.l., p<0,001) sino que colapsaba a solo 6 sorteos
-    # realmente distintos (uno por combinación semilla x año con algún caso activado), repetido
-    # idéntico en todos los sectores/intensidades que compartían esa semilla y año.
-    entropia_caso = zlib.crc32(f"{sector}|{segmento}|{intensidad}".encode("utf-8"))
-    semilla_secuencia_notas = np.random.SeedSequence([semilla, entropia_caso])
-    hijo_nota_2024, hijo_nota_2025 = semilla_secuencia_notas.spawn(2)
-    rngs_nota = {2024: np.random.default_rng(hijo_nota_2024), 2025: np.random.default_rng(hijo_nota_2025)}
-
-    if definicion.rango_crecimiento_pleno is not None:
-        bajo, alto = definicion.rango_crecimiento_pleno[intensidad]
-        crecimiento_pleno_objetivo = bajo + rng_tendencia.random() * (alto - bajo)
-    else:
-        bajo, alto = RANGO_CRECIMIENTO_ORGANICO
-        crecimiento_pleno_objetivo = bajo + rng_tendencia.random() * (alto - bajo)
-
-    # Año único del suceso puntual (arquetipo 12, "resultado extraordinario"): sorteado 50/50
-    # entre 2024 y 2025 con rng_tendencia — mismo generador ya independiente por sector+segmento,
-    # NO por intensidad (el año en que ocurrió el suceso es un hecho de la propia empresa: no
-    # debe cambiar solo porque se pida una intensidad distinta del mismo caso, igual que
-    # crecimiento_pleno_objetivo). Solo se consume si el arquetipo tiene un EfectoEventoPuntual,
-    # así que no afecta al estado de rng_tendencia para el resto de arquetipos.
-    año_evento_puntual: int | None = None
-    if any(isinstance(e, EfectoEventoPuntual) for e in definicion.efectos):
-        año_evento_puntual = 2024 if rng_tendencia.integers(2) == 0 else 2025
-
-    intensidad_base = INTENSIDAD_BASE[intensidad]
-    anterior = ejercicios[AÑO_BASE]
-    for año in (2024, 2025):
-        fraccion = FRACCION_AÑO[año]
-        intensidad_efectiva = intensidad_base * fraccion
-        crecimiento_ventas = (
-            crecimiento_pleno_objetivo * fraccion if definicion.rango_crecimiento_pleno is not None else crecimiento_pleno_objetivo
-        )
-        ejercicio = _evolucionar_un_año(
-            año,
-            anterior,
-            fila,
-            rngs_pyg[año],
-            rngs_nota[año],
-            crecimiento_ventas,
-            intensidad_efectiva,
-            intensidad_base,
-            año_evento_puntual,
-            definicion,
-        )
-        ejercicios[año] = ejercicio
-        anterior = ejercicio
-
-    return EvolucionArquetipo(
-        sector_codigo=sector,
-        sector_nombre=fila["sector"],
-        segmento=segmento,
-        arquetipo=arquetipo_id,
-        intensidad=intensidad,
-        semilla=semilla,
-        crecimiento_pleno_objetivo=crecimiento_pleno_objetivo,
-        ejercicios=ejercicios,
-        catalogo_version=catalogo.attrs.get("catalogo_version", "desconocida"),
+    `arquetipo_id` es una clave de `data/arquetipos.json` (ver `motor.arquetipos`). Envoltorio
+    de `generar_evolucion_combinada` con un único arquetipo — ver docstring de esa función y la
+    sección "Combinación de arquetipos" del docstring del módulo."""
+    return generar_evolucion_combinada(
+        sector, segmento, ventas_objetivo_2023, semilla, {arquetipo_id: intensidad},
+        catalogo=catalogo, arquetipos=arquetipos,
     )

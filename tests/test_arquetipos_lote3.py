@@ -282,9 +282,9 @@ def test_riesgo_refinanciacion_siempre_lleva_nota_memoria(catalogo, arquetipos, 
     for semilla in SEMILLAS:
         evolucion = _generar(catalogo, arquetipos, "riesgo_refinanciacion", sector, semilla)
         for año in (2024, 2025):
-            nota = evolucion.ejercicios[año].nota_memoria
-            assert nota is not None
-            assert nota in NOTAS_MEMORIA_RIESGO_REFINANCIACION
+            notas = evolucion.ejercicios[año].notas_memoria
+            assert len(notas) == 1
+            assert notas[0].texto in {t for t, _ in NOTAS_MEMORIA_RIESGO_REFINANCIACION}
 
 
 @pytest.mark.parametrize("sector", SECTORES)
@@ -292,8 +292,8 @@ def test_riesgo_refinanciacion_nota_memoria_reproducible(catalogo, arquetipos, s
     for semilla in SEMILLAS:
         a = _generar(catalogo, arquetipos, "riesgo_refinanciacion", sector, semilla)
         b = _generar(catalogo, arquetipos, "riesgo_refinanciacion", sector, semilla)
-        assert a.ejercicios[2024].nota_memoria == b.ejercicios[2024].nota_memoria
-        assert a.ejercicios[2025].nota_memoria == b.ejercicios[2025].nota_memoria
+        assert a.ejercicios[2024].notas_memoria == b.ejercicios[2024].notas_memoria
+        assert a.ejercicios[2025].notas_memoria == b.ejercicios[2025].notas_memoria
 
 
 def test_riesgo_refinanciacion_nota_memoria_varia_entre_las_5_opciones(catalogo, arquetipos):
@@ -305,8 +305,8 @@ def test_riesgo_refinanciacion_nota_memoria_varia_entre_las_5_opciones(catalogo,
                 codigo, "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=semilla, intensidad="fuerte",
                 arquetipo_id="riesgo_refinanciacion", catalogo=catalogo, arquetipos=arquetipos,
             )
-            notas_vistas.add(evolucion.ejercicios[2024].nota_memoria)
-            notas_vistas.add(evolucion.ejercicios[2025].nota_memoria)
+            notas_vistas.add(evolucion.ejercicios[2024].notas_memoria[0].texto)
+            notas_vistas.add(evolucion.ejercicios[2025].notas_memoria[0].texto)
     assert len(notas_vistas) == len(NOTAS_MEMORIA_RIESGO_REFINANCIACION), notas_vistas
 
 

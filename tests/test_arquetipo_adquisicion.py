@@ -147,10 +147,10 @@ def test_adquisicion_nota_memoria_es_obligatoria_solo_en_2024(catalogo, arquetip
     for semilla in SEMILLAS:
         evolucion = _generar(catalogo, arquetipos, sector, semilla)
         ej = evolucion.ejercicios
-        assert ej[2023].nota_memoria is None
-        assert ej[2024].nota_memoria is not None
-        assert ej[2024].nota_memoria in NOTAS_MEMORIA_ADQUISICION
-        assert ej[2025].nota_memoria is None
+        assert ej[2023].notas_memoria == ()
+        assert len(ej[2024].notas_memoria) == 1
+        assert ej[2024].notas_memoria[0].texto in {t for t, _ in NOTAS_MEMORIA_ADQUISICION}
+        assert ej[2025].notas_memoria == ()
 
 
 @pytest.mark.parametrize("sector", SECTORES)
@@ -158,7 +158,7 @@ def test_adquisicion_nota_memoria_reproducible(catalogo, arquetipos, sector):
     for semilla in SEMILLAS:
         a = _generar(catalogo, arquetipos, sector, semilla)
         b = _generar(catalogo, arquetipos, sector, semilla)
-        assert a.ejercicios[2024].nota_memoria == b.ejercicios[2024].nota_memoria
+        assert a.ejercicios[2024].notas_memoria == b.ejercicios[2024].notas_memoria
 
 
 def test_adquisicion_nota_memoria_varia_entre_las_5_opciones(catalogo, arquetipos):
@@ -170,7 +170,7 @@ def test_adquisicion_nota_memoria_varia_entre_las_5_opciones(catalogo, arquetipo
                 codigo, "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=semilla, intensidad="fuerte",
                 arquetipo_id="adquisicion", catalogo=catalogo, arquetipos=arquetipos,
             )
-            notas_vistas.add(evolucion.ejercicios[2024].nota_memoria)
+            notas_vistas.add(evolucion.ejercicios[2024].notas_memoria[0].texto)
     assert len(notas_vistas) == len(NOTAS_MEMORIA_ADQUISICION), notas_vistas
 
 
