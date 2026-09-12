@@ -419,8 +419,11 @@ def test_margen_bruto_nunca_supera_el_techo_del_sector(catalogo, arquetipos):
                 # pegado a su techo, el margen puede acabar unos pocos puntos-base por encima
                 # (verificado: sector 62, semilla 1, 2025, +0,017 puntos) — no es un fallo de la
                 # contención, es un efecto real (la subvención SÍ sube el margen) que la
-                # contención no anticipa. Se excluye ese caso de la comprobación estricta.
-                if ejercicio.subvencion_transferencia_bruto_eur > 0:
+                # contención no anticipa. Se excluye ese caso de la comprobación estricta. Mismo
+                # criterio para el exceso de provisión (tercer lote, motor/provisiones.py): se
+                # pliega en `otros_ingresos_explot`, igual que la imputación de subvención — ver
+                # decisiones_plausibilidad.md #39 (subvención) / #60 (provisiones).
+                if ejercicio.subvencion_transferencia_bruto_eur > 0 or ejercicio.provision_exceso_eur > 0:
                     continue
                 assert ejercicio.pyg_pct["margen_bruto"] <= techo_margen + 1e-6
 
@@ -583,6 +586,12 @@ def test_mejora_ebitda_baii_respeta_el_techo_de_plausibilidad_del_sector(catalog
                     ej = evolucion.ejercicios[año]
                     if ej.riesgo_plausibilidad_pyg:
                         activaciones += 1
+                    # Mismo criterio que en margen_bruto (ver arriba, #39): la dotación/exceso de
+                    # provisión (tercer lote) se inyecta DESPUÉS de esta contención, así que
+                    # puede empujar baii unos puntos-base fuera de su techo sin que la contención
+                    # (calculada sobre el baii SIN provisión) lo anticipe — ver #60.
+                    if ej.provision_dotacion_eur > 0 or ej.provision_exceso_eur > 0:
+                        continue
                     if ej.pyg_pct["baii"] > techo_baii + 1e-6 and not ej.riesgo_plausibilidad_pyg:
                         por_encima_sin_señal.append((codigo, intensidad, semilla, año, ej.pyg_pct["baii"], techo_baii))
     assert activaciones > 0, "la muestra no incluyó ningún caso donde se activara la contención: ajustar el barrido"
@@ -619,6 +628,12 @@ def test_mejora_ebitda_las_subidas_de_gastos_personal_siempre_coinciden_con_el_l
                 )
                 ej = evolucion.ejercicios
                 for año_anterior, año in ((2023, 2024), (2024, 2025)):
+                    # Si una provisión (tercer lote, motor/provisiones.py) de categoría 140
+                    # ("retribuciones a largo plazo al personal") dota este año, gastos_personal
+                    # sube por una razón TOTALMENTE ajena a la contención de mejora_ebitda —
+                    # excluido de esta comprobación de correspondencia exacta, ver #60.
+                    if ej[año].provision_dotacion_eur > 0 and ej[año].provision_naturaleza_pyg == "gastos_personal":
+                        continue
                     sube = ej[año].pyg_pct["gastos_personal"] > ej[año_anterior].pyg_pct["gastos_personal"] + 1e-9
                     if sube:
                         subidas_totales += 1

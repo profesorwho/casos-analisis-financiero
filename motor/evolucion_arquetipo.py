@@ -514,6 +514,13 @@ from motor.empresa_base import (
     categoria_de_sector,
     generar_empresa_base,
     resolver_fila_sector,
+    tier_existencias_de_sector,
+)
+from motor.provisiones import (
+    ParametrosProvision,
+    evolucionar_provision,
+    sortear_importe_provision_eur,
+    sortear_provision_baseline,
 )
 from motor.empresa_base import _completar_pyg_con_deuda, _generar_pyg_hasta_baii  # reutiliza la cascada de PyG
 
@@ -914,6 +921,24 @@ class EjercicioEmpresa:
     inversion_grupo_largo_eur: float = 0.0
     deuda_grupo_largo_eur: float = 0.0
 
+    # --- Provisiones a largo/corto plazo (tercer lote de desglose de balance, ver
+    # motor/provisiones.py) — probabilidad de fondo independiente de cualquier arquetipo (puede
+    # aparecer con el 6, "línea base sana"). `provision_importe_dotado_eur` es el importe TOTAL
+    # dotado (fijo desde el año de dotación); `..._saldo_largo_eur`/`..._saldo_corto_eur` son el
+    # saldo de ESTE año, reclasificado íntegro según el horizonte restante (nunca ambos > 0 a la
+    # vez). `..._dotacion_eur`/`..._aplicacion_eur`/`..._exceso_eur` son los FLUJOS de ESTE año
+    # (0.0 salvo el año que corresponda) — movimiento anual completo, ver PasoProvision. Distinto
+    # del arquetipo 22 (contingencia, puramente textual, sin huella de balance) — no confundir. ---
+    provision_activa: bool = False
+    provision_categoria: str = ""
+    provision_naturaleza_pyg: str = ""
+    provision_importe_dotado_eur: float = 0.0
+    provision_saldo_largo_eur: float = 0.0
+    provision_saldo_corto_eur: float = 0.0
+    provision_dotacion_eur: float = 0.0
+    provision_aplicacion_eur: float = 0.0
+    provision_exceso_eur: float = 0.0
+
     @property
     def periodificacion_activo_eur(self) -> float:
         return self.periodificacion_activo_pct * self.balance_eur["realizable"]
@@ -1284,6 +1309,7 @@ class ParametrosOperacionVinculada:
 
 
 PARAMETROS_OPERACION_VINCULADA_INACTIVOS = ParametrosOperacionVinculada()
+PARAMETROS_PROVISION_INACTIVA = ParametrosProvision()
 
 
 def _sortear_operacion_vinculada(sector: str, segmento: str, semilla: int, intensidad: str) -> ParametrosOperacionVinculada:
@@ -1365,6 +1391,7 @@ def _evolucionar_un_año(
     semilla: int,
     parametros_grupo89: ParametrosGrupo89 = PARAMETROS_GRUPO89_INACTIVOS,
     parametros_operacion_vinculada: ParametrosOperacionVinculada = PARAMETROS_OPERACION_VINCULADA_INACTIVOS,
+    parametros_provision: ParametrosProvision = PARAMETROS_PROVISION_INACTIVA,
 ) -> EjercicioEmpresa:
     """`efectos_activos` ya viene fusionado (uno o varios arquetipos combinados, cada `Efecto`
     emparejado con la intensidad de SU PROPIO arquetipo de origen, y los `masa_circulante` que
@@ -1450,8 +1477,15 @@ def _evolucionar_un_año(
             ea_capex.efecto, anterior, ventas, fila, ea_capex.intensidad_efectiva
         )
     deudas_fin_largo_proporcional_eur = anterior.balance_eur["deudas_fin_largo"] * (1 + crecimiento_ventas)
-    otras_deudas_largo_eur = (anterior.balance_eur["otras_deudas_largo"] - anterior_pasivo_grupo89_eur) * (1 + crecimiento_ventas)
-    otras_deudas_corto_eur = anterior.balance_eur["otras_deudas_corto"] * (1 + crecimiento_ventas)
+    # Provisiones (tercer lote de desglose de balance): excluidas de la base proporcional, igual
+    # criterio que grupo89 — no crecen con ventas, se recalculan cada año desde su propio saldo
+    # (ver bloque "Provisiones" más abajo, que las vuelve a sumar tras este punto).
+    otras_deudas_largo_eur = (
+        anterior.balance_eur["otras_deudas_largo"] - anterior_pasivo_grupo89_eur - anterior.provision_saldo_largo_eur
+    ) * (1 + crecimiento_ventas)
+    otras_deudas_corto_eur = (anterior.balance_eur["otras_deudas_corto"] - anterior.provision_saldo_corto_eur) * (
+        1 + crecimiento_ventas
+    )
     deudas_fin_corto_proporcional_eur = anterior.balance_eur["deudas_fin_corto"] * (1 + crecimiento_ventas)
     disponible_proporcional_eur = _disponible_proporcional_con_efecto(
         ea_tesoreria.efecto if ea_tesoreria else None,
@@ -1741,6 +1775,34 @@ def _evolucionar_un_año(
         otras_deudas_largo_eur += deuda_grupo_largo_eur
         disponible_proporcional_eur += deuda_grupo_largo_eur
 
+    # --- Provisiones a largo/corto plazo (tercer lote de desglose de balance, motor/
+    # provisiones.py) — probabilidad de fondo independiente de cualquier arquetipo. La magnitud
+    # (importe_dotado_eur) se sortea UNA vez, el año de la dotación, sobre el patrimonio_neto YA
+    # resuelto del año anterior (mismo criterio "anclado en `anterior`" que el resto de esta
+    # función) y se lleva sin cambios de ahí en adelante (`anterior.provision_importe_dotado_eur`
+    # una vez fijado). El saldo se reclasifica ÍNTEGRO largo/corto cada año según el horizonte
+    # restante — se pliega en `otras_deudas_largo_eur`/`otras_deudas_corto_eur` ANTES de
+    # `_construir_balance`/`_evaluar`, igual que grupo89/operaciones vinculadas. La dotación
+    # (gasto) y el exceso (ingreso) se inyectan en la PyG más abajo, junto al resto de ajustes
+    # grupo89 — ver ese bloque. La aplicación es caja real, se resta de disponible aquí mismo. ---
+    provision_importe_dotado_eur = anterior.provision_importe_dotado_eur
+    if parametros_provision.activa and año == parametros_provision.año_dotacion:
+        provision_importe_dotado_eur = sortear_importe_provision_eur(
+            sector, segmento, semilla, anterior.balance_eur["patrimonio_neto"]
+        )
+    saldo_anterior_provision_eur = anterior.provision_saldo_largo_eur + anterior.provision_saldo_corto_eur
+    paso_provision = evolucionar_provision(parametros_provision, provision_importe_dotado_eur, saldo_anterior_provision_eur, año)
+    provision_saldo_largo_eur = paso_provision.saldo_eur if paso_provision.es_largo else 0.0
+    provision_saldo_corto_eur = 0.0 if paso_provision.es_largo else paso_provision.saldo_eur
+    otras_deudas_largo_eur += provision_saldo_largo_eur
+    otras_deudas_corto_eur += provision_saldo_corto_eur
+    disponible_proporcional_eur -= paso_provision.aplicacion_eur
+    ajuste_gastos_personal_provision_eur = paso_provision.dotacion_eur if parametros_provision.naturaleza_pyg == "gastos_personal" else 0.0
+    ajuste_otros_gastos_explot_provision_eur = (
+        paso_provision.dotacion_eur if parametros_provision.naturaleza_pyg == "otros_gastos_explot" else 0.0
+    )
+    ajuste_otros_ingresos_explot_provision_eur = paso_provision.exceso_eur
+
     ajustes_cambio_valor_pn_eur = presentacion_neta_eur(cobertura_saldo_1340_bruto_eur)
     subvenciones_pn_eur = presentacion_neta_eur(subvencion_saldo_130_bruto_eur)
     delta_pn_grupo89_eur = (
@@ -1838,21 +1900,41 @@ def _evolucionar_un_año(
         deuda_financiera_media_eur = (deuda_financiera_inicio_eur + deuda_financiera_fin_eur) / 2
         pyg_pct, pyg_eur = _completar_pyg_con_deuda(parcial_pyg, deuda_financiera_media_eur)
 
-        # Ajuste de grupo89 (cobertura/subvención) — importe BRUTO completo, desacoplado del
-        # `impuesto_beneficios` ya sorteado (que no debe gravar dos veces esta partida ni
-        # dejarla sin gravar del todo): ver docstring de motor.coberturas_subvenciones, punto 1
-        # del diseño de cuadre. Se aplica DESPUÉS de `_completar_pyg_con_deuda` para no alterar
-        # la base sobre la que se sorteó `impuesto_beneficios_pct`.
-        if ajuste_gastos_financieros_grupo89_eur != 0.0 or ajuste_otros_ingresos_explot_grupo89_eur != 0.0:
+        # Ajuste de grupo89 (cobertura/subvención) y de provisiones (dotación/exceso, tercer
+        # lote) — importe BRUTO completo, desacoplado del `impuesto_beneficios` ya sorteado (que
+        # no debe gravar dos veces estas partidas ni dejarlas sin gravar del todo): ver docstring
+        # de motor.coberturas_subvenciones (punto 1 del diseño de cuadre) y de motor.provisiones.
+        # Se aplica DESPUÉS de `_completar_pyg_con_deuda` para no alterar la base sobre la que se
+        # sorteó `impuesto_beneficios_pct`. El exceso de provisión se pliega en
+        # `otros_ingresos_explot` (línea "Excesos de provisiones" del modelo oficial, no
+        # desglosada como línea propia en `pyg_eur` — mismo criterio de simplificación ya usado
+        # para la imputación de subvenciones, ver arriba: el importe distinto SÍ queda expuesto
+        # aparte, en `EjercicioEmpresa.provision_exceso_eur`); la dotación resta de
+        # `gastos_personal` u `otros_gastos_explot` según la categoría de la provisión.
+        if (
+            ajuste_gastos_financieros_grupo89_eur != 0.0
+            or ajuste_otros_ingresos_explot_grupo89_eur != 0.0
+            or ajuste_gastos_personal_provision_eur != 0.0
+            or ajuste_otros_gastos_explot_provision_eur != 0.0
+            or ajuste_otros_ingresos_explot_provision_eur != 0.0
+        ):
             pyg_eur = dict(pyg_eur)
-            pyg_eur["otros_ingresos_explot"] += ajuste_otros_ingresos_explot_grupo89_eur
-            pyg_eur["ingresos_explotacion"] += ajuste_otros_ingresos_explot_grupo89_eur
-            pyg_eur["margen_bruto"] += ajuste_otros_ingresos_explot_grupo89_eur
-            pyg_eur["valor_añadido"] += ajuste_otros_ingresos_explot_grupo89_eur
-            pyg_eur["baii"] += ajuste_otros_ingresos_explot_grupo89_eur
+            ajuste_otros_ingresos_explot_total_eur = (
+                ajuste_otros_ingresos_explot_grupo89_eur + ajuste_otros_ingresos_explot_provision_eur
+            )
+            pyg_eur["otros_ingresos_explot"] += ajuste_otros_ingresos_explot_total_eur
+            pyg_eur["ingresos_explotacion"] += ajuste_otros_ingresos_explot_total_eur
+            pyg_eur["margen_bruto"] += ajuste_otros_ingresos_explot_total_eur
+            pyg_eur["otros_gastos_explot"] += ajuste_otros_gastos_explot_provision_eur
+            valor_añadido_delta_eur = ajuste_otros_ingresos_explot_total_eur - ajuste_otros_gastos_explot_provision_eur
+            pyg_eur["valor_añadido"] += valor_añadido_delta_eur
+            pyg_eur["gastos_personal"] += ajuste_gastos_personal_provision_eur
+            baii_delta_eur = valor_añadido_delta_eur - ajuste_gastos_personal_provision_eur
+            pyg_eur["baii"] += baii_delta_eur
             pyg_eur["gastos_financieros"] -= ajuste_gastos_financieros_grupo89_eur
-            pyg_eur["bai"] += ajuste_otros_ingresos_explot_grupo89_eur + ajuste_gastos_financieros_grupo89_eur
-            pyg_eur["resultado_ejercicio"] += ajuste_otros_ingresos_explot_grupo89_eur + ajuste_gastos_financieros_grupo89_eur
+            bai_delta_eur = baii_delta_eur + ajuste_gastos_financieros_grupo89_eur
+            pyg_eur["bai"] += bai_delta_eur
+            pyg_eur["resultado_ejercicio"] += bai_delta_eur
             pyg_pct = {k: v / pyg_eur["ingresos_explotacion"] * 100 for k, v in pyg_eur.items()}
 
         patrimonio_neto_eur = (
@@ -2117,6 +2199,15 @@ def _evolucionar_un_año(
         operacion_vinculada_pct_mostrado=operacion_vinculada_pct_mostrado,
         inversion_grupo_largo_eur=inversion_grupo_largo_eur,
         deuda_grupo_largo_eur=deuda_grupo_largo_eur,
+        provision_activa=parametros_provision.activa,
+        provision_categoria=parametros_provision.categoria,
+        provision_naturaleza_pyg=parametros_provision.naturaleza_pyg,
+        provision_importe_dotado_eur=provision_importe_dotado_eur,
+        provision_saldo_largo_eur=provision_saldo_largo_eur,
+        provision_saldo_corto_eur=provision_saldo_corto_eur,
+        provision_dotacion_eur=paso_provision.dotacion_eur,
+        provision_aplicacion_eur=paso_provision.aplicacion_eur,
+        provision_exceso_eur=paso_provision.exceso_eur,
     )
 
 
@@ -2453,6 +2544,18 @@ def generar_evolucion_combinada(
             ),
         )
 
+    # --- Provisiones a largo/corto plazo (tercer lote, motor/provisiones.py) — probabilidad de
+    # fondo INDEPENDIENTE de cualquier arquetipo activo (a diferencia de grupo89/operaciones
+    # vinculadas, que solo se evalúan si su propio arquetipo está en `definiciones`): sorteada
+    # SIEMPRE, para que pueda aparecer también con el arquetipo 6 ("línea base sana") o con
+    # cualquier otro, tal como pide el encargo. Nunca dotada en el año base (2023) — el año de
+    # dotación siempre es 2024 o 2025 (ver `sortear_provision_baseline`), así que no hace falta
+    # ningún override de `ejercicios[AÑO_BASE]` (a diferencia de cobertura/operaciones
+    # vinculadas, que sí pueden empezar ya en 2023). ---
+    parametros_provision = sortear_provision_baseline(
+        sector, segmento, semilla, categoria_de_sector(sector), tier_existencias_de_sector(sector)
+    )
+
     anterior = ejercicios[AÑO_BASE]
     for año in (2024, 2025):
         fraccion = FRACCION_AÑO[año]
@@ -2491,6 +2594,7 @@ def generar_evolucion_combinada(
             semilla,
             parametros_grupo89,
             parametros_operacion_vinculada,
+            parametros_provision,
         )
         ejercicios[año] = ejercicio
         anterior = ejercicio

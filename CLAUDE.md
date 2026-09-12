@@ -27,6 +27,7 @@ Especificación funcional completa: `docs/especificaciones_proyecto_casos_balanc
 | `clasificacion_legal.py` | Clasifica cada caso como modelo abreviado/normal (Art. 257 LSC) — capa de cálculo pura sobre datos que el motor YA genera (activo, cifra de negocio) más una plantilla ESTIMADA (no generada) a partir de `ratios.ventas_empleado` del catálogo. No genera balance/PyG, no toca `empresa_base.py`/`evolucion_arquetipo.py`. Ver sección "Clasificación legal" abajo. | `estimar_ventas_por_empleado(sector, segmento, semilla, catalogo=None) -> (float, str)`; `estimar_plantilla(cifra_negocio_eur, ventas_empleado_miles_eur) -> float`; `clasificar_ejercicio(año, activo_eur, cifra_negocio_eur, plantilla_estimada) -> ResultadoClasificacionLegal`; `clasificar_par_ejercicios(resultado_anterior, resultado_actual) -> "abreviado"\|"normal"` | Cualquier caso ya generado (empresa_base o evolución completa) — consume su balance/PyG, no interviene en su generación. |
 | `efe.py` | Estado de Flujos de Efectivo, método indirecto, modelo NORMAL del PGC — capa de cálculo pura sobre dos `EjercicioEmpresa` consecutivos. Ver sección "EFE y ECPN" abajo para el mapeo completo y la corrección sobre la amortización. C.9 (subvenciones) y A.2.k (reverso no-cash de cobertura/subvención) desde el encargo de coberturas/subvenciones. | `generar_efe(anterior, actual, obligatorio: bool) -> EstadoFlujosEfectivo` (con propiedad `.cuadra`) | Ningún módulo de generación — solo lee `balance_eur`/`pyg_eur` ya generados, incluida la desagregación de PN/activo_no_corriente. |
 | `ecpn.py` | Estado de Cambios en el Patrimonio Neto — Documento B ("Estado total de cambios en el patrimonio neto") Y Documento A ("Estado de ingresos y gastos reconocidos", EIGR, ya NO aparcado desde el encargo de coberturas/subvenciones — ver sección "Coberturas y subvenciones" abajo) del modelo NORMAL del PGC. Capa de cálculo pura sobre `EjercicioEmpresa`. | `generar_ecpn(anterior, actual, obligatorio: bool) -> EstadoCambiosPatrimonioNeto` (Documento B, con propiedad `.cuadra`); `generar_eigr(actual, obligatorio: bool) -> EstadoIngresosGastosReconocidos` (Documento A — fotografía de UN ejercicio, no de dos) | Igual que `efe.py` — ninguno de generación. |
+| `provisiones.py` | Provisiones a largo/corto plazo (subgrupo 14 del PGC + 4994/4999) — tercer lote de desglose de balance, probabilidad de fondo INDEPENDIENTE de cualquier arquetipo (mismo patrón que la subvención de fondo). Ver sección "Provisiones a largo/corto plazo" abajo para el diseño completo. **No confundir con el arquetipo 22** (contingencia, puramente textual, sin tocar balance — sin cambios en este lote). | `sortear_provision_baseline(sector, segmento, semilla, categoria_sector, tier_existencias_sector) -> ParametrosProvision` (sorteo único por caso: activa/categoría/naturaleza PyG/año de dotación/plazo); `sortear_importe_provision_eur(...)`; `evolucionar_provision(parametros, importe_dotado_eur, saldo_anterior_eur, año) -> PasoProvision` (paso anual, llamado desde `_evolucionar_un_año`) | `evolucion_arquetipo.py` (balance/PyG, todos los años) — `efe.py` NO necesita ningún cambio (ver sección abajo, la dotación/exceso se reconcilia con las líneas A.3.e/f ya existentes). |
 
 ## Mecanismos reutilizables ya construidos (en `evolucion_arquetipo.py`, salvo que se indique)
 
@@ -504,6 +505,57 @@ grupo y asociadas" que el arquetipo 20 puede activar — ver decisiones #54-59.
   sub-partidas deben quedar en CERO para qué tipo de caso — `clientes_empresas_grupo`/
   `proveedores_empresas_grupo`/las 2 masas financieras en 0 exacto sin arquetipo 20 activo,
   verificado en el barrido, no solo asumido por construcción.
+
+## Provisiones a largo/corto plazo — tercer lote de desglose de balance (`motor/provisiones.py`)
+
+Epígrafes propios del balance oficial (B.I "Provisiones a largo plazo", C.II "Provisiones a
+corto plazo"), hoy ausentes del motor. Ver decisiones #60-64.
+
+- **Provisión vs. contingencia — NO confundir.** Una PROVISIÓN (este lote) es una obligación
+  probable Y estimable con fiabilidad, SÍ se reconoce en balance. Una CONTINGENCIA (arquetipo 22,
+  `motor/memoria.py`, tema "contingencia legal" — **sin ningún cambio en este lote**) es posible o
+  no estimable, NO se reconoce en balance, solo se menciona en memoria. Verificado que coexisten
+  sin relación causal (combinado con el 22, el saldo/movimiento de la provisión es idéntico al del
+  mismo caso en solitario — ver #63).
+- **8 categorías** (subgrupo 14 + 4994/4999): 140 (retribuciones al personal, →`gastos_personal`),
+  141/142/143/145/146/4994/4999 (→`otros_gastos_explot`). **147 descartada explícitamente**
+  (pagos basados en instrumentos de patrimonio propio — mecanismo de cotizadas/startups, ajeno al
+  perfil PYME de los 27 sectores).
+- **Probabilidad de fondo PLANA, INDEPENDIENTE de cualquier arquetipo** (`PROBABILIDAD_PROVISION
+  = 0.25`, mismo patrón ya construido para `sortear_subvencion_baseline` en
+  `coberturas_subvenciones.py`) — puede aparecer con el arquetipo 6 ("línea base sana") o
+  cualquier otro. Verificado 26,4% observado en barrido, dentro del 20%-30% pedido (#61). Qué
+  categoría sale, ponderado por sector/tier (143 desmantelamiento × industria/construcción; 4994
+  contratos onerosos × tier `producto_en_curso` del lote 1 + construcción; 4999 garantías ×
+  industria/comercio — todos verificados cuantitativamente, no solo por construcción del peso).
+- **Magnitud**: 1-6% de `patrimonio_neto` del año anterior a la dotación (sin dato de catálogo que
+  lo ancle, mismo criterio que "préstamo a matriz" del arquetipo 20 pero un rango menor), suelo
+  15.000€. Año de dotación 2024 o 2025 (50/50, mismo patrón que `año_concesion` de la subvención
+  de fondo) — NUNCA en el año base 2023.
+- **Largo↔corto: reclasificación, no dos catálogos** (confirmado contra el PGC, subgrupo 529 =
+  mismo catálogo reclasificado). Cada provisión sortea un `plazo_total_años` (1,5-4,0) UNA vez;
+  cada año se reclasifica ÍNTEGRA (nunca repartida) según si el horizonte restante supera 1 año —
+  mismo ESPÍRITU que `EfectoReclasificacionDeuda` (mover saldo entre plazos sin alterar el total),
+  mecanismo distinto por necesidad (sin ratio de catálogo al que anclar el vencimiento). Se pliega
+  en `otras_deudas_largo_eur`/`otras_deudas_corto_eur` ANTES de `_construir_balance`, EXCLUIDA de
+  su propia base proporcional al año siguiente — mismo patrón que grupo89/operaciones vinculadas.
+- **Movimiento anual** (saldo inicial/dotación/aplicación/exceso/saldo final, expuesto en
+  `EjercicioEmpresa.provision_saldo_largo_eur`/`..._corto_eur`/`..._dotacion_eur`/
+  `..._aplicacion_eur`/`..._exceso_eur`) — dotación ÍNTEGRA el año de dotación; a partir de ahí,
+  liberación LINEAL (tasa anual = importe dotado / plazo) repartida `FRACCION_APLICACION=0.70`
+  aplicación (uso real, sale de `disponible`) / 0.30 exceso (reversión a resultados, sin caja).
+- **Conexión con PyG**: dotación resta de `gastos_personal` (140) u `otros_gastos_explot` (resto);
+  exceso suma a `otros_ingresos_explot` (línea oficial "Excesos de provisiones" NO desglosada como
+  línea propia en `pyg_eur` — mismo criterio de simplificación ya usado para la imputación de
+  subvenciones; el importe distinto sigue expuesto aparte en `provision_exceso_eur`). Inyectado
+  POST-HOC (mismo patrón que grupo89, dentro de `_evaluar`) — puede empujar `margen_bruto_pct`/
+  `baii_pct`/`gastos_personal_pct` unos puntos-base fuera de una contención de plausibilidad YA
+  calculada sin la provisión (misma interacción que #39, 3 tests existentes ampliaron su exclusión,
+  0 re-pins — ver #60).
+- **EFE: SIN líneas nuevas** — a diferencia de grupo89 (valoración pura, sin caja detrás), la
+  dotación/exceso de provisión SIEMPRE tiene contrapartida real en `otras_deudas_largo`/
+  `otras_deudas_corto`, así que A.3.e/A.3.f (ya existentes) la reconcilian exactamente sin ningún
+  cambio en `motor/efe.py` — verificado, no asumido (0 descuadres en 200 EFE con provisión activa).
 
 ## Otros documentos de este índice
 
