@@ -247,6 +247,177 @@ PERFIL_ACTIVO_NO_CORRIENTE_POR_CATEGORIA: dict[str, dict[str, float]] = {
 DISPERSION_PERFIL_ACTIVO_NO_CORRIENTE = 0.20  # fracción relativa del propio valor del componente
 SUELO_COMPONENTE_ACTIVO_NO_CORRIENTE_PCT = 0.005  # 0,5%: evita un componente en cero o negativo
 
+# --------------------------------------------------------------------------------------------
+# Desagregación de `existencias` (primer lote de desglose de balance según el mapeo oficial del
+# PGC — HIPÓTESIS DE DISEÑO, el catálogo ACCID nunca desglosó existencias más allá del agregado)
+# en las 6 sub-partidas oficiales: comerciales, materias primas y otros aprovisionamientos,
+# productos en curso, productos terminados, subproductos/residuos/materiales recuperados,
+# anticipos a proveedores. Mismo patrón de ruido mixto/renormalizado a 1.0 que el resto de
+# perfiles de este bloque, pero la CLASIFICACIÓN no reutiliza `CATEGORIA_SECTOR` — verificado
+# contra el dato real de `balance.existencias_pct` del catálogo (no solo criterio cualitativo,
+# ver decisiones_plausibilidad.md #52) que varios sectores dentro de una misma categoría de las
+# 9 de `activo_no_corriente` tienen un carácter de existencias radicalmente distinto entre sí
+# (p. ej. 55.1 Hoteles, dentro de "comercio_hosteleria", con existencias reales de solo 0,84%
+# del activo — nada que ver con 47.1 Supermercados al 10,75% — o 68 Inmobiliario, que el dato
+# real muestra con 13,79%, de los más altos del catálogo, por mezclar promoción inmobiliaria con
+# arrendamiento puro). Clasificación propia por SECTOR (no por categoría), en 8 "tiers":
+#   - industria / servicios_industriales / comercio_hosteleria / construccion: sectores con
+#     existencias reales y composición equivalente a la de antes (mismos números), pero ahora con
+#     membresía más ajustada (ver `TIER_EXISTENCIAS_POR_SECTOR` para qué sector cae en cada uno).
+#   - producto_en_curso: servicios profesionales/técnicos "por proyecto o encargo", sin producto
+#     físico entregable, donde la única existencia con sentido real es el equivalente contable de
+#     TRABAJOS EN CURSO NO FACTURADOS (un proyecto de consultoría empezado, un desarrollo de
+#     software no entregado, un informe de arquitectura o un ensayo de I+D en marcha) — se
+#     concentra casi todo en `productos_curso`. Dato real que lo respalda: 62 Programación
+#     (2,43%) y 71 Arquitectura/ingeniería (5,73%, el más alto del grupo) tienen existencias
+#     apreciablemente MAYORES que el grupo "cero_total" (69.2/70.2 en 0,41%/0,62%), consistente
+#     con que el trabajo en curso sí genera un saldo real, no ruido.
+#   - cero_total: servicios puros sin producto físico entregable Y sin el patrón de trabajo en
+#     curso anterior — el dato real YA es marginal (<1,1% del activo en los 4 sectores: 85
+#     Educación 0,42%, 52 Almacenamiento 0,51%, 55.1 Hoteles 0,84%, 4941 Transporte por
+#     carretera 0,99%). Reparto interno sin pretensión de significado de negocio (el importe
+#     total ya es insignificante, no tiene sentido fingir precisión cualitativa sobre él): las 6
+#     categorías a partes iguales.
+#   - inmobiliario_mixto (68, único miembro): el CNAE 68 español agregado mezcla promoción
+#     inmobiliaria (construye para vender — existencias REALES de terrenos/edificios en curso y
+#     terminados) con arrendamiento puro (sin existencias) — el dato real (13,79%) confirma que
+#     el componente de promoción pesa lo suficiente como para que el agregado sea alto. Perfil
+#     dominado por `productos_curso` (edificaciones en construcción) y `productos_terminados`
+#     (promociones acabadas pendientes de venta), en la misma lógica que `construccion` — NO se
+#     fuerza a "casi sin existencias" solo porque la categoría de `activo_no_corriente` para este
+#     sector representa tenencia como inversión: son dos facetas del mismo epígrafe agregado.
+#   - sanidad_consumibles (86.1, único miembro): separado de 85 Educación (mismo bloque
+#     "administración/educación/sanidad" a efectos de `activo_no_corriente`, pero el dato real de
+#     existencias diverge con fuerza: 86.1 al 1,69%, ~4x el de 85 al 0,42%) — refleja consumo
+#     real de material sanitario/fungible. Composición pequeña pero real, dominada por
+#     `materias_primas` (consumibles), no un cero forzado.
+PERFIL_EXISTENCIAS_POR_TIER: dict[str, dict[str, float]] = {
+    "industria": {
+        "materias_primas": 0.28, "productos_curso": 0.27, "productos_terminados": 0.30,
+        "comerciales": 0.05, "subproductos_residuos": 0.06, "anticipos_proveedores": 0.04,
+    },
+    "servicios_industriales": {
+        "materias_primas": 0.25, "productos_curso": 0.15, "productos_terminados": 0.20,
+        "comerciales": 0.28, "subproductos_residuos": 0.02, "anticipos_proveedores": 0.10,
+    },
+    "comercio_hosteleria": {
+        "comerciales": 0.78, "materias_primas": 0.07, "productos_curso": 0.02,
+        "productos_terminados": 0.05, "subproductos_residuos": 0.01, "anticipos_proveedores": 0.07,
+    },
+    "construccion": {
+        "productos_curso": 0.45, "materias_primas": 0.20, "anticipos_proveedores": 0.17,
+        "productos_terminados": 0.10, "comerciales": 0.05, "subproductos_residuos": 0.03,
+    },
+    # Trabajos en curso no facturados — servicios "por proyecto/encargo" (69.2/70.2/62/71/72).
+    "producto_en_curso": {
+        "productos_curso": 0.85, "comerciales": 0.08, "anticipos_proveedores": 0.05,
+        "materias_primas": 0.01, "productos_terminados": 0.005, "subproductos_residuos": 0.005,
+    },
+    # Reparto neutro (1/6 cada una) — el importe total ya es insignificante en el dato real
+    # (<1,1% del activo), no se pretende modelar una composición de negocio sobre él.
+    "cero_total": {
+        "comerciales": 1 / 6, "materias_primas": 1 / 6, "productos_curso": 1 / 6,
+        "productos_terminados": 1 / 6, "subproductos_residuos": 1 / 6, "anticipos_proveedores": 1 / 6,
+    },
+    # CNAE 68 agregado: promoción (existencias reales) + arrendamiento (sin existencias).
+    "inmobiliario_mixto": {
+        "productos_curso": 0.45, "productos_terminados": 0.30, "materias_primas": 0.10,
+        "anticipos_proveedores": 0.08, "comerciales": 0.05, "subproductos_residuos": 0.02,
+    },
+    # Consumibles/material sanitario fungible — pequeño pero real (86.1).
+    "sanidad_consumibles": {
+        "materias_primas": 0.55, "anticipos_proveedores": 0.20, "comerciales": 0.15,
+        "productos_curso": 0.03, "subproductos_residuos": 0.05, "productos_terminados": 0.02,
+    },
+}
+
+# Sector -> tier de existencias (ver docstring arriba para el razonamiento y el dato real que
+# respalda cada reclasificación). Los 27 sectores del catálogo, exactamente uno por tier.
+TIER_EXISTENCIAS_POR_SECTOR: dict[str, str] = {
+    # industria (9)
+    "24.1": "industria", "29": "industria", "10.1": "industria", "20.1": "industria",
+    "28": "industria", "30.3": "industria", "30.2": "industria", "19": "industria", "35.1": "industria",
+    # servicios_industriales (2 — 71/72 se reclasifican a producto_en_curso)
+    "33.1": "servicios_industriales", "33.2": "servicios_industriales",
+    # producto_en_curso (5)
+    "69.2": "producto_en_curso", "70.2": "producto_en_curso", "62": "producto_en_curso",
+    "71": "producto_en_curso", "72": "producto_en_curso",
+    # cero_total (4 — incluye 55.1, que en `activo_no_corriente`/existencias antiguas caía en
+    # "comercio_hosteleria" pero el dato real de existencias es radicalmente distinto)
+    "85": "cero_total", "52": "cero_total", "55.1": "cero_total", "4941": "cero_total",
+    # comercio_hosteleria (3 — sin 55.1)
+    "47.1": "comercio_hosteleria", "46": "comercio_hosteleria", "56.1": "comercio_hosteleria",
+    # construccion (2)
+    "41.2": "construccion", "43.2": "construccion",
+    # sanidad_consumibles (1)
+    "86.1": "sanidad_consumibles",
+    # inmobiliario_mixto (1)
+    "68": "inmobiliario_mixto",
+}
+
+DISPERSION_PERFIL_EXISTENCIAS = 0.20
+SUELO_COMPONENTE_EXISTENCIAS_PCT = 0.005
+
+
+def tier_existencias_de_sector(sector_codigo: str) -> str:
+    if sector_codigo not in TIER_EXISTENCIAS_POR_SECTOR:
+        raise EmpresaBaseError(f"Sector '{sector_codigo}' no tiene tier de existencias asignado en TIER_EXISTENCIAS_POR_SECTOR.")
+    return TIER_EXISTENCIAS_POR_SECTOR[sector_codigo]
+
+# --------------------------------------------------------------------------------------------
+# "Periodificaciones" — estructuralmente pequeñas pero casi universales (PGC: activo corriente
+# VI, pasivo no corriente V, pasivo corriente VI). NO son una masa nueva del balance: se tallan
+# como fracción de una masa YA existente y ya cuadrada (mismo criterio que el resto de este
+# lote) — periodificaciones de ACTIVO como fracción de `realizable` (que en el modelo oficial
+# agrega deudores + inversiones financieras a c/p + periodificaciones a c/p, todo bajo el mismo
+# % sorteado del catálogo); periodificaciones de PASIVO (corto Y largo plazo — a diferencia del
+# activo, que solo tiene periodificaciones a corto en el modelo oficial) como fracción de
+# `otras_deudas_corto`/`otras_deudas_largo` respectivamente (el "resto" de pasivo no financiero
+# de cada plazo). HIPÓTESIS DE DISEÑO — sin dato de catálogo que la respalde.
+#   - Periodificación de ACTIVO más alta en sectores con más gastos anticipados por contratos de
+#     seguros/alquileres/mantenimiento (administración/educación/sanidad, inmobiliario,
+#     comercio/hostelería); más baja en sectores intensivos en producción física (industria,
+#     construcción), donde el grueso del circulante no financiero está en existencias/deudores
+#     operativos, no en gastos anticipados.
+#   - Periodificación de PASIVO (ingresos anticipados/cobros por adelantado de clientes) más alta
+#     en sectores con modelo de suscripción o cuota anticipada (servicios_tic: licencias/SaaS
+#     pagados por adelantado; administración/educación/sanidad: matrículas y cuotas anticipadas,
+#     contratos plurianuales) y más baja en sectores de venta/obra puntual sin cobro anticipado
+#     estructural (industria, construcción — los anticipos DE construcción ya están en
+#     `anticipos_proveedores` de existencias, del lado del gasto, no del ingreso).
+PERIODIFICACION_ACTIVO_PCT_POR_CATEGORIA: dict[str, float] = {
+    "administracion_educacion_sanidad": 0.06,
+    "comercio_hosteleria": 0.05,
+    "inmobiliario": 0.05,
+    "servicios_profesionales": 0.04,
+    "servicios_tic": 0.04,
+    "servicios_industriales": 0.03,
+    "transporte_logistica": 0.03,
+    "construccion": 0.02,
+    "industria": 0.02,
+}
+
+# Mismo valor por categoría aplicado de forma independiente a corto y largo plazo (dos sorteos
+# distintos, mismo centro) — simplificación deliberada: no hay base razonada para que la
+# composición de clientes con cobro anticipado difiera cualitativamente entre plazo corto y
+# largo dentro del mismo sector, solo el VOLUMEN total (que ya varía año a año con la masa
+# `otras_deudas_largo`/`otras_deudas_corto` de la que se talla cada una).
+PERIODIFICACION_PASIVO_PCT_POR_CATEGORIA: dict[str, float] = {
+    "servicios_tic": 0.08,
+    "administracion_educacion_sanidad": 0.07,
+    "servicios_profesionales": 0.05,
+    "comercio_hosteleria": 0.04,
+    "inmobiliario": 0.04,
+    "transporte_logistica": 0.03,
+    "servicios_industriales": 0.03,
+    "construccion": 0.02,
+    "industria": 0.02,
+}
+
+DISPERSION_PERIODIFICACION = 0.20
+SUELO_PERIODIFICACION_PCT = 0.002
+TECHO_PERIODIFICACION_PCT = 0.15
+
 
 def categoria_de_sector(sector_codigo: str) -> str:
     if sector_codigo not in CATEGORIA_SECTOR:
@@ -293,6 +464,45 @@ def generar_perfil_activo_no_corriente(rng: np.random.Generator, categoria: str)
     return _renormalizar_a_total(brutos, 1.0)
 
 
+def generar_perfil_existencias(rng: np.random.Generator, sector_codigo: str) -> dict[str, float]:
+    """Las 6 fracciones oficiales de existencias (comerciales/materias_primas/productos_curso/
+    productos_terminados/subproductos_residuos/anticipos_proveedores) para UN caso — mismo
+    mecanismo que `generar_perfil_activo_no_corriente` (sorteo único por empresa, ruido mixto
+    alrededor del perfil central de su TIER de existencias, renormalizado a 1.0). Clasifica por
+    SECTOR, no por `categoria_de_sector` — ver `TIER_EXISTENCIAS_POR_SECTOR`."""
+    perfil_centro = PERFIL_EXISTENCIAS_POR_TIER[tier_existencias_de_sector(sector_codigo)]
+    brutos = {}
+    for componente, centro in perfil_centro.items():
+        valor, _ = _generar_partida(
+            rng, centro, centro * DISPERSION_PERFIL_EXISTENCIAS,
+            suelo=SUELO_COMPONENTE_EXISTENCIAS_PCT,
+        )
+        brutos[componente] = valor
+    return _renormalizar_a_total(brutos, 1.0)
+
+
+def generar_periodificaciones_pct(rng: np.random.Generator, categoria: str) -> tuple[float, float, float]:
+    """Fracciones de periodificación de activo (sobre `realizable`), pasivo a corto (sobre
+    `otras_deudas_corto`) y pasivo a largo (sobre `otras_deudas_largo`) — 3 sorteos
+    independientes (no son un reparto que deba sumar 1.0 entre sí: cada uno talla una porción de
+    una masa DISTINTA), mismo ruido mixto de siempre, sin renormalizar."""
+    centro_activo = PERIODIFICACION_ACTIVO_PCT_POR_CATEGORIA[categoria]
+    centro_pasivo = PERIODIFICACION_PASIVO_PCT_POR_CATEGORIA[categoria]
+    activo_pct, _ = _generar_partida(
+        rng, centro_activo, centro_activo * DISPERSION_PERIODIFICACION,
+        suelo=SUELO_PERIODIFICACION_PCT, techo=TECHO_PERIODIFICACION_PCT,
+    )
+    pasivo_corto_pct, _ = _generar_partida(
+        rng, centro_pasivo, centro_pasivo * DISPERSION_PERIODIFICACION,
+        suelo=SUELO_PERIODIFICACION_PCT, techo=TECHO_PERIODIFICACION_PCT,
+    )
+    pasivo_largo_pct, _ = _generar_partida(
+        rng, centro_pasivo, centro_pasivo * DISPERSION_PERIODIFICACION,
+        suelo=SUELO_PERIODIFICACION_PCT, techo=TECHO_PERIODIFICACION_PCT,
+    )
+    return activo_pct, pasivo_corto_pct, pasivo_largo_pct
+
+
 class EmpresaBaseError(ValueError):
     """Parámetros de entrada inválidos o sector/segmento no encontrado en el catálogo."""
 
@@ -327,6 +537,19 @@ class EmpresaBase:
     # local a esa función) — expuesto para el Δr de la cobertura de tipos de interés (arquetipo
     # 21, motor/coberturas_subvenciones.py): no es un sorteo nuevo, solo se deja de descartar.
     tipo_interes: float = 0.0
+    # Primer lote de desglose de balance (existencias + periodificaciones) — mismo patrón que
+    # activo_no_corriente: perfil (%) fijo desde 2023, desglose (€) recalculado cada año sobre
+    # la masa agregada YA cuadrada de ese año. Las periodificaciones son fracciones ESCALARES
+    # (no un perfil de varios componentes que sume 1.0 — cada una talla una porción de una masa
+    # distinta), ver generar_periodificaciones_pct.
+    existencias_perfil_pct: dict[str, float] = field(default_factory=dict)
+    existencias_desglose_eur: dict[str, float] = field(default_factory=dict)
+    periodificacion_activo_pct: float = 0.0
+    periodificacion_pasivo_corto_pct: float = 0.0
+    periodificacion_pasivo_largo_pct: float = 0.0
+    periodificacion_activo_eur: float = 0.0
+    periodificacion_pasivo_corto_eur: float = 0.0
+    periodificacion_pasivo_largo_eur: float = 0.0
 
 
 def _mapa_codigo_sector(catalogo: pd.DataFrame) -> dict[str, str]:
@@ -630,6 +853,23 @@ def generar_empresa_base(
     )
     amortizacion_eur_2023 = amortizacion_eur_del_año(coleccion_activos_amortizables, _AÑO_BASE_AMORTIZACION)
 
+    # Primer lote de desglose de balance (existencias + periodificaciones) — RNG PROPIO E
+    # INDEPENDIENTE, mismo criterio que el resto de perfiles de este bloque: no desplaza ningún
+    # sorteo ya existente.
+    rng_desglose_balance = np.random.default_rng(
+        [semilla, zlib.crc32(f"{sector}|{segmento}|desglose_balance_lote1".encode("utf-8"))]
+    )
+    perfil_existencias = generar_perfil_existencias(rng_desglose_balance, sector)
+    existencias_desglose_eur = {
+        componente: fraccion * balance_eur["existencias"] for componente, fraccion in perfil_existencias.items()
+    }
+    periodificacion_activo_pct, periodificacion_pasivo_corto_pct, periodificacion_pasivo_largo_pct = (
+        generar_periodificaciones_pct(rng_desglose_balance, categoria)
+    )
+    periodificacion_activo_eur = periodificacion_activo_pct * balance_eur["realizable"]
+    periodificacion_pasivo_corto_eur = periodificacion_pasivo_corto_pct * balance_eur["otras_deudas_corto"]
+    periodificacion_pasivo_largo_eur = periodificacion_pasivo_largo_pct * balance_eur["otras_deudas_largo"]
+
     parcial_pyg = _generar_pyg_hasta_baii(rng, fila, ventas_objetivo, _AÑO_BASE_AMORTIZACION, amortizaciones_eur=amortizacion_eur_2023)
     pyg_pct, pyg_eur = _completar_pyg_con_deuda(parcial_pyg, deuda_financiera_eur)
 
@@ -663,4 +903,12 @@ def generar_empresa_base(
         perfil_subtipos_material_pct=perfil_subtipos_material,
         perfil_subtipos_intangible_pct=perfil_subtipos_intangible,
         tipo_interes=parcial_pyg.tipo_interes,
+        existencias_perfil_pct=perfil_existencias,
+        existencias_desglose_eur=existencias_desglose_eur,
+        periodificacion_activo_pct=periodificacion_activo_pct,
+        periodificacion_pasivo_corto_pct=periodificacion_pasivo_corto_pct,
+        periodificacion_pasivo_largo_pct=periodificacion_pasivo_largo_pct,
+        periodificacion_activo_eur=periodificacion_activo_eur,
+        periodificacion_pasivo_corto_eur=periodificacion_pasivo_corto_eur,
+        periodificacion_pasivo_largo_eur=periodificacion_pasivo_largo_eur,
     )

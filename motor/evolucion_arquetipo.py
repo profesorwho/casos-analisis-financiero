@@ -881,6 +881,27 @@ class EjercicioEmpresa:
     subvencion_importe_concedido_eur: float = 0.0  # flujo de ESTE año (Documento A, fila B.7) — 0 salvo el año de concesión
     subvencion_transferencia_bruto_eur: float = 0.0  # flujo de ESTE año (Documento A, fila C.7)
 
+    # --- Primer lote de desglose de balance (existencias + periodificaciones) — perfil (%) fijo
+    # desde 2023, desglose (€) recalculado cada año sobre la masa agregada de ESE año, mismo
+    # patrón que activo_no_corriente. Ver motor/empresa_base.py. ---
+    existencias_perfil_pct: dict[str, float] = field(default_factory=dict)
+    existencias_desglose_eur: dict[str, float] = field(default_factory=dict)
+    periodificacion_activo_pct: float = 0.0
+    periodificacion_pasivo_corto_pct: float = 0.0
+    periodificacion_pasivo_largo_pct: float = 0.0
+
+    @property
+    def periodificacion_activo_eur(self) -> float:
+        return self.periodificacion_activo_pct * self.balance_eur["realizable"]
+
+    @property
+    def periodificacion_pasivo_corto_eur(self) -> float:
+        return self.periodificacion_pasivo_corto_pct * self.balance_eur["otras_deudas_corto"]
+
+    @property
+    def periodificacion_pasivo_largo_eur(self) -> float:
+        return self.periodificacion_pasivo_largo_pct * self.balance_eur["otras_deudas_largo"]
+
     @property
     def ajustes_cambio_valor_pn_eur(self) -> float:
         """A-2 del balance — saldo de la cobertura NETO de su efecto impositivo."""
@@ -961,6 +982,11 @@ def _ejercicio_desde_empresa_base(empresa: EmpresaBase) -> EjercicioEmpresa:
         perfil_subtipos_material_pct=dict(empresa.perfil_subtipos_material_pct),
         perfil_subtipos_intangible_pct=dict(empresa.perfil_subtipos_intangible_pct),
         tipo_interes=empresa.tipo_interes,
+        existencias_perfil_pct=dict(empresa.existencias_perfil_pct),
+        existencias_desglose_eur=dict(empresa.existencias_desglose_eur),
+        periodificacion_activo_pct=empresa.periodificacion_activo_pct,
+        periodificacion_pasivo_corto_pct=empresa.periodificacion_pasivo_corto_pct,
+        periodificacion_pasivo_largo_pct=empresa.periodificacion_pasivo_largo_pct,
         # Cobertura/subvención: en el año base (2023) todo el estado parte de cero — Δr no
         # existe todavía (no hay "año anterior" dentro de la serie) y la subvención nunca se
         # concede en 2023 (año_concesion siempre 2024 o 2025, ver
@@ -1837,6 +1863,18 @@ def _evolucionar_un_año(
         subvencion_saldo_130_bruto_eur=subvencion_saldo_130_bruto_eur,
         subvencion_importe_concedido_eur=subvencion_importe_concedido_eur,
         subvencion_transferencia_bruto_eur=subvencion_transferencia_bruto_eur,
+        existencias_perfil_pct=anterior.existencias_perfil_pct,
+        # Desglose del TOTAL de existencias de ESTE año — mismo criterio que activo_no_corriente:
+        # perfil (%) constante, aplicado al agregado YA cuadrado de este año (incluye el efecto
+        # de cualquier arquetipo que toque `existencias`, p. ej. 5 "exceso de stock": el exceso
+        # se reparte automáticamente según el perfil fijo del sector, sin código especial).
+        existencias_desglose_eur={
+            componente: fraccion * balance_eur["existencias"]
+            for componente, fraccion in anterior.existencias_perfil_pct.items()
+        },
+        periodificacion_activo_pct=anterior.periodificacion_activo_pct,
+        periodificacion_pasivo_corto_pct=anterior.periodificacion_pasivo_corto_pct,
+        periodificacion_pasivo_largo_pct=anterior.periodificacion_pasivo_largo_pct,
     )
 
 

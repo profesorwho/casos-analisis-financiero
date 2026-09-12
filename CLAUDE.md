@@ -370,6 +370,63 @@ hallazgos.
   69.2 10,1x→3,9x, 70.2 7,8x→3,3x — mismo orden de magnitud que otros sectores capital-intensivos
   ya aceptados (construcción 41.2 en 4,1x); 62 sin cambio (1,0x, nunca tuvo el problema).
 
+## Desglose de balance según el PGC — primer lote: existencias y periodificaciones (`motor/empresa_base.py`)
+
+Primer lote de un plan más amplio (pendiente de más lotes futuros) para reflejar el mapeo
+oficial de partidas del PGC dentro de las masas agregadas que ya genera el motor. Mismo patrón
+que `activo_no_corriente` (perfil % fijo desde 2023 por categoría de sector, ruido mixto,
+desglose en € recalculado cada año sobre la masa agregada YA cuadrada — el balance sigue
+mostrando solo el total, el detalle queda expuesto internamente, no se muestra todavía al
+usuario final). RNG propio e independiente (`rng_desglose_balance`, entropía
+`"desglose_balance_lote1"`), no desplaza ningún sorteo existente — 0 re-pins en la regresión.
+
+- **Existencias** (`PERFIL_EXISTENCIAS_POR_TIER`, `TIER_EXISTENCIAS_POR_SECTOR`,
+  `generar_perfil_existencias`) — 6 sub-partidas oficiales (comerciales, materias primas,
+  productos en curso, productos terminados, subproductos/residuos, anticipos a proveedores).
+  Clasificación por SECTOR (no por `categoria_de_sector`): verificado contra el dato real de
+  `balance.existencias_pct` del catálogo que varios sectores de una misma categoría de
+  `activo_no_corriente` tienen un carácter de existencias radicalmente distinto (55.1 Hoteles al
+  0,84% del activo frente a 47.1 Supermercados al 10,75%, ambos en "comercio_hosteleria"; 68
+  Inmobiliario al 13,79%, de los más altos del catálogo). 8 tiers: `industria`/
+  `servicios_industriales`/`comercio_hosteleria`/`construccion` (existencias reales, sin
+  cambios); `producto_en_curso` (69.2/70.2/62/71/72 — servicios "por proyecto/encargo" sin
+  producto físico, concentrado ~85% en `productos_curso` reinterpretado como trabajos en curso
+  no facturados); `cero_total` (85/52/55.1/4941 — dato real ya marginal, <1,1% del activo,
+  reparto neutro 1/6 sin pretensión de significado de negocio); `inmobiliario_mixto` (68 — el
+  CNAE agregado mezcla promoción, con existencias reales, y arrendamiento puro; dominado por
+  `productos_curso`+`productos_terminados`, misma lógica que construcción); `sanidad_consumibles`
+  (86.1, separado de 85 Educación pese a compartir categoría de `activo_no_corriente` — el dato
+  real diverge ~4x; dominado por `materias_primas`, consumibles/material sanitario fungible).
+  Conectado automáticamente con el arquetipo 5 ("exceso de stock"): el desglose se recalcula
+  cada año aplicando el perfil FIJO al `existencias` total de ese año, así que el exceso se
+  reparte solo según la mezcla habitual del sector, sin código especial.
+- **Periodificaciones** — NO son una masa nueva del balance: se tallan como fracción de una masa
+  YA existente. Activo (`PERIODIFICACION_ACTIVO_PCT_POR_CATEGORIA`) como fracción de
+  `realizable` (el modelo oficial solo tiene periodificaciones de activo a CORTO plazo). Pasivo
+  (`PERIODIFICACION_PASIVO_PCT_POR_CATEGORIA`) como fracción de `otras_deudas_corto` Y de
+  `otras_deudas_largo` por separado (dos sorteos independientes, mismo centro por categoría —
+  el modelo oficial SÍ tiene periodificaciones de pasivo a ambos plazos). Expuestas como
+  propiedades (`EjercicioEmpresa.periodificacion_activo_eur`/`..._pasivo_corto_eur`/
+  `..._pasivo_largo_eur`), no como campos almacenados — se derivan de `pct × masa` en cada
+  acceso, sin necesidad de recalcularlas explícitamente en el `return` de `_evolucionar_un_año`.
+- **FM/NOF**: el motor NO calcula ningún "fondo de maniobra"/NOF como magnitud reportada aparte
+  — solo existe el mecanismo interno de déficit de NOF (`_deficit_y_deuda_corto`, sección
+  "Mecanismos reutilizables" más abajo), que opera sobre las masas AGREGADAS
+  (`existencias`/`realizable`/`acreedores_comerciales`). Como este lote talla sub-detalle DENTRO
+  de masas ya existentes sin cambiar ningún total agregado, ese mecanismo queda automáticamente
+  intacto (verificado: el diff de este lote no toca `_deficit_y_deuda_corto`/`presion_nof_eur`
+  en absoluto) — el detalle nuevo es coherente con lo que ese cálculo ya usaba, no una entrada
+  nueva que haya que enchufarle.
+- **Verificación de "combinaciones ilógicas"**: NO es "el componente dominante nunca cambia"
+  (varias categorías tienen 2-3 componentes deliberadamente próximos — p. ej. industria
+  28%/27%/30% entre materias primas/curso/terminados, donde el ruido SÍ puede alterar cuál
+  queda primero sin que sea ilógico) — son parejas semánticas concretas por tier, una por cada
+  uno de los 8 (comercio: `comerciales` > cualquier partida de producción; construcción/
+  inmobiliario_mixto: `productos_curso` > `comerciales`; industria: `comerciales` nunca es la
+  partida mayor; producto_en_curso: `productos_curso` > el resto combinado; sanidad_consumibles:
+  `materias_primas` > `comerciales`/`productos_terminados`; cero_total: el TOTAL de existencias
+  sigue siendo marginal en el año base 2023, sin pretensión sobre su composición interna).
+
 ## Otros documentos de este índice
 
 - **`docs/indice_arquetipos.md`** — una línea por arquetipo (1-22): mecanismo, estado, dependencias.
