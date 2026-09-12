@@ -20,10 +20,10 @@ Especificación funcional completa: `docs/especificaciones_proyecto_casos_balanc
 | `ruido.py` | Mecanismo de ruido mixto típico/atípico (85%/15%, normal truncada) — extraído de `empresa_base.py` a su propio módulo para que `amortizacion.py` pueda reutilizarlo sin crear una importación circular. Sin dependencias de otros módulos del motor. | `_generar_partida(rng, huber_9y, huber_scale_mad, suelo=None, techo=None) -> (float, str)`; `_normal_truncada`; `_renormalizar_a_total` | Nada de generación — `empresa_base.py` los reexporta (`from motor.ruido import ...`), así que el resto del código sigue importándolos como `motor.empresa_base.<nombre>` sin cambios. |
 | `empresa_base.py` | Genera balance + PyG de **una** empresa, **un** ejercicio, a partir del catálogo + ruido típico/atípico. Sin arquetipos, sin serie temporal. `tipo_interes` (para `gastos_financieros`) ya NO sale de `ratios.coste_deuda` del catálogo — ver "Tipo de interés de mercado" abajo. | `generar_empresa_base(sector, segmento, ventas_objetivo, semilla, catalogo=None) -> EmpresaBase`; `resolver_fila_sector(catalogo, sector_codigo, segmento) -> pd.Series`; `categoria_de_sector(sector_codigo) -> str` | Año base 2023 de **cualquier** caso, con o sin arquetipo. Desde el arreglo de raíz de la amortización, importa `motor.amortizacion` para derivar `pyg_eur["amortizaciones"]` — ver "Amortización derivada" abajo. |
 | `amortizacion.py` | Deriva el gasto de amortización de la PyG a partir de una colección REAL de activos (sub-lotes con vida fiscal, fecha de compra sorteada, posible "ya totalmente amortizado") — sustituye el antiguo sorteo independiente de `amortizaciones_pct`. Ver sección "Amortización derivada" abajo para el diseño completo. | `generar_coleccion_y_perfiles_base(sector, segmento, semilla, categoria, activo_no_corriente_desglose_eur) -> (coleccion, perfil_material, perfil_intangible)`; `generar_cohortes_capex(...)`/`generar_cohortes_adquisicion(...)` (cohortes nuevas de los arquetipos 17/18); `amortizacion_eur_del_año(coleccion, año) -> float`; `bienes_totalmente_amortizados_en(coleccion, año) -> tuple[BienTotalmenteAmortizado,...]` | `empresa_base.py` (año base) y `evolucion_arquetipo.py` (2024/2025, cohortes nuevas de capex/adquisición) — consume el desglose de `activo_no_corriente` ya generado, no genera balance por sí mismo. |
-| `arquetipos.py` | Carga y valida `data/arquetipos.json` como dataclasses tipadas. **Sin lógica de generación.** | `cargar_arquetipos(ruta=...) -> dict[str, DefinicionArquetipo]` | Tipos de efecto: `EfectoMasaCirculante`, `EfectoPygPrimitiva`, `EfectoApalancamiento`, `EfectoTesoreria`, `EfectoReclasificacionDeuda`, `EfectoEventoPuntual`, `EfectoCapex`, `EfectoAdquisicion`, `EfectoCobertura`. |
-| `evolucion_arquetipo.py` | Motor genérico: evoluciona una empresa 3 ejercicios (2023 base + 2024/2025 con el/los arquetipo(s) aplicado(s)), interpretando cada tipo de `Efecto`. Contiene toda la lógica de mecanismo — **no releer para saber qué arquetipos toca cada mecanismo, ver tabla de mecanismos abajo**. `generar_evolucion_arquetipo` (un solo arquetipo) es un wrapper de una línea sobre `generar_evolucion_combinada` con un dict de 1 elemento — **garantía estructural**: cualquier test de un arquetipo en solitario que siga pasando prueba que la combinación no le cambió el comportamiento. | `generar_evolucion_combinada(sector, segmento, ventas_objetivo_2023, semilla, arquetipos_intensidades: dict[str,str], catalogo=None, arquetipos=None) -> EvolucionArquetipo` (motor general); `generar_evolucion_arquetipo(sector, segmento, ventas_objetivo_2023, semilla, intensidad, arquetipo_id, catalogo=None, arquetipos=None) -> EvolucionArquetipo` (caso de 1 arquetipo) | Todos los arquetipos de `clase="cuantitativo"` (17 desde el encargo de coberturas/subvenciones — "coberturas", 21, pasó de `memoria_pura` a `cuantitativo`, ver `docs/indice_arquetipos.md`); rechaza `clase="memoria_pura"` con `EvolucionArquetipoError`. |
+| `arquetipos.py` | Carga y valida `data/arquetipos.json` como dataclasses tipadas. **Sin lógica de generación.** | `cargar_arquetipos(ruta=...) -> dict[str, DefinicionArquetipo]` | Tipos de efecto: `EfectoMasaCirculante`, `EfectoPygPrimitiva`, `EfectoApalancamiento`, `EfectoTesoreria`, `EfectoReclasificacionDeuda`, `EfectoEventoPuntual`, `EfectoCapex`, `EfectoAdquisicion`, `EfectoCobertura`, `EfectoOperacionVinculada`. |
+| `evolucion_arquetipo.py` | Motor genérico: evoluciona una empresa 3 ejercicios (2023 base + 2024/2025 con el/los arquetipo(s) aplicado(s)), interpretando cada tipo de `Efecto`. Contiene toda la lógica de mecanismo — **no releer para saber qué arquetipos toca cada mecanismo, ver tabla de mecanismos abajo**. `generar_evolucion_arquetipo` (un solo arquetipo) es un wrapper de una línea sobre `generar_evolucion_combinada` con un dict de 1 elemento — **garantía estructural**: cualquier test de un arquetipo en solitario que siga pasando prueba que la combinación no le cambió el comportamiento. | `generar_evolucion_combinada(sector, segmento, ventas_objetivo_2023, semilla, arquetipos_intensidades: dict[str,str], catalogo=None, arquetipos=None) -> EvolucionArquetipo` (motor general); `generar_evolucion_arquetipo(sector, segmento, ventas_objetivo_2023, semilla, intensidad, arquetipo_id, catalogo=None, arquetipos=None) -> EvolucionArquetipo` (caso de 1 arquetipo) | Todos los arquetipos de `clase="cuantitativo"` (18 — "coberturas" (21) y "operaciones_vinculadas" (20) pasaron de `memoria_pura` a `cuantitativo`, ver `docs/indice_arquetipos.md`); rechaza `clase="memoria_pura"` con `EvolucionArquetipoError`. |
 | `coberturas_subvenciones.py` | Coberturas de flujos de efectivo (arquetipo 21, `EfectoCobertura`) y subvenciones de capital (transversal, disparada por el arquetipo 17 o por una probabilidad de fondo por categoría de sector) — grupo 8/9 del PGC + efecto impositivo (subgrupo 83). Ver sección "Coberturas y subvenciones" abajo para el diseño completo del cuadre. | `evolucionar_cobertura(...)`/`evolucionar_subvencion(...)` (paso anual, llamados desde `_evolucionar_un_año`); `sortear_parametros_cobertura(...)`/`sortear_subvencion_baseline(...)`/`sortear_pct_cofinanciacion(...)` (sorteos únicos por caso); `presentacion_neta_eur`/`activo_por_impuesto_diferido_eur`/`pasivo_por_impuesto_diferido_eur` (helpers puros del efecto impositivo) | `evolucion_arquetipo.py` (balance/PyG, todos los años) y `ecpn.py`/`efe.py` (consumen los campos ya expuestos en `EjercicioEmpresa`, no llaman a este módulo directamente). |
-| `memoria.py` | Genera notas de memoria puramente cualitativas — arquetipos de `clase="memoria_pura"` (sin efectos numéricos, `efectos: []` en el JSON) — y orquesta el caso combinado completo (mezcla `clase="cuantitativo"` + `clase="memoria_pura"`). | `generar_nota_memoria_pura(arquetipo_id, sector, segmento, intensidad, semilla, ejercicio, etiquetas_ya_usadas=frozenset()) -> NotaMemoria` (o la función específica `generar_nota_<arquetipo>(...)`); `generar_caso_combinado(sector, segmento, ventas_objetivo_2023, semilla, arquetipos_intensidades, catalogo=None, arquetipos=None) -> EvolucionArquetipo` (punto de entrada general, cualquier mezcla de clases) | Arquetipos 7, 19, 20, 22 (4, desde que "coberturas" -21- pasó a `cuantitativo` — sigue generando su nota cualitativa como caso especial dentro de `generar_caso_combinado`, ver el propio código). `NotaMemoria` (definida en `evolucion_arquetipo.py`, no aquí — ver "Combinación de arquetipos" abajo) lleva `texto` + `etiquetas` (temas, usadas por el mecanismo de coherencia de la sección 2.12). |
+| `memoria.py` | Genera notas de memoria puramente cualitativas — arquetipos de `clase="memoria_pura"` (sin efectos numéricos, `efectos: []` en el JSON) — y orquesta el caso combinado completo (mezcla `clase="cuantitativo"` + `clase="memoria_pura"`). | `generar_nota_memoria_pura(arquetipo_id, sector, segmento, intensidad, semilla, ejercicio, etiquetas_ya_usadas=frozenset()) -> NotaMemoria` (o la función específica `generar_nota_<arquetipo>(...)`); `generar_caso_combinado(sector, segmento, ventas_objetivo_2023, semilla, arquetipos_intensidades, catalogo=None, arquetipos=None) -> EvolucionArquetipo` (punto de entrada general, cualquier mezcla de clases) | Arquetipos 7, 19, 22 (3, desde que "coberturas" -21- y "operaciones_vinculadas" -20- pasaron a `cuantitativo` — ambos siguen generando su nota cualitativa como caso especial dentro de `generar_caso_combinado`; a diferencia de 21, la de 20 ya NO sortea nada — solo formatea el importe ya calculado en `evolucion_arquetipo.py`, ver sección "Desglose de balance — segundo lote" abajo). `NotaMemoria` (definida en `evolucion_arquetipo.py`, no aquí — ver "Combinación de arquetipos" abajo) lleva `texto` + `etiquetas` (temas, usadas por el mecanismo de coherencia de la sección 2.12). |
 | `clasificacion_legal.py` | Clasifica cada caso como modelo abreviado/normal (Art. 257 LSC) — capa de cálculo pura sobre datos que el motor YA genera (activo, cifra de negocio) más una plantilla ESTIMADA (no generada) a partir de `ratios.ventas_empleado` del catálogo. No genera balance/PyG, no toca `empresa_base.py`/`evolucion_arquetipo.py`. Ver sección "Clasificación legal" abajo. | `estimar_ventas_por_empleado(sector, segmento, semilla, catalogo=None) -> (float, str)`; `estimar_plantilla(cifra_negocio_eur, ventas_empleado_miles_eur) -> float`; `clasificar_ejercicio(año, activo_eur, cifra_negocio_eur, plantilla_estimada) -> ResultadoClasificacionLegal`; `clasificar_par_ejercicios(resultado_anterior, resultado_actual) -> "abreviado"\|"normal"` | Cualquier caso ya generado (empresa_base o evolución completa) — consume su balance/PyG, no interviene en su generación. |
 | `efe.py` | Estado de Flujos de Efectivo, método indirecto, modelo NORMAL del PGC — capa de cálculo pura sobre dos `EjercicioEmpresa` consecutivos. Ver sección "EFE y ECPN" abajo para el mapeo completo y la corrección sobre la amortización. C.9 (subvenciones) y A.2.k (reverso no-cash de cobertura/subvención) desde el encargo de coberturas/subvenciones. | `generar_efe(anterior, actual, obligatorio: bool) -> EstadoFlujosEfectivo` (con propiedad `.cuadra`) | Ningún módulo de generación — solo lee `balance_eur`/`pyg_eur` ya generados, incluida la desagregación de PN/activo_no_corriente. |
 | `ecpn.py` | Estado de Cambios en el Patrimonio Neto — Documento B ("Estado total de cambios en el patrimonio neto") Y Documento A ("Estado de ingresos y gastos reconocidos", EIGR, ya NO aparcado desde el encargo de coberturas/subvenciones — ver sección "Coberturas y subvenciones" abajo) del modelo NORMAL del PGC. Capa de cálculo pura sobre `EjercicioEmpresa`. | `generar_ecpn(anterior, actual, obligatorio: bool) -> EstadoCambiosPatrimonioNeto` (Documento B, con propiedad `.cuadra`); `generar_eigr(actual, obligatorio: bool) -> EstadoIngresosGastosReconocidos` (Documento A — fotografía de UN ejercicio, no de dos) | Igual que `efe.py` — ninguno de generación. |
@@ -42,10 +42,11 @@ Especificación funcional completa: `docs/especificaciones_proyecto_casos_balanc
 | `capex` | `activo_no_corriente` por continuidad (ancla `rotacion_activo_no_corriente`), financiado con deuda a largo NUEVA (no toca PN, no toca circulante). | 17 |
 | `adquisicion` | Salto DISCRETO (no continuo) de `activo_no_corriente` en un año FIJO (`AÑO_ADQUISICION=2024`, no sorteado), financiado con caja + deuda a largo; separa `ventas_organicas_eur`/`ventas_inorganicas_eur`; `nota_memoria` OBLIGATORIA (no opcional). | 18 |
 | `cobertura` | NO es una forma más del molde genérico de continuidad — la magnitud se deriva cada año de la sensibilidad de un swap (nocional × duración modificada × Δtipo de interés del sector, acotado por `TECHO_DELTA_R_ANUAL`) contra una reserva de PN (1340) y su efecto impositivo. Ver `motor/coberturas_subvenciones.py` y sección "Coberturas y subvenciones" abajo. | 21 (también genera su nota de memoria cualitativa habitual, como caso especial en `motor.memoria.generar_caso_combinado`) |
+| `operacion_vinculada` | Tampoco sigue el molde genérico de continuidad — igual que `cobertura`, la magnitud real vive en `ParametrosOperacionVinculada` (sorteo único por caso, `_sortear_operacion_vinculada`), no en el `Efecto` del JSON (solo trazabilidad). Selecciona UNA de 5 operaciones; las 2 financieras (préstamo a matriz/financiación recibida de grupo) se pliegan en `activo_no_corriente_eur`/`otras_deudas_largo_eur`/`disponible_proporcional_eur` ANTES del chequeo de endeudamiento, igual que grupo89; las 3 comerciales/"varios" fuerzan una sub-partida del desglose de deudores/acreedores en el año base. Ver sección "Desglose de balance — segundo lote" abajo. | 20 (también genera su nota de memoria cualitativa, como caso especial en `motor.memoria.generar_caso_combinado` — a diferencia de 21, ya NO sortea nada allí) |
 | Contención de endeudamiento | Chequeo **incondicional** cada año: si el endeudamiento supera `huber+3·MAD` (techo absoluto 0,85), amortigua vía las masas de ACTIVO tocadas por el arquetipo, si las hay; si no, queda `contencion_al_limite=True` (señal sin corrección posible). | Todos (corre siempre, toque o no circulante) |
 | Hash estable sector+segmento (`zlib.crc32`) | Siembra cada RNG (`generar_empresa_base`, `rng_tendencia`/`rngs_pyg`, `rngs_nota`) mezclando semilla+sector+segmento — **nunca intensidad** (mismo "ruido de fondo" entre intensidades del mismo caso, por diseño). | Todos — infraestructura, no arquetipo-específico |
 | `nota_memoria` (campo `EjercicioEmpresa.notas_memoria: tuple[NotaMemoria,...]`, plural — antes `str \| None` singular) | Cobertura narrativa reproducible (RNG dedicado `rngs_nota`/`rngs_nota_por_arquetipo`, redacciones alternativas por arquetipo). Opcional (10: caso límite; 16: huella habitual) u OBLIGATORIA (18). El paso a tupla (en vez de campo único) es lo que permite que 2+ arquetipos con nota numérica activos a la vez no se pisen entre sí. | 10, 16, 18 |
-| `clase="memoria_pura"` (en `motor.memoria`, no `evolucion_arquetipo.py`) | Arquetipo SIN efectos numéricos (`efectos: []`) — la nota de memoria se genera con una función propia de `motor.memoria`, no pasa por `_evolucionar_un_año`. RNG dedicado por (sector, segmento, intensidad, **arquetipo_id**, semilla) — a diferencia del resto, mezcla también el arquetipo_id, para que varias notas de memoria puedan combinarse sobre el mismo caso sin compartir estado. | 7, 19, 20, 21, 22 |
+| `clase="memoria_pura"` (en `motor.memoria`, no `evolucion_arquetipo.py`) | Arquetipo SIN efectos numéricos (`efectos: []`) — la nota de memoria se genera con una función propia de `motor.memoria`, no pasa por `_evolucionar_un_año`. RNG dedicado por (sector, segmento, intensidad, **arquetipo_id**, semilla) — a diferencia del resto, mezcla también el arquetipo_id, para que varias notas de memoria puedan combinarse sobre el mismo caso sin compartir estado. | 7, 19, 22 (20 y 21 son `cuantitativo`, pero siguen generando su nota cualitativa como caso especial — ver filas `cobertura`/`operacion_vinculada` arriba) |
 
 ## Combinación de arquetipos (sección 2.12 — varios arquetipos activos a la vez)
 
@@ -173,7 +174,13 @@ sectores, 4 semillas, 2024 y 2025), 0 descuadres en ambos** — ver decisiones #
   diferencias de cambio, valor razonable, dividendos de terceros, "otros activos corrientes"
   (A.3.c). **C.9 ("Instrumentos de patrimonio... subvenciones") ya NO es siempre 0** desde el
   encargo de coberturas/subvenciones: = cobro de caja de la subvención en su año de concesión
-  (ver sección "Coberturas y subvenciones" abajo).
+  (ver sección "Coberturas y subvenciones" abajo). **B.6.c "Préstamo a empresas del grupo" y
+  C.10.c "Empresas del grupo"** (variación de `inversion_grupo_largo_eur`/`deuda_grupo_largo_eur`,
+  ambas siempre 0 salvo que el arquetipo 20 active esa operación concreta) desde el segundo lote
+  de desglose de balance — ver sección "Desglose de balance — segundo lote" más abajo. `c10`
+  (deuda con entidades de crédito) queda estrictamente separado de `c10c` (deuda con el grupo,
+  sin coste financiero): mezclarlos confundiría deuda que sí genera `gastos_financieros` con
+  deuda que no.
 - **Amortización (A.2.a) — sigue en 0,0 en el EFE, por una razón que YA NO es "no hay ningún
   activo real detrás"** (eso se arregló, ver "Amortización derivada" abajo y decisiones #27-#32)
   **sino que el `activo_no_corriente` del BALANCE todavía no se neta de la amortización
@@ -426,6 +433,77 @@ usuario final). RNG propio e independiente (`rng_desglose_balance`, entropía
   partida mayor; producto_en_curso: `productos_curso` > el resto combinado; sanidad_consumibles:
   `materias_primas` > `comerciales`/`productos_terminados`; cero_total: el TOTAL de existencias
   sigue siendo marginal en el año base 2023, sin pretensión sobre su composición interna).
+
+## Desglose de balance según el PGC — segundo lote: deudores/acreedores comerciales y empresas del grupo (`motor/empresa_base.py`, `motor/evolucion_arquetipo.py`, `motor/memoria.py`, `motor/efe.py`)
+
+Segundo lote del mismo plan que el primero (existencias/periodificaciones, arriba). Cubre
+"Deudores comerciales y otras cuentas a cobrar" / "Acreedores comerciales y otras cuentas a
+pagar" (7 sub-partidas oficiales cada uno, carve-out de `realizable`/`acreedores_comerciales`,
+mismo patrón "perfil % fijo, desglose recalculado cada año") y las 2 masas de "Empresas del
+grupo y asociadas" que el arquetipo 20 puede activar — ver decisiones #54-59.
+
+- **Deudores** (`PERFIL_DEUDORES_BASE`, `generar_perfil_deudores`) — perfil ÚNICO, sin excepción
+  sectorial (a diferencia de existencias): `ratios.cobro_dias` del catálogo confirma que
+  "Clientes" ES, esencialmente, la totalidad de `realizable` en los 27 sectores (ratio cobro_dias
+  real / días implícitos de `realizable_pct` entre 0,89 y 1,13, sin excepción). `clientes=88%`,
+  resto marginal, `clientes_empresas_grupo=0%` salvo arquetipo 20.
+- **Acreedores** (`PERFIL_ACREEDORES_POR_CATEGORIA`, `generar_perfil_acreedores`) — perfil por las
+  9 categorías de `CATEGORIA_SECTOR` (no un perfil único: `ratios.pago_dias` del catálogo tiene el
+  MISMO problema ya diagnosticado en `ratios.coste_deuda`, #41 — denominador minúsculo en
+  servicios, divergencia 1,1x-10,2x frente a los días implícitos — se usa solo su dirección
+  cualitativa, nunca como ancla literal, ver #55). `proveedores` dominante en las 9 (52-82%), con
+  peso relativo mayor de "Personal (remuneraciones pendientes)" en categorías intensivas en mano
+  de obra (servicios profesionales/TIC, administración/educación/sanidad — dato SÍ fiable:
+  `gastos_personal_pct`). `proveedores_empresas_grupo=0%` salvo arquetipo 20.
+- **Arquetipo 20 ("Operaciones vinculadas") promovido a `clase="cuantitativo"`** (mismo criterio
+  que "coberturas", ver #34 y sección de abajo) — sus 5 operaciones se clasifican comercial/
+  financiera/"no es realmente grupo" (texto literal de cada plantilla, ver #56 y docstring de
+  `motor/evolucion_arquetipo.py`, bloque "Operaciones vinculadas"):
+  - **0 "préstamo a matriz"** (la sociedad PRESTA) — financiera, ACTIVO → masa nueva
+    `inversion_grupo_largo_eur` ("Inversiones en empresas del grupo y asociadas a l/p").
+  - **1 "facturación de servicios de gestión al grupo"** — comercial, ACTIVO → sub-partida
+    `clientes_empresas_grupo` de deudores.
+  - **2 "arrendamiento pagado a socio/administrador"** — NO es "empresas del grupo" en sentido
+    PGC → `acreedores_varios` de acreedores, nunca la línea de grupo.
+  - **3 "financiación recibida de grupo"** — financiera, PASIVO → masa nueva
+    `deuda_grupo_largo_eur` ("Deudas con empresas del grupo y asociadas a l/p"); el propio texto
+    de la nota excluye gastos financieros adicionales, así que esta masa NUNCA entra en
+    `deudas_fin_largo/corto` (las únicas que alimentan `gastos_financieros`).
+  - **4 "asistencia técnica prestada por la matriz"** — comercial, PASIVO → sub-partida
+    `proveedores_empresas_grupo` de acreedores.
+  - Solo UNA de las 5 está activa por caso (índice sorteado una vez, `ParametrosOperacionVinculada`
+    en `motor/evolucion_arquetipo.py`). Las 4 no seleccionadas quedan en 0 (Tipo 2 puro, SIN
+    probabilidad de fondo — a diferencia de provisiones, arquetipo 6).
+- **Mecánica temporal de las 2 masas financieras (0 y 3)** — perfil continuo desde que el
+  arquetipo se activa, NO un evento discreto en un año fijo (a diferencia de la adquisición del
+  18): `% fijo de la magnitud de referencia (patrimonio_neto/deuda financiera) del año ANTERIOR
+  ya resuelto`, recalculado cada año — mismo patrón "perfil fijo, € recalculado" que el resto de
+  este bloque, sin mecanismo nuevo. Se pliega en `activo_no_corriente_eur`/`otras_deudas_largo_
+  eur`/`disponible_proporcional_eur` ANTES de `_construir_balance`/`_evaluar`, igual que grupo89,
+  así que el chequeo de endeudamiento (incondicional, sección "Mecanismos reutilizables") la ve
+  SIEMPRE — "financiación recibida de grupo" pasa por la MISMA contención que ya protege a
+  9/14/17/18 (señalizada, sin palanca de amortiguación propia: el arquetipo 20 no toca circulante,
+  ver #57). Techo defensivo `TECHO_FRACCION_DISPONIBLE_PRESTAMO_MATRIZ=0,9` sobre "préstamo a
+  matriz" (nunca deja `disponible` negativo) — interactúa raramente (2/324 en el barrido de
+  plausibilidad) con `SUELO_IMPORTE_VINCULADAS_EUR`, documentado como excepción aceptada.
+- **Nota de memoria del arquetipo 20 ya NO sortea nada** (`motor/memoria.py`,
+  `generar_nota_operaciones_vinculadas`): el sorteo (índice de plantilla + % objetivo) se movió a
+  `motor.evolucion_arquetipo._sortear_operacion_vinculada` — MISMA secuencia exacta de rng que
+  usaba antes `motor.memoria` (mismo hash de entropía, mismo `rng.permutation`/`rng.uniform`), así
+  que el resultado es idéntico, pero ahora el importe alimenta el balance directamente y la nota
+  se limita a formatear ese mismo número — "no generar un número nuevo independiente", a
+  diferencia de "coberturas" (21), donde el % del nocional citado en la nota SÍ es independiente
+  del nocional modelado en el balance (ver #35, decisión distinta y documentada como tal).
+- **EFE** — 2 líneas nuevas: `b6c_prestamo_empresas_grupo` (Sección B, junto a
+  `b6a_empresas_grupo_adquisicion`) y `c10c_empresas_grupo` (Sección C, letra (c) del desglose
+  oficial de la línea 10, SIEMPRE separada de `c10` — ver sección EFE arriba y #58: la premisa de
+  que ya existía una línea C.10 propia para el grupo no era correcta, corregida antes de
+  implementar, no asumida).
+- **Verificación de "combinaciones ilógicas" reforzada** (lección explícita del lote 1, #48): no
+  solo "la categoría dominante tiene sentido" (proveedores/clientes dominan siempre), también qué
+  sub-partidas deben quedar en CERO para qué tipo de caso — `clientes_empresas_grupo`/
+  `proveedores_empresas_grupo`/las 2 masas financieras en 0 exacto sin arquetipo 20 activo,
+  verificado en el barrido, no solo asumido por construcción.
 
 ## Otros documentos de este índice
 

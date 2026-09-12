@@ -9,6 +9,7 @@ from motor.arquetipos import (
     EfectoCapex,
     EfectoEventoPuntual,
     EfectoMasaCirculante,
+    EfectoOperacionVinculada,
     EfectoPygPrimitiva,
     EfectoReclasificacionDeuda,
     EfectoTesoreria,
@@ -37,17 +38,20 @@ IDS_ESPERADOS = {
     # subvenciones (dispara EfectoCobertura) — sigue generando también su nota de memoria
     # cualitativa como caso especial en motor.memoria.generar_caso_combinado.
     "coberturas": 21,
+    # "operaciones_vinculadas" (20) pasó de memoria_pura a cuantitativo con el segundo lote de
+    # desglose de balance (dispara EfectoOperacionVinculada) — mismo criterio que "coberturas":
+    # sigue generando también su nota de memoria cualitativa como caso especial.
+    "operaciones_vinculadas": 20,
 }
 
 IDS_MEMORIA_PURA = {
     "dependencia_pocos_clientes": 7,
     "activo_mantenido_venta": 19,
-    "operaciones_vinculadas": 20,
     "informacion_relevante_memoria": 22,
 }
 
 
-def test_carga_los_17_arquetipos_cuantitativos():
+def test_carga_los_18_arquetipos_cuantitativos():
     arquetipos = cargar_arquetipos()
     assert set(id_ for id_, d in arquetipos.items() if d.clase == "cuantitativo") == set(IDS_ESPERADOS)
     for id_, numero in IDS_ESPERADOS.items():
@@ -60,7 +64,12 @@ def test_tipo_de_efecto_adquisicion():
     assert all(isinstance(e, EfectoAdquisicion) for e in arquetipos["adquisicion"].efectos)
 
 
-def test_carga_los_4_arquetipos_de_memoria_pura():
+def test_tipo_de_efecto_operacion_vinculada():
+    arquetipos = cargar_arquetipos()
+    assert all(isinstance(e, EfectoOperacionVinculada) for e in arquetipos["operaciones_vinculadas"].efectos)
+
+
+def test_carga_los_3_arquetipos_de_memoria_pura():
     arquetipos = cargar_arquetipos()
     assert set(id_ for id_, d in arquetipos.items() if d.clase == "memoria_pura") == set(IDS_MEMORIA_PURA)
     for id_, numero in IDS_MEMORIA_PURA.items():

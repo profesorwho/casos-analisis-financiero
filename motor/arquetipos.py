@@ -30,6 +30,7 @@ TIPOS_EFECTO_VALIDOS = frozenset(
         "capex",
         "adquisicion",
         "cobertura",
+        "operacion_vinculada",
     }
 )
 FORMULAS_MASA_CIRCULANTE_VALIDAS = frozenset({"rotacion", "dias"})
@@ -156,6 +157,21 @@ class EfectoCobertura:
     direccion: int
 
 
+@dataclass(frozen=True)
+class EfectoOperacionVinculada:
+    """Operaciones vinculadas (arquetipo 20, "Operaciones vinculadas") — segundo lote de
+    desglose de balance. NO sigue el patrón de continuidad del resto de efectos (no hay un
+    "ratio ancla" que desplazar año a año): igual que `EfectoCobertura`, la magnitud real se
+    sortea UNA vez por caso y se deriva cada año de una magnitud de referencia propia (ventas,
+    patrimonio neto o deuda financiera, según cuál de las 5 operaciones del arquetipo se haya
+    seleccionado) — ver `ParametrosOperacionVinculada`/`_sortear_operacion_vinculada` en
+    `motor/evolucion_arquetipo.py`. `ratio_catalogo`/`direccion` son solo trazabilidad (igual
+    que en EfectoCobertura/EfectoTesoreria/EfectoAdquisicion), sin uso en la fórmula."""
+
+    ratio_catalogo: str
+    direccion: int
+
+
 Efecto = (
     EfectoMasaCirculante
     | EfectoPygPrimitiva
@@ -166,6 +182,7 @@ Efecto = (
     | EfectoCapex
     | EfectoAdquisicion
     | EfectoCobertura
+    | EfectoOperacionVinculada
 )
 
 
@@ -234,7 +251,10 @@ def _construir_efecto(bruto: dict, arquetipo_id: str, indice: int) -> Efecto:
     if tipo == "adquisicion":
         return EfectoAdquisicion(ratio_catalogo=ratio_catalogo, direccion=direccion)
 
-    return EfectoCobertura(ratio_catalogo=ratio_catalogo, direccion=direccion)
+    if tipo == "cobertura":
+        return EfectoCobertura(ratio_catalogo=ratio_catalogo, direccion=direccion)
+
+    return EfectoOperacionVinculada(ratio_catalogo=ratio_catalogo, direccion=direccion)
 
 
 def cargar_arquetipos(ruta: str | Path = RUTA_ARQUETIPOS_POR_DEFECTO) -> dict[str, DefinicionArquetipo]:

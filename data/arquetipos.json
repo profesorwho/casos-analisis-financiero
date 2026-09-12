@@ -251,8 +251,14 @@
       "id": "operaciones_vinculadas",
       "numero": 20,
       "nombre": "Operaciones vinculadas",
-      "clase": "memoria_pura",
-      "efectos": []
+      "clase": "cuantitativo",
+      "efectos": [
+        {
+          "tipo": "operacion_vinculada",
+          "ratio_catalogo": "ratios.endeudamiento",
+          "direccion": 1
+        }
+      ]
     },
     {
       "id": "coberturas",

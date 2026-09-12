@@ -890,6 +890,30 @@ class EjercicioEmpresa:
     periodificacion_pasivo_corto_pct: float = 0.0
     periodificacion_pasivo_largo_pct: float = 0.0
 
+    # --- Segundo lote de desglose de balance (deudores/acreedores comerciales) — perfil (%)
+    # fijo desde 2023 (arquetipo-agnóstico salvo que el 20 fuerce una sub-partida de grupo/
+    # varios, ver ParametrosOperacionVinculada), desglose (€) recalculado cada año sobre la masa
+    # ya cuadrada de ese año, mismo patrón que existencias. ---
+    deudores_perfil_pct: dict[str, float] = field(default_factory=dict)
+    deudores_desglose_eur: dict[str, float] = field(default_factory=dict)
+    acreedores_perfil_pct: dict[str, float] = field(default_factory=dict)
+    acreedores_desglose_eur: dict[str, float] = field(default_factory=dict)
+
+    # --- Operaciones vinculadas (arquetipo 20) — ver ParametrosOperacionVinculada. Las 2 masas
+    # financieras ("préstamo a matriz"/"financiación recibida de grupo") NO son carve-out de
+    # nada existente: son líneas propias nuevas ("Inversiones en empresas del grupo y asociadas
+    # a l/p" / "Deudas con empresas del grupo y asociadas a l/p"), en 0.0 salvo que esa operación
+    # concreta esté activa. `operacion_vinculada_importe_eur`/`_pct_mostrado` son el importe YA
+    # aterrizado en el balance de este año (el mismo que cita la nota de memoria — ver
+    # motor/memoria.py — nunca un número sorteado aparte). ---
+    operacion_vinculada_activa: bool = False
+    operacion_vinculada_indice: int = -1
+    operacion_vinculada_tipo: str = ""
+    operacion_vinculada_importe_eur: float = 0.0
+    operacion_vinculada_pct_mostrado: float = 0.0
+    inversion_grupo_largo_eur: float = 0.0
+    deuda_grupo_largo_eur: float = 0.0
+
     @property
     def periodificacion_activo_eur(self) -> float:
         return self.periodificacion_activo_pct * self.balance_eur["realizable"]
@@ -987,6 +1011,10 @@ def _ejercicio_desde_empresa_base(empresa: EmpresaBase) -> EjercicioEmpresa:
         periodificacion_activo_pct=empresa.periodificacion_activo_pct,
         periodificacion_pasivo_corto_pct=empresa.periodificacion_pasivo_corto_pct,
         periodificacion_pasivo_largo_pct=empresa.periodificacion_pasivo_largo_pct,
+        deudores_perfil_pct=dict(empresa.deudores_perfil_pct),
+        deudores_desglose_eur=dict(empresa.deudores_desglose_eur),
+        acreedores_perfil_pct=dict(empresa.acreedores_perfil_pct),
+        acreedores_desglose_eur=dict(empresa.acreedores_desglose_eur),
         # Cobertura/subvención: en el año base (2023) todo el estado parte de cero — Δr no
         # existe todavía (no hay "año anterior" dentro de la serie) y la subvención nunca se
         # concede en 2023 (año_concesion siempre 2024 o 2025, ver
@@ -1182,6 +1210,147 @@ class ParametrosGrupo89:
 PARAMETROS_GRUPO89_INACTIVOS = ParametrosGrupo89()
 
 
+# --------------------------------------------------------------------------------------------
+# Operaciones vinculadas (arquetipo 20) — segundo lote de desglose de balance. Las constantes de
+# rango/suelo vivían antes en motor/memoria.py; se trasladan aquí (única fuente de verdad) porque
+# motor.memoria NO puede importarse desde este módulo (importaría en círculo: motor.memoria ya
+# importa EjercicioEmpresa/NotaMemoria de aquí) y el sorteo ahora tiene que alimentar el balance,
+# no solo el texto de la nota — motor.memoria importa estas constantes DE AQUÍ.
+# --------------------------------------------------------------------------------------------
+RANGOS_IMPORTE_VINCULADAS_PCT: dict[str, tuple[float, float]] = {"leve": (2, 5), "moderado": (5, 10), "fuerte": (10, 18)}
+SUELO_IMPORTE_VINCULADAS_EUR = 30_000.0
+
+# Las 5 operaciones del arquetipo 20 (mismo orden que `_OPERACIONES_VINCULADAS` en
+# motor/memoria.py — el índice sorteado aquí selecciona la misma plantilla de texto allí, ver
+# `_sortear_operacion_vinculada`), clasificadas comercial/financiera/"no es realmente grupo" tras
+# revisar los 5 textos uno a uno (clasificación aprobada por el usuario antes de implementar):
+#   0. "Préstamo intragrupo A la matriz" (la sociedad presta, no toma prestado) — FINANCIERA,
+#      lado ACTIVO: "Inversiones en empresas del grupo y asociadas a largo plazo" (masa nueva).
+#   1. "Facturación de servicios de gestión a una sociedad del grupo" — COMERCIAL, lado ACTIVO:
+#      "Clientes, empresas del grupo y asociadas" (sub-partida de deudores comerciales).
+#   2. "Arrendamiento pagado a un socio/administrador" — NO es "empresas del grupo" en sentido
+#      PGC (un socio/administrador no lo es necesariamente): "Acreedores varios" (sub-partida de
+#      acreedores comerciales, no la línea de grupo).
+#   3. "Financiación recibida de una sociedad del grupo" — FINANCIERA, lado PASIVO: "Deudas con
+#      empresas del grupo y asociadas a largo plazo" (masa nueva) — el propio texto de la nota
+#      excluye gastos financieros adicionales, así que esta masa NUNCA entra en deudas_fin_largo/
+#      corto (las únicas que alimentan gastos_financieros = deuda_financiera_media x tipo_interes).
+#   4. "Asistencia técnica y administrativa prestada POR la matriz" (la sociedad recibe el
+#      servicio, lo debe) — COMERCIAL, lado PASIVO: "Proveedores, empresas del grupo y
+#      asociadas" (sub-partida de acreedores comerciales).
+TIPO_OPERACION_POR_INDICE: tuple[str, ...] = (
+    "prestamo_matriz",
+    "facturacion_servicios_grupo",
+    "arrendamiento_socio",
+    "financiacion_recibida_grupo",
+    "asistencia_tecnica_matriz",
+)
+# Magnitud de referencia de cada tipo — ventas, patrimonio neto o deuda financiera total.
+MAGNITUD_REFERENCIA_POR_TIPO: dict[str, str] = {
+    "prestamo_matriz": "patrimonio_neto",
+    "facturacion_servicios_grupo": "ventas",
+    "arrendamiento_socio": "ventas",
+    "financiacion_recibida_grupo": "deuda_financiera",
+    "asistencia_tecnica_matriz": "ventas",
+}
+# A qué componente del desglose de deudores/acreedores aterriza cada tipo COMERCIAL/"varios" (los
+# 2 tipos FINANCIEROS no tocan ningún desglose existente, son masas propias nuevas).
+COMPONENTE_DESGLOSE_POR_TIPO: dict[str, tuple[str, str]] = {
+    "facturacion_servicios_grupo": ("deudores", "clientes_empresas_grupo"),
+    "arrendamiento_socio": ("acreedores", "acreedores_varios"),
+    "asistencia_tecnica_matriz": ("acreedores", "proveedores_empresas_grupo"),
+}
+# Techos defensivos — protegen el cuadre (ningún componente queda negativo), rara vez activos en
+# la práctica: RANGOS_IMPORTE_VINCULADAS_PCT topa en 18% de la magnitud de REFERENCIA (ventas/PN/
+# deuda financiera), que normalmente es una fracción moderada de la masa/caja que la contiene.
+TECHO_FRACCION_MASA_OPERACION_VINCULADA = 0.6
+TECHO_FRACCION_DISPONIBLE_PRESTAMO_MATRIZ = 0.9
+
+
+@dataclass(frozen=True)
+class ParametrosOperacionVinculada:
+    """Parámetros de la operación vinculada (arquetipo 20) sorteados UNA vez por caso (no por
+    año) — mismo criterio que `ParametrosGrupo89`. `indice`/`pct_objetivo` se sortean con la
+    MISMA secuencia de `rng` (misma entropía, mismos dos draws en el mismo orden) que usaba antes
+    `motor.memoria.generar_nota_operaciones_vinculadas` — ver `_sortear_operacion_vinculada` — así
+    que el resultado es IDÉNTICO al que esa función elegía, sin sortear nada dos veces (la nota,
+    ahora en motor.memoria, se limita a formatear el importe ya aterrizado en el balance, ver
+    `EjercicioEmpresa.operacion_vinculada_importe_eur`)."""
+
+    activa: bool = False
+    indice: int = -1
+    tipo_operacion: str = ""
+    pct_objetivo: float = 0.0  # fracción (NO %) de la magnitud de referencia de `tipo_operacion`
+
+
+PARAMETROS_OPERACION_VINCULADA_INACTIVOS = ParametrosOperacionVinculada()
+
+
+def _sortear_operacion_vinculada(sector: str, segmento: str, semilla: int, intensidad: str) -> ParametrosOperacionVinculada:
+    """Réplica EXACTA de la secuencia de sorteo que usaba `motor.memoria.
+    generar_nota_operaciones_vinculadas` antes de este encargo (mismo hash de entropía, mismo
+    `rng.permutation` para el índice, mismo `rng.uniform` para el %) — no es un sorteo nuevo, es
+    el mismo trasladado aquí para que la magnitud pueda alimentar el balance, no solo el texto de
+    la nota. El índice no depende de `etiquetas_ya_usadas`: las 5 plantillas de
+    operaciones_vinculadas llevan la MISMA etiqueta fija (ver `_elegir_indice_evitando_colision`
+    en motor/memoria.py), así que la resolución de colisiones nunca cambia cuál se elige —
+    siempre el primero del `rng.permutation` barajado, verificado en el propio código de esa
+    función (bucle que, con etiquetas idénticas para las 5, siempre devuelve `orden[0]`)."""
+    entropia = zlib.crc32(f"{sector}|{segmento}|{intensidad}|operaciones_vinculadas".encode("utf-8"))
+    rng = np.random.default_rng([semilla, entropia])
+    indice = int(rng.permutation(len(TIPO_OPERACION_POR_INDICE))[0])
+    pct_objetivo = rng.uniform(*RANGOS_IMPORTE_VINCULADAS_PCT[intensidad]) / 100
+    return ParametrosOperacionVinculada(
+        activa=True, indice=indice, tipo_operacion=TIPO_OPERACION_POR_INDICE[indice], pct_objetivo=pct_objetivo,
+    )
+
+
+def _magnitud_operacion_vinculada(ventas: float, balance_eur: dict[str, float], tipo_operacion: str) -> float:
+    """Magnitud de referencia de `tipo_operacion` — ventas, patrimonio neto o deuda financiera
+    total —, leída de un `ventas`/`balance_eur` YA resueltos (de cualquier año, propio o
+    anterior según el llamador)."""
+    nombre = MAGNITUD_REFERENCIA_POR_TIPO[tipo_operacion]
+    if nombre == "ventas":
+        return ventas
+    if nombre == "patrimonio_neto":
+        return balance_eur["patrimonio_neto"]
+    return balance_eur["deudas_fin_largo"] + balance_eur["deudas_fin_corto"]
+
+
+def _perfil_con_componente_forzado(perfil_base: dict[str, float], componente: str, fraccion_objetivo: float) -> dict[str, float]:
+    """Fuerza `componente` de `perfil_base` (que suma 1.0) a `fraccion_objetivo` (topada a
+    `TECHO_FRACCION_MASA_OPERACION_VINCULADA`) y reescala el RESTO proporcionalmente entre sí
+    para que la suma siga siendo exactamente 1.0 — usado UNA vez, en el año base, para fijar
+    "desde 2023" el perfil de deudores/acreedores cuando el arquetipo 20 activa una operación
+    comercial concreta (ver `generar_evolucion_combinada`); a partir de ahí sigue el mismo
+    patrón que cualquier otro perfil de este bloque (fijo, desglose recalculado cada año)."""
+    fraccion_objetivo = min(fraccion_objetivo, TECHO_FRACCION_MASA_OPERACION_VINCULADA)
+    resto_objetivo = 1.0 - fraccion_objetivo
+    resto_base = 1.0 - perfil_base[componente]
+    factor = resto_objetivo / resto_base if resto_base > 0 else 0.0
+    return {clave: (fraccion_objetivo if clave == componente else valor * factor) for clave, valor in perfil_base.items()}
+
+
+def _importe_operacion_vinculada_eur(
+    tipo_operacion: str,
+    deudores_desglose_eur: dict[str, float],
+    acreedores_desglose_eur: dict[str, float],
+    inversion_grupo_largo_eur: float,
+    deuda_grupo_largo_eur: float,
+) -> float:
+    """El importe YA aterrizado en el balance de este año para `tipo_operacion` — el mismo que
+    debe citar la nota de memoria (motor/memoria.py), nunca un número sorteado aparte."""
+    if tipo_operacion == "prestamo_matriz":
+        return inversion_grupo_largo_eur
+    if tipo_operacion == "financiacion_recibida_grupo":
+        return deuda_grupo_largo_eur
+    if tipo_operacion in COMPONENTE_DESGLOSE_POR_TIPO:
+        desglose_nombre, componente = COMPONENTE_DESGLOSE_POR_TIPO[tipo_operacion]
+        desglose = deudores_desglose_eur if desglose_nombre == "deudores" else acreedores_desglose_eur
+        return desglose[componente]
+    return 0.0
+
+
 def _evolucionar_un_año(
     año: int,
     anterior: EjercicioEmpresa,
@@ -1195,6 +1364,7 @@ def _evolucionar_un_año(
     segmento: str,
     semilla: int,
     parametros_grupo89: ParametrosGrupo89 = PARAMETROS_GRUPO89_INACTIVOS,
+    parametros_operacion_vinculada: ParametrosOperacionVinculada = PARAMETROS_OPERACION_VINCULADA_INACTIVOS,
 ) -> EjercicioEmpresa:
     """`efectos_activos` ya viene fusionado (uno o varios arquetipos combinados, cada `Efecto`
     emparejado con la intensidad de SU PROPIO arquetipo de origen, y los `masa_circulante` que
@@ -1537,6 +1707,40 @@ def _evolucionar_un_año(
     # de caja) — ver docstring del módulo `motor.coberturas_subvenciones`.
     disponible_proporcional_eur += subvencion_importe_concedido_eur
 
+    # --- Operaciones vinculadas (arquetipo 20) financieras: "préstamo a matriz" (activo nuevo,
+    # canje con caja) y "financiación recibida de grupo" (pasivo nuevo, canje con caja) — perfil
+    # fijo (% de patrimonio_neto/deuda financiera) desde que el arquetipo se activa, recalculado
+    # cada año sobre la magnitud de referencia YA cuadrada del año ANTERIOR (evita la
+    # circularidad de depender de un patrimonio_neto/deuda financiera que este mismo año
+    # todavía no existe — mismo criterio que el resto de bases "proporcionales" de esta función,
+    # todas ancladas en `anterior`). Se pliega en `activo_no_corriente_eur`/`otras_deudas_largo_
+    # eur`/`disponible_proporcional_eur` ANTES de `_construir_balance`/`_evaluar` (como el resto
+    # de grupo89, más arriba) para que la contención de endeudamiento (más abajo) la vea SIEMPRE
+    # — punto 1 de la confirmación del usuario para este lote: "financiación recibida" debe pasar
+    # por el MISMO chequeo que ya protege a 9/14/17/18, no un mecanismo de deuda nueva sin
+    # control (queda señalizada pero sin palanca de amortiguación propia, igual que 9/14/17/18:
+    # el arquetipo 20 no toca ninguna masa de circulante). ---
+    inversion_grupo_largo_eur = 0.0
+    deuda_grupo_largo_eur = 0.0
+    if parametros_operacion_vinculada.tipo_operacion == "prestamo_matriz":
+        importe_bruto_eur = max(
+            parametros_operacion_vinculada.pct_objetivo * anterior.balance_eur["patrimonio_neto"],
+            SUELO_IMPORTE_VINCULADAS_EUR,
+        )
+        inversion_grupo_largo_eur = min(
+            importe_bruto_eur, max(0.0, disponible_proporcional_eur) * TECHO_FRACCION_DISPONIBLE_PRESTAMO_MATRIZ
+        )
+        activo_no_corriente_eur += inversion_grupo_largo_eur
+        disponible_proporcional_eur -= inversion_grupo_largo_eur
+    elif parametros_operacion_vinculada.tipo_operacion == "financiacion_recibida_grupo":
+        deuda_financiera_referencia_eur = anterior.balance_eur["deudas_fin_largo"] + anterior.balance_eur["deudas_fin_corto"]
+        deuda_grupo_largo_eur = max(
+            parametros_operacion_vinculada.pct_objetivo * deuda_financiera_referencia_eur,
+            SUELO_IMPORTE_VINCULADAS_EUR,
+        )
+        otras_deudas_largo_eur += deuda_grupo_largo_eur
+        disponible_proporcional_eur += deuda_grupo_largo_eur
+
     ajustes_cambio_valor_pn_eur = presentacion_neta_eur(cobertura_saldo_1340_bruto_eur)
     subvenciones_pn_eur = presentacion_neta_eur(subvencion_saldo_130_bruto_eur)
     delta_pn_grupo89_eur = (
@@ -1798,6 +2002,33 @@ def _evolucionar_un_año(
             if cambio_eur < TOLERANCIA_CONVERGENCIA_DETERIORO_EUR:
                 break  # convergido al techo
 
+    # Desglose del TOTAL de deudores/acreedores comerciales de ESTE año — mismo criterio que
+    # existencias: perfil (%) constante (ya fijado "desde 2023", incluida cualquier sub-partida
+    # de grupo/varios forzada por el arquetipo 20 en el año base), aplicado al agregado YA
+    # cuadrado de este año.
+    deudores_desglose_eur_año = {
+        componente: fraccion * balance_eur["realizable"] for componente, fraccion in anterior.deudores_perfil_pct.items()
+    }
+    acreedores_desglose_eur_año = {
+        componente: fraccion * balance_eur["acreedores_comerciales"]
+        for componente, fraccion in anterior.acreedores_perfil_pct.items()
+    }
+    magnitud_operacion_vinculada_eur = _magnitud_operacion_vinculada(
+        ventas, balance_eur, parametros_operacion_vinculada.tipo_operacion
+    ) if parametros_operacion_vinculada.activa else 0.0
+    operacion_vinculada_importe_eur = _importe_operacion_vinculada_eur(
+        parametros_operacion_vinculada.tipo_operacion,
+        deudores_desglose_eur_año,
+        acreedores_desglose_eur_año,
+        inversion_grupo_largo_eur,
+        deuda_grupo_largo_eur,
+    ) if parametros_operacion_vinculada.activa else 0.0
+    operacion_vinculada_pct_mostrado = (
+        operacion_vinculada_importe_eur / magnitud_operacion_vinculada_eur * 100
+        if parametros_operacion_vinculada.activa and magnitud_operacion_vinculada_eur > 0
+        else 0.0
+    )
+
     return EjercicioEmpresa(
         año=año,
         ventas=ventas,
@@ -1875,6 +2106,17 @@ def _evolucionar_un_año(
         periodificacion_activo_pct=anterior.periodificacion_activo_pct,
         periodificacion_pasivo_corto_pct=anterior.periodificacion_pasivo_corto_pct,
         periodificacion_pasivo_largo_pct=anterior.periodificacion_pasivo_largo_pct,
+        deudores_perfil_pct=anterior.deudores_perfil_pct,
+        deudores_desglose_eur=deudores_desglose_eur_año,
+        acreedores_perfil_pct=anterior.acreedores_perfil_pct,
+        acreedores_desglose_eur=acreedores_desglose_eur_año,
+        operacion_vinculada_activa=parametros_operacion_vinculada.activa,
+        operacion_vinculada_indice=parametros_operacion_vinculada.indice,
+        operacion_vinculada_tipo=parametros_operacion_vinculada.tipo_operacion,
+        operacion_vinculada_importe_eur=operacion_vinculada_importe_eur,
+        operacion_vinculada_pct_mostrado=operacion_vinculada_pct_mostrado,
+        inversion_grupo_largo_eur=inversion_grupo_largo_eur,
+        deuda_grupo_largo_eur=deuda_grupo_largo_eur,
     )
 
 
@@ -2116,6 +2358,101 @@ def generar_evolucion_combinada(
             cobertura_plazo_residual_años=cobertura_plazo_residual_inicial_años,
         )
 
+    # --- Operaciones vinculadas (arquetipo 20) — parámetros sorteados UNA vez por caso, mismo
+    # criterio que cobertura/subvención. Igual que cobertura, la magnitud del año base (2023) se
+    # fija YA aquí (no en `_evolucionar_un_año`, que solo procesa 2024/2025): para los 2 tipos
+    # COMERCIALES (facturación/arrendamiento/asistencia técnica), se fuerza "desde 2023" la
+    # sub-partida correspondiente del perfil de deudores/acreedores (mismo criterio "perfil fijo,
+    # desglose recalculado cada año" que el resto de este bloque); para los 2 tipos FINANCIEROS
+    # (préstamo a matriz/financiación recibida), se inyecta directamente sobre el balance YA
+    # cuadrado de 2023 (auto-referencial: usa el propio patrimonio_neto/deuda financiera de 2023,
+    # no hay "año anterior" dentro de la serie) — sin pasar por la contención de endeudamiento
+    # (2023 nunca se contiene, igual que el resto de masas del año base). ---
+    operacion_vinculada_activa = "operaciones_vinculadas" in definiciones
+    if operacion_vinculada_activa:
+        parametros_operacion_vinculada = _sortear_operacion_vinculada(
+            sector, segmento, semilla, arquetipos_intensidades["operaciones_vinculadas"]
+        )
+    else:
+        parametros_operacion_vinculada = PARAMETROS_OPERACION_VINCULADA_INACTIVOS
+
+    if parametros_operacion_vinculada.tipo_operacion in COMPONENTE_DESGLOSE_POR_TIPO:
+        desglose_nombre, componente = COMPONENTE_DESGLOSE_POR_TIPO[parametros_operacion_vinculada.tipo_operacion]
+        magnitud_2023_eur = _magnitud_operacion_vinculada(
+            ejercicios[AÑO_BASE].ventas, ejercicios[AÑO_BASE].balance_eur, parametros_operacion_vinculada.tipo_operacion
+        )
+        importe_2023_eur = max(
+            parametros_operacion_vinculada.pct_objetivo * magnitud_2023_eur, SUELO_IMPORTE_VINCULADAS_EUR
+        )
+        masa_nombre = "realizable" if desglose_nombre == "deudores" else "acreedores_comerciales"
+        masa_2023_eur = ejercicios[AÑO_BASE].balance_eur[masa_nombre]
+        fraccion_objetivo = importe_2023_eur / masa_2023_eur if masa_2023_eur > 0 else 0.0
+        perfil_base = (
+            ejercicios[AÑO_BASE].deudores_perfil_pct if desglose_nombre == "deudores" else ejercicios[AÑO_BASE].acreedores_perfil_pct
+        )
+        nuevo_perfil = _perfil_con_componente_forzado(perfil_base, componente, fraccion_objetivo)
+        nuevo_desglose = {clave: fraccion * masa_2023_eur for clave, fraccion in nuevo_perfil.items()}
+        if desglose_nombre == "deudores":
+            ejercicios[AÑO_BASE] = replace(
+                ejercicios[AÑO_BASE], deudores_perfil_pct=nuevo_perfil, deudores_desglose_eur=nuevo_desglose,
+            )
+        else:
+            ejercicios[AÑO_BASE] = replace(
+                ejercicios[AÑO_BASE], acreedores_perfil_pct=nuevo_perfil, acreedores_desglose_eur=nuevo_desglose,
+            )
+    elif parametros_operacion_vinculada.tipo_operacion == "prestamo_matriz":
+        importe_bruto_2023_eur = max(
+            parametros_operacion_vinculada.pct_objetivo * ejercicios[AÑO_BASE].balance_eur["patrimonio_neto"],
+            SUELO_IMPORTE_VINCULADAS_EUR,
+        )
+        disponible_2023_eur = ejercicios[AÑO_BASE].balance_eur["disponible"]
+        inversion_grupo_largo_2023_eur = min(
+            importe_bruto_2023_eur, max(0.0, disponible_2023_eur) * TECHO_FRACCION_DISPONIBLE_PRESTAMO_MATRIZ
+        )
+        balance_2023 = dict(ejercicios[AÑO_BASE].balance_eur)
+        balance_2023["activo_no_corriente"] += inversion_grupo_largo_2023_eur
+        balance_2023["disponible"] -= inversion_grupo_largo_2023_eur
+        balance_2023["activo_corriente"] -= inversion_grupo_largo_2023_eur
+        ejercicios[AÑO_BASE] = replace(
+            ejercicios[AÑO_BASE], balance_eur=balance_2023, inversion_grupo_largo_eur=inversion_grupo_largo_2023_eur,
+        )
+    elif parametros_operacion_vinculada.tipo_operacion == "financiacion_recibida_grupo":
+        deuda_fin_2023_eur = (
+            ejercicios[AÑO_BASE].balance_eur["deudas_fin_largo"] + ejercicios[AÑO_BASE].balance_eur["deudas_fin_corto"]
+        )
+        deuda_grupo_largo_2023_eur = max(
+            parametros_operacion_vinculada.pct_objetivo * deuda_fin_2023_eur, SUELO_IMPORTE_VINCULADAS_EUR
+        )
+        balance_2023 = dict(ejercicios[AÑO_BASE].balance_eur)
+        balance_2023["otras_deudas_largo"] += deuda_grupo_largo_2023_eur
+        balance_2023["pasivo_no_corriente"] += deuda_grupo_largo_2023_eur
+        balance_2023["disponible"] += deuda_grupo_largo_2023_eur
+        balance_2023["activo_corriente"] += deuda_grupo_largo_2023_eur
+        ejercicios[AÑO_BASE] = replace(
+            ejercicios[AÑO_BASE], balance_eur=balance_2023, deuda_grupo_largo_eur=deuda_grupo_largo_2023_eur,
+        )
+    if operacion_vinculada_activa:
+        magnitud_2023_mostrado_eur = _magnitud_operacion_vinculada(
+            ejercicios[AÑO_BASE].ventas, ejercicios[AÑO_BASE].balance_eur, parametros_operacion_vinculada.tipo_operacion
+        )
+        importe_2023_mostrado_eur = _importe_operacion_vinculada_eur(
+            parametros_operacion_vinculada.tipo_operacion,
+            ejercicios[AÑO_BASE].deudores_desglose_eur,
+            ejercicios[AÑO_BASE].acreedores_desglose_eur,
+            ejercicios[AÑO_BASE].inversion_grupo_largo_eur,
+            ejercicios[AÑO_BASE].deuda_grupo_largo_eur,
+        )
+        ejercicios[AÑO_BASE] = replace(
+            ejercicios[AÑO_BASE],
+            operacion_vinculada_activa=True,
+            operacion_vinculada_indice=parametros_operacion_vinculada.indice,
+            operacion_vinculada_tipo=parametros_operacion_vinculada.tipo_operacion,
+            operacion_vinculada_importe_eur=importe_2023_mostrado_eur,
+            operacion_vinculada_pct_mostrado=(
+                importe_2023_mostrado_eur / magnitud_2023_mostrado_eur * 100 if magnitud_2023_mostrado_eur > 0 else 0.0
+            ),
+        )
+
     anterior = ejercicios[AÑO_BASE]
     for año in (2024, 2025):
         fraccion = FRACCION_AÑO[año]
@@ -2153,6 +2490,7 @@ def generar_evolucion_combinada(
             segmento,
             semilla,
             parametros_grupo89,
+            parametros_operacion_vinculada,
         )
         ejercicios[año] = ejercicio
         anterior = ejercicio

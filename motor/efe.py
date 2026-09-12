@@ -65,11 +65,13 @@ class EstadoFlujosEfectivo:
     b6b7_inversiones_inmobiliarias: float
     b6b7_otros_activos_financieros: float
     b6a_empresas_grupo_adquisicion: float  # arquetipo 18 — salto separado del crecimiento orgánico
+    b6c_prestamo_empresas_grupo: float  # arquetipo 20, "préstamo a matriz" — variación de inversion_grupo_largo_eur
     b8_flujo_inversion: float
 
     # C) Flujos de efectivo de las actividades de financiación
     c9_instrumentos_patrimonio: float  # = cobro de subvenciones de capital en el año de concesión (ver motor/coberturas_subvenciones.py) — 0.0 si no hay subvención; capital social sigue fijo, sin ampliaciones/reducciones modeladas
-    c10_variacion_neta_deuda_financiera: float  # neto emisión/devolución — el motor no distingue gross issuance/repayment dentro del año
+    c10_variacion_neta_deuda_financiera: float  # neto emisión/devolución de deudas_fin_largo/corto — el motor no distingue gross issuance/repayment dentro del año
+    c10c_empresas_grupo: float  # arquetipo 20, "financiación recibida de grupo" — variación de deuda_grupo_largo_eur (letra (c) del desglose oficial de la línea 10, NUNCA mezclada con c10: esa masa no genera gastos financieros, ver motor/evolucion_arquetipo.py)
     c11a_dividendos: float  # arquetipo 9/14 (apalancamiento): la distribución financiada con la deuda nueva de C.10
     c12_flujo_financiacion: float
 
@@ -112,8 +114,16 @@ def generar_efe(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligatori
     # (a diferencia de un pasivo operativo real) — su contrapartida es la línea de PN
     # correspondiente, no caja, así que tratarlas aquí como "fuente de caja" duplicaría un
     # movimiento que no existe. Mismo criterio que ya se aplica a la amortización (a2a).
-    grupo89_pasivo_no_corriente_actual = actual.pasivos_por_impuesto_diferido_eur + max(0.0, -actual.cobertura_valor_swap_eur)
-    grupo89_pasivo_no_corriente_anterior = anterior.pasivos_por_impuesto_diferido_eur + max(0.0, -anterior.cobertura_valor_swap_eur)
+    # También excluye `deuda_grupo_largo_eur` (arquetipo 20, "financiación recibida de grupo"):
+    # es una actividad de FINANCIACIÓN (Sección C, ver más abajo, letra (c) del desglose oficial
+    # de la línea 10), no de explotación — mismo criterio de exclusión que grupo89, aunque la
+    # naturaleza sea distinta (aquí SÍ hay caja real detrás, solo que no es caja operativa).
+    grupo89_pasivo_no_corriente_actual = (
+        actual.pasivos_por_impuesto_diferido_eur + max(0.0, -actual.cobertura_valor_swap_eur) + actual.deuda_grupo_largo_eur
+    )
+    grupo89_pasivo_no_corriente_anterior = (
+        anterior.pasivos_por_impuesto_diferido_eur + max(0.0, -anterior.cobertura_valor_swap_eur) + anterior.deuda_grupo_largo_eur
+    )
     a3f = (actual.balance_eur["otras_deudas_largo"] - grupo89_pasivo_no_corriente_actual) - (
         anterior.balance_eur["otras_deudas_largo"] - grupo89_pasivo_no_corriente_anterior
     )
@@ -133,8 +143,16 @@ def generar_efe(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligatori
     # Excluye, igual que A.3.f, el grupo89 alojado dentro de `activo_no_corriente` (el derivado
     # de la cobertura si es activo + su impuesto diferido) — sin flujo de caja detrás, ver más
     # arriba.
-    grupo89_activo_no_corriente_actual = actual.activos_por_impuesto_diferido_eur + max(0.0, actual.cobertura_valor_swap_eur)
-    grupo89_activo_no_corriente_anterior = anterior.activos_por_impuesto_diferido_eur + max(0.0, anterior.cobertura_valor_swap_eur)
+    # También excluye `inversion_grupo_largo_eur` (arquetipo 20, "préstamo a matriz"): es un
+    # movimiento de inversión propio, con su propia línea B.6.c más abajo (mismo criterio de
+    # exclusión que la adquisición del arquetipo 18, que tampoco se reparte por el perfil
+    # genérico material/intangible/inversiones_inmobiliarias/otros_financieros).
+    grupo89_activo_no_corriente_actual = (
+        actual.activos_por_impuesto_diferido_eur + max(0.0, actual.cobertura_valor_swap_eur) + actual.inversion_grupo_largo_eur
+    )
+    grupo89_activo_no_corriente_anterior = (
+        anterior.activos_por_impuesto_diferido_eur + max(0.0, anterior.cobertura_valor_swap_eur) + anterior.inversion_grupo_largo_eur
+    )
     delta_activo_no_corriente_organico = (
         (actual.balance_eur["activo_no_corriente"] - grupo89_activo_no_corriente_actual)
         - actual.incremento_activo_adquisicion_eur
@@ -146,8 +164,9 @@ def generar_efe(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligatori
     b_inversiones_inmobiliarias = -perfil["inversiones_inmobiliarias"] * delta_activo_no_corriente_organico
     b_otros_financieros = -perfil["otros_financieros"] * delta_activo_no_corriente_organico
     b_adquisicion = -actual.incremento_activo_adquisicion_eur
+    b_prestamo_grupo = -(actual.inversion_grupo_largo_eur - anterior.inversion_grupo_largo_eur)
 
-    b8 = b_intangible + b_material + b_inversiones_inmobiliarias + b_otros_financieros + b_adquisicion
+    b8 = b_intangible + b_material + b_inversiones_inmobiliarias + b_otros_financieros + b_adquisicion + b_prestamo_grupo
 
     # C) Financiación
     deuda_financiera_actual = actual.balance_eur["deudas_fin_largo"] + actual.balance_eur["deudas_fin_corto"]
@@ -159,8 +178,13 @@ def generar_efe(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligatori
     # motor/coberturas_subvenciones.py y motor/evolucion_arquetipo.py — el importe se añade
     # directamente a `disponible` ese año, C.9 es la contrapartida que lo explica en el EFE).
     c9 = actual.subvencion_importe_concedido_eur
+    # C.10.c ("Deudas con empresas del grupo y asociadas") — arquetipo 20, "financiación recibida
+    # de grupo": variación de `deuda_grupo_largo_eur`, deliberadamente FUERA de `c10` (esa masa
+    # nunca alimenta gastos_financieros, ver motor/evolucion_arquetipo.py — mezclarla con c10
+    # confundiría "deuda con coste" con "deuda sin coste" en la misma línea).
+    c10c = actual.deuda_grupo_largo_eur - anterior.deuda_grupo_largo_eur
     c11a = -actual.apalancamiento_extra_eur
-    c12 = c9 + c10 + c11a
+    c12 = c9 + c10 + c10c + c11a
 
     d = 0.0
     e = a5 + b8 + c12 + d
@@ -194,9 +218,11 @@ def generar_efe(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligatori
         b6b7_inversiones_inmobiliarias=b_inversiones_inmobiliarias,
         b6b7_otros_activos_financieros=b_otros_financieros,
         b6a_empresas_grupo_adquisicion=b_adquisicion,
+        b6c_prestamo_empresas_grupo=b_prestamo_grupo,
         b8_flujo_inversion=b8,
         c9_instrumentos_patrimonio=c9,
         c10_variacion_neta_deuda_financiera=c10,
+        c10c_empresas_grupo=c10c,
         c11a_dividendos=c11a,
         c12_flujo_financiacion=c12,
         d_efecto_tipo_cambio=d,

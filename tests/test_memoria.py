@@ -13,13 +13,12 @@ import pytest
 
 from motor.arquetipos import cargar_arquetipos
 from motor.catalogo import cargar_y_validar_catalogo
-from motor.evolucion_arquetipo import generar_evolucion_arquetipo
+from motor.evolucion_arquetipo import SUELO_IMPORTE_VINCULADAS_EUR, generar_evolucion_arquetipo
 from motor.memoria import (
     PLANTILLAS_ACTIVO_MANTENIDO_VENTA,
     PLANTILLAS_COBERTURAS,
     PLANTILLAS_DEPENDENCIA_CLIENTES,
     RANGOS_CONCENTRACION_CLIENTES,
-    SUELO_IMPORTE_VINCULADAS_EUR,
     SUELO_NOCIONAL_COBERTURA_EUR,
     _NOTAS_COMODIN,
     _OPERACIONES_VINCULADAS,
@@ -66,13 +65,28 @@ def _prefijo(plantilla: str) -> str:
     return plantilla.split("{")[0]
 
 
+# "operaciones_vinculadas" (20) NO participa en PREFIJOS/el despachador genérico: desde el
+# segundo lote de desglose de balance es `clase="cuantitativo"` (ver motor/evolucion_arquetipo.py,
+# ParametrosOperacionVinculada) — su nota ya no sortea nada por sí misma, solo formatea el
+# importe que la evolución numérica aterrizó en el balance, así que necesita un caso donde el
+# arquetipo esté REALMENTE activo (no el patrón "cualquier caso cuantitativo neutro de
+# referencia" que sí vale para 7/19/21/22 — ver `_ejercicio_operaciones_vinculadas` más abajo).
 PREFIJOS = {
     "dependencia_pocos_clientes": [_prefijo(p) for p in PLANTILLAS_DEPENDENCIA_CLIENTES],
     "activo_mantenido_venta": [_prefijo(p) for p in PLANTILLAS_ACTIVO_MANTENIDO_VENTA],
-    "operaciones_vinculadas": [_prefijo(p) for p, _ in _OPERACIONES_VINCULADAS],
     "coberturas": [_prefijo(p) for p in PLANTILLAS_COBERTURAS],
     "informacion_relevante_memoria": [_prefijo(t) for t, _ in _NOTAS_COMODIN],
 }
+
+def _ejercicio_operaciones_vinculadas(catalogo, arquetipos, sector, intensidad, semilla):
+    """Arquetipo 20 activo de verdad (a diferencia de `_ejercicio`, que usa "exceso_stock" como
+    ancla neutra) — necesario porque la nota ya no sortea nada, lee el importe/tipo que la
+    evolución numérica calculó."""
+    evolucion = generar_evolucion_arquetipo(
+        sector, "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=semilla, intensidad=intensidad,
+        arquetipo_id="operaciones_vinculadas", catalogo=catalogo, arquetipos=arquetipos,
+    )
+    return evolucion.ejercicios[2025]
 
 
 def _indice_plantilla(arquetipo_id: str, texto: str) -> int:
@@ -148,18 +162,63 @@ def test_dependencia_clientes_respeta_los_rangos_por_intensidad(catalogo, arquet
 # --------------------------------------------------------------------------------------------
 
 
+def test_operaciones_vinculadas_reproducible(catalogo, arquetipos):
+    for sector in ("24.1", "62", "47.1"):
+        for semilla in SEMILLAS:
+            ej_a = _ejercicio_operaciones_vinculadas(catalogo, arquetipos, sector, "fuerte", semilla)
+            ej_b = _ejercicio_operaciones_vinculadas(catalogo, arquetipos, sector, "fuerte", semilla)
+            assert generar_nota_operaciones_vinculadas(ej_a).texto == generar_nota_operaciones_vinculadas(ej_b).texto
+
+
+def test_operaciones_vinculadas_distribucion_de_plantillas_no_esta_sesgada(catalogo, arquetipos):
+    codigos = [re.search(r"\(([^()]+)\)\s*$", s).group(1) for s in catalogo["sector"].unique()]
+    n_plantillas = len(_OPERACIONES_VINCULADAS)
+    conteo = {i: 0 for i in range(n_plantillas)}
+    total = 0
+    for codigo in codigos:
+        for intensidad in ("leve", "moderado", "fuerte"):
+            for semilla in range(4):
+                ejercicio = _ejercicio_operaciones_vinculadas(catalogo, arquetipos, codigo, intensidad, semilla)
+                assert ejercicio.operacion_vinculada_activa
+                conteo[ejercicio.operacion_vinculada_indice] += 1
+                total += 1
+    esperado = total / n_plantillas
+    chi2 = sum((conteo[i] - esperado) ** 2 / esperado for i in range(n_plantillas))
+    critico_p01 = {4: 13.3}[n_plantillas - 1]
+    assert chi2 < critico_p01, f"operaciones_vinculadas: chi2={chi2:.2f}, distribución {conteo}"
+    assert all(v > 0 for v in conteo.values()), f"operaciones_vinculadas: alguna plantilla nunca se eligió: {conteo}"
+
+
 def test_operaciones_vinculadas_importe_dentro_de_cotas_de_plausibilidad(catalogo, arquetipos):
+    # Excepción documentada: "préstamo a matriz" pasa PRIMERO por el techo defensivo de caja
+    # disponible (TECHO_FRACCION_DISPONIBLE_PRESTAMO_MATRIZ en motor/evolucion_arquetipo.py —
+    # protege el cuadre, nunca deja `disponible` negativo) antes que por el suelo de
+    # plausibilidad narrativa (SUELO_IMPORTE_VINCULADAS_EUR): en un caso con poca caja
+    # disponible, el techo puede ganar y el importe citado queda por debajo del suelo "ideal" —
+    # el propio texto sigue siendo el importe REAL del balance (nunca un número inventado), solo
+    # dejamos de exigirle el suelo de "cifra relevante" en ese caso concreto.
     codigos = [re.search(r"\(([^()]+)\)\s*$", s).group(1) for s in catalogo["sector"].unique()]
     fuera_de_cota = []
     for codigo in codigos:
         for intensidad in ("leve", "moderado", "fuerte"):
             for semilla in range(4):
-                ejercicio = _ejercicio(catalogo, arquetipos, codigo, intensidad, semilla)
-                nota = generar_nota_operaciones_vinculadas(codigo, "grandes_medianas", intensidad, semilla, ejercicio)
-                importe = float(re.search(r"([\d\.]+) euros", nota.texto).group(1).replace(".", ""))
+                ejercicio = _ejercicio_operaciones_vinculadas(catalogo, arquetipos, codigo, intensidad, semilla)
+                nota = generar_nota_operaciones_vinculadas(ejercicio)
+                importe_texto = float(re.search(r"([\d\.]+) euros", nota.texto).group(1).replace(".", ""))
+                assert importe_texto == pytest.approx(round(ejercicio.operacion_vinculada_importe_eur / 1000) * 1000, abs=1)
                 activo_total = ejercicio.balance_eur["activo_no_corriente"] + ejercicio.balance_eur["activo_corriente"]
-                if importe < SUELO_IMPORTE_VINCULADAS_EUR - 1 or importe > activo_total:
-                    fuera_de_cota.append((codigo, intensidad, semilla, importe, activo_total))
+                if ejercicio.operacion_vinculada_importe_eur > activo_total:
+                    fuera_de_cota.append((codigo, intensidad, semilla, ejercicio.operacion_vinculada_importe_eur, activo_total))
+                    continue
+                if ejercicio.operacion_vinculada_importe_eur < SUELO_IMPORTE_VINCULADAS_EUR - 1:
+                    excepcion_disponible = (
+                        ejercicio.operacion_vinculada_tipo == "prestamo_matriz"
+                        and ejercicio.inversion_grupo_largo_eur == pytest.approx(
+                            ejercicio.operacion_vinculada_importe_eur, rel=1e-6
+                        )
+                    )
+                    if not excepcion_disponible:
+                        fuera_de_cota.append((codigo, intensidad, semilla, ejercicio.operacion_vinculada_importe_eur, activo_total))
     assert not fuera_de_cota, f"{len(fuera_de_cota)} casos fuera de cota: {fuera_de_cota[:10]}"
 
 
@@ -189,11 +248,12 @@ def test_etiquetas_fijas_por_arquetipo(catalogo, arquetipos, sector):
     assert generar_nota_activo_mantenido_venta(sector, "grandes_medianas", "fuerte", 0, ejercicio).etiquetas == (
         "activo", "desinversion",
     )
-    assert generar_nota_operaciones_vinculadas(sector, "grandes_medianas", "fuerte", 0, ejercicio).etiquetas == (
-        "vinculadas", "partes_relacionadas",
-    )
     assert generar_nota_coberturas(sector, "grandes_medianas", "fuerte", 0, ejercicio).etiquetas == (
         "deuda", "cobertura_riesgo",
+    )
+    ejercicio_vinculadas = _ejercicio_operaciones_vinculadas(catalogo, arquetipos, sector, "fuerte", 0)
+    assert generar_nota_operaciones_vinculadas(ejercicio_vinculadas).etiquetas == (
+        "vinculadas", "partes_relacionadas",
     )
 
 
@@ -211,7 +271,7 @@ def test_arquetipo_22_tiene_etiquetas_distintas_entre_temas(catalogo, arquetipos
 # --------------------------------------------------------------------------------------------
 
 
-def test_despachador_generar_nota_memoria_pura_cubre_los_5_arquetipos(catalogo, arquetipos):
+def test_despachador_generar_nota_memoria_pura_cubre_los_4_arquetipos(catalogo, arquetipos):
     ejercicio = _ejercicio(catalogo, arquetipos, "24.1", "fuerte", 0)
     for arquetipo_id in PREFIJOS:
         nota = generar_nota_memoria_pura(arquetipo_id, "24.1", "grandes_medianas", "fuerte", 0, ejercicio)

@@ -202,92 +202,52 @@ def generar_nota_activo_mantenido_venta(
 
 
 # --------------------------------------------------------------------------------------------
-# Arquetipo 20 — Operaciones vinculadas.
+# Arquetipo 20 — Operaciones vinculadas. Desde el segundo lote de desglose de balance, el
+# arquetipo 20 es `clase="cuantitativo"` (promovido, mismo criterio que "coberturas" en el
+# encargo de grupo 8/9): el sorteo de QUÉ operación y de QUÉ IMPORTE ya no ocurre aquí, sino en
+# `motor.evolucion_arquetipo` (ver `ParametrosOperacionVinculada`/`_sortear_operacion_vinculada`),
+# porque ese importe tiene que aterrizar en el balance (préstamo/financiación de grupo, o una
+# sub-partida de deudores/acreedores comerciales), no solo en el texto de esta nota. Esta función
+# se reduce a FORMATEAR el importe/% ya calculados y guardados en `EjercicioEmpresa` — nunca
+# sortea nada de nuevo (mismo importe citado en la nota y aterrizado en el balance, requisito
+# explícito de este lote: "no generar un número nuevo independiente").
 # --------------------------------------------------------------------------------------------
 
-# % del importe de la operación sobre la magnitud del balance/PyG que le corresponda (ver
-# _BASE_IMPORTE_VINCULADAS por plantilla) — rango propio (no lo fija la sección 2.24): topado
-# por debajo del 20% en todas las intensidades para que la cifra nunca deje de ser plausible
-# frente al tamaño de la empresa (comprobado además en el barrido de verificación).
-RANGOS_IMPORTE_VINCULADAS_PCT = {"leve": (2, 5), "moderado": (5, 10), "fuerte": (10, 18)}
-
-# Suelo defensivo del importe citado, en euros — mismo tipo de cota (huber+techo, o aquí un
-# suelo absoluto) ya usada en otros arquetipos para evitar valores implausibles, aplicado tras
-# comprobar en pruebas de estrés (324 casos) que el % puro, sin suelo, podía dar cifras
-# ridículamente pequeñas para una "operación vinculada relevante" de memoria: mínimo observado
-# 8.000 €, 1 caso por debajo de 10.000 €, 5 por debajo de 20.000 €, 17 por debajo de 50.000 €.
-SUELO_IMPORTE_VINCULADAS_EUR = 30_000.0
-
-# Cada entrada: (plantilla con {importe}/{pct}, magnitud de referencia para calcular el importe).
+# Cada entrada: plantilla con {importe}/{pct} — mismo orden que
+# `motor.evolucion_arquetipo.TIPO_OPERACION_POR_INDICE` (el índice selecciona la misma entrada
+# en ambos módulos).
 _OPERACIONES_VINCULADAS = (
-    (
-        "La sociedad mantiene con su empresa matriz un préstamo intragrupo por importe de "
-        "{importe} euros, equivalente al {pct}% de su patrimonio neto a cierre del ejercicio, "
-        "formalizado en condiciones de mercado según la política de precios de transferencia "
-        "del grupo.",
-        "patrimonio_neto",
-    ),
-    (
-        "Durante el ejercicio la sociedad ha facturado servicios de gestión a una sociedad del "
-        "grupo por importe de {importe} euros, equivalente al {pct}% de la cifra de negocio del "
-        "ejercicio.",
-        "ventas",
-    ),
-    (
-        "La sociedad satisface a uno de sus socios/administradores una renta anual de "
-        "arrendamiento por el uso de un inmueble afecto a la actividad, por importe de "
-        "{importe} euros, equivalente al {pct}% de la cifra de negocio del ejercicio.",
-        "ventas",
-    ),
-    (
-        "La sociedad ha recibido financiación de una sociedad del grupo por importe de "
-        "{importe} euros, equivalente al {pct}% de su deuda financiera total a cierre del "
-        "ejercicio, sin que se hayan devengado gastos financieros adicionales a los ya "
-        "reconocidos en la cuenta de pérdidas y ganancias.",
-        "deuda_financiera",
-    ),
-    (
-        "La empresa matriz ha prestado a la sociedad servicios de asistencia técnica y "
-        "administrativa por importe de {importe} euros durante el ejercicio, equivalente al "
-        "{pct}% de la cifra de negocio, facturados en condiciones de mercado.",
-        "ventas",
-    ),
+    "La sociedad mantiene con su empresa matriz un préstamo intragrupo por importe de "
+    "{importe} euros, equivalente al {pct}% de su patrimonio neto a cierre del ejercicio, "
+    "formalizado en condiciones de mercado según la política de precios de transferencia "
+    "del grupo.",
+    "Durante el ejercicio la sociedad ha facturado servicios de gestión a una sociedad del "
+    "grupo por importe de {importe} euros, equivalente al {pct}% de la cifra de negocio del "
+    "ejercicio.",
+    "La sociedad satisface a uno de sus socios/administradores una renta anual de "
+    "arrendamiento por el uso de un inmueble afecto a la actividad, por importe de "
+    "{importe} euros, equivalente al {pct}% de la cifra de negocio del ejercicio.",
+    "La sociedad ha recibido financiación de una sociedad del grupo por importe de "
+    "{importe} euros, equivalente al {pct}% de su deuda financiera total a cierre del "
+    "ejercicio, sin que se hayan devengado gastos financieros adicionales a los ya "
+    "reconocidos en la cuenta de pérdidas y ganancias.",
+    "La empresa matriz ha prestado a la sociedad servicios de asistencia técnica y "
+    "administrativa por importe de {importe} euros durante el ejercicio, equivalente al "
+    "{pct}% de la cifra de negocio, facturados en condiciones de mercado.",
 )
 
 
-def _magnitud_referencia(ejercicio: EjercicioEmpresa, nombre: str) -> float:
-    if nombre == "ventas":
-        return ejercicio.ventas
-    if nombre == "patrimonio_neto":
-        return ejercicio.balance_eur["patrimonio_neto"]
-    return ejercicio.balance_eur["deudas_fin_largo"] + ejercicio.balance_eur["deudas_fin_corto"]
-
-
-def generar_nota_operaciones_vinculadas(
-    sector: str,
-    segmento: str,
-    intensidad: str,
-    semilla: int,
-    ejercicio: EjercicioEmpresa,
-    etiquetas_ya_usadas: frozenset[str] = frozenset(),
-) -> NotaMemoria:
-    """Arquetipo 20. El importe se calcula como % (rango por intensidad) de la magnitud de
-    balance/PyG que corresponda al tipo de operación de la plantilla elegida — así el importe
-    siempre queda coherente con el tamaño real de la empresa generada, nunca un número
-    arbitrario. Topado por abajo en SUELO_IMPORTE_VINCULADAS_EUR: el `{pct}` mostrado en el
-    texto se RECALCULA sobre el importe ya topado (no el % originalmente sorteado), para que el
-    texto nunca sea internamente inconsistente (un importe y un % que no se correspondan).
-    Etiquetas FIJAS — ver `generar_nota_dependencia_clientes`."""
-    rng = _rng_memoria(sector, segmento, intensidad, "operaciones_vinculadas", semilla)
-    etiquetas_por_indice = [("vinculadas", "partes_relacionadas")] * len(_OPERACIONES_VINCULADAS)
-    indice = _elegir_indice_evitando_colision(rng, etiquetas_por_indice, etiquetas_ya_usadas)
-    plantilla, magnitud_nombre = _OPERACIONES_VINCULADAS[indice]
-    rango_pct = RANGOS_IMPORTE_VINCULADAS_PCT[intensidad]
-    pct_objetivo = rng.uniform(*rango_pct)
-    magnitud = _magnitud_referencia(ejercicio, magnitud_nombre)
-    importe = max(magnitud * pct_objetivo / 100, SUELO_IMPORTE_VINCULADAS_EUR)
-    pct_mostrado = importe / magnitud * 100
-    texto = plantilla.format(importe=_fmt_eur(importe), pct=_fmt_pct(pct_mostrado))
+def generar_nota_operaciones_vinculadas(ejercicio: EjercicioEmpresa) -> NotaMemoria:
+    """Arquetipo 20 — formatea el importe/% YA calculados por `motor.evolucion_arquetipo` sobre
+    `ejercicio` (normalmente el de 2025, igual que el resto de notas de memoria pura: ver
+    `generar_caso_combinado`) — `ejercicio.operacion_vinculada_indice` selecciona la plantilla,
+    `..._importe_eur`/`..._pct_mostrado` ya vienen topados/recalculados (ver docstring del
+    bloque arriba). Requiere `ejercicio.operacion_vinculada_activa` — el llamador (
+    `generar_caso_combinado`) solo la invoca cuando el arquetipo 20 está activo en el caso."""
+    plantilla = _OPERACIONES_VINCULADAS[ejercicio.operacion_vinculada_indice]
+    texto = plantilla.format(
+        importe=_fmt_eur(ejercicio.operacion_vinculada_importe_eur), pct=_fmt_pct(ejercicio.operacion_vinculada_pct_mostrado)
+    )
     return NotaMemoria(
         arquetipo_id="operaciones_vinculadas", numero=20, texto=texto, etiquetas=("vinculadas", "partes_relacionadas")
     )
@@ -465,7 +425,6 @@ def generar_nota_informacion_relevante(
 _GENERADORES = {
     "dependencia_pocos_clientes": generar_nota_dependencia_clientes,
     "activo_mantenido_venta": generar_nota_activo_mantenido_venta,
-    "operaciones_vinculadas": generar_nota_operaciones_vinculadas,
     "coberturas": generar_nota_coberturas,
     "informacion_relevante_memoria": generar_nota_informacion_relevante,
 }
@@ -480,9 +439,12 @@ def generar_nota_memoria_pura(
     ejercicio: EjercicioEmpresa,
     etiquetas_ya_usadas: frozenset[str] = frozenset(),
 ) -> NotaMemoria:
-    """Despacha a la función concreta según `arquetipo_id` (uno de los 5 arquetipos de
-    `clase="memoria_pura"` en data/arquetipos.json). Lanza KeyError si `arquetipo_id` no es
-    ninguno de los 5 — igual de explícito que dejar que el lookup del dict falle."""
+    """Despacha a la función concreta según `arquetipo_id` (uno de los 4 arquetipos de
+    `clase="memoria_pura"` en data/arquetipos.json: 7, 19, 21, 22 — el 20, "operaciones
+    vinculadas", pasó a `clase="cuantitativo"` en el segundo lote de desglose de balance, ver
+    `generar_nota_operaciones_vinculadas`/`generar_caso_combinado`). Lanza KeyError si
+    `arquetipo_id` no es ninguno de los 4 — igual de explícito que dejar que el lookup del dict
+    falle."""
     return _GENERADORES[arquetipo_id](sector, segmento, intensidad, semilla, ejercicio, etiquetas_ya_usadas)
 
 
@@ -576,6 +538,19 @@ def generar_caso_combinado(
         )
         notas_memoria_pura.append(nota_cobertura)
         etiquetas_usadas.update(nota_cobertura.etiquetas)
-        notas_memoria_pura.sort(key=lambda n: n.numero)
+
+    # "operaciones_vinculadas" (20) es `clase="cuantitativo"` desde este segundo lote de
+    # desglose de balance (mismo criterio que "coberturas" arriba): el importe/tipo de operación
+    # ya se sortearon UNA vez dentro de `generar_evolucion_combinada` (ver
+    # `ParametrosOperacionVinculada`) y quedaron aterrizados en el balance — aquí solo se
+    # formatea la nota con ESE mismo importe (`generar_nota_operaciones_vinculadas` ya no
+    # sortea nada, no necesita `etiquetas_ya_usadas`: las 5 plantillas comparten etiqueta fija,
+    # así que no hay colisión que resolver eligiendo otra).
+    if "operaciones_vinculadas" in ids_cuantitativos:
+        nota_vinculadas = generar_nota_operaciones_vinculadas(ejercicio_referencia)
+        notas_memoria_pura.append(nota_vinculadas)
+        etiquetas_usadas.update(nota_vinculadas.etiquetas)
+
+    notas_memoria_pura.sort(key=lambda n: n.numero)
 
     return dataclasses.replace(evolucion, notas_memoria_pura=tuple(notas_memoria_pura))

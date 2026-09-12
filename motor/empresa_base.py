@@ -418,6 +418,132 @@ DISPERSION_PERIODIFICACION = 0.20
 SUELO_PERIODIFICACION_PCT = 0.002
 TECHO_PERIODIFICACION_PCT = 0.15
 
+# --------------------------------------------------------------------------------------------
+# Segundo lote de desglose de balance: "Deudores comerciales y otras cuentas a cobrar" (7
+# sub-partidas oficiales, carve-out de `realizable`) y "Acreedores comerciales y otras cuentas a
+# pagar" (7 sub-partidas oficiales, carve-out de `acreedores_comerciales`) — HIPÓTESIS DE DISEÑO,
+# el catálogo ACCID nunca desglosó ninguna de las dos masas más allá del agregado. Mismo patrón
+# de ruido mixto/renormalizado que el resto de perfiles de este bloque.
+#
+# Deudores — perfil ÚNICO, no por sector/categoría (a diferencia de existencias en el lote 1):
+# verificado contra el dato real (`ratios.cobro_dias` del catálogo, comparado con los "días
+# implícitos" de `realizable_pct` combinados con `rotacion_activo`) que "Clientes" ES,
+# esencialmente, la totalidad de `realizable` en los 27 sectores SIN excepción — ratio cobro_dias
+# real / días implícitos de realizable entre 0,89 y 1,13 en todos los casos, sin el patrón de
+# outliers sectoriales que sí justificó una reclasificación en existencias (ver decisiones_
+# plausibilidad.md #52). No hay señal en el dato real que pida variar este perfil por sector.
+# "Clientes empresas del grupo y asociadas" y "Accionistas por desembolsos exigidos" en 0% en el
+# caso base: el primero solo se activa cuando el arquetipo 20 (operaciones vinculadas) selecciona
+# la operación comercial de facturación de servicios de gestión al grupo (ver
+# motor/evolucion_arquetipo.py, `ParametrosOperacionVinculada`); el segundo es un supuesto
+# excepcional (capital social pendiente de desembolso) sin ningún arquetipo dedicado que lo
+# justifique — se deja en un residuo mínimo de ruido, no un cero forzado.
+PERFIL_DEUDORES_BASE: dict[str, float] = {
+    "clientes": 0.88,
+    "deudores_varios": 0.055,
+    "personal": 0.02,
+    "activos_impuesto_corriente": 0.025,
+    "otros_creditos_aapp": 0.018,
+    "accionistas_desembolsos_exigidos": 0.002,
+    "clientes_empresas_grupo": 0.0,
+}
+
+# Acreedores — perfil POR CATEGORÍA (las mismas 9 de `CATEGORIA_SECTOR`): a diferencia de
+# deudores, aquí SÍ hay una señal real que considerar (`ratios.pago_dias`), pero el diagnóstico ya
+# cerrado (mismo patrón de distorsión que `ratios.coste_deuda`, ver docs/decisiones_
+# plausibilidad.md) descarta usarla como ancla LITERAL: el denominador de `pago_dias` (compras/
+# consumos de explotación) es minúsculo en sectores de servicios, dispara el ratio sin que
+# signifique un plazo de pago real más largo — comparado contra los "días implícitos" de
+# acreedores_comerciales_pct + rotacion_activo, la divergencia va de 1,1x hasta 10,2x (peor en
+# 69.2/85/55.1, los mismos sectores "casi sin producto físico" del lote 1). Se usa en su lugar
+# solo la DIRECCIÓN cualitativa que el propio dato SÍ confirma con solidez (gastos_personal_pct
+# del catálogo, dato fiable): categorías intensivas en mano de obra (servicios profesionales/TIC,
+# administración/educación/sanidad) llevan más peso relativo en "Personal (remuneraciones
+# pendientes de pago)" y algo menos en "Proveedores" que categorías intensivas en compra de
+# materiales/mercancía (industria, comercio, construcción), donde "Proveedores" domina con más
+# fuerza. "Proveedores empresas del grupo" en 0% en el caso base (mismo criterio que "Clientes
+# empresas del grupo": solo se activa vía arquetipo 20). "Anticipos de clientes" más alto en
+# categorías con cobro anticipado habitual (construcción, administración/educación/sanidad,
+# TIC) — mismo criterio cualitativo ya usado en PERIODIFICACION_PASIVO_PCT_POR_CATEGORIA.
+PERFIL_ACREEDORES_POR_CATEGORIA: dict[str, dict[str, float]] = {
+    "industria": {
+        "proveedores": 0.82, "personal": 0.035, "acreedores_varios": 0.05,
+        "pasivos_impuesto_corriente": 0.03, "otras_deudas_aapp": 0.03, "anticipos_clientes": 0.035,
+        "proveedores_empresas_grupo": 0.0,
+    },
+    "servicios_industriales": {
+        "proveedores": 0.72, "personal": 0.06, "acreedores_varios": 0.06,
+        "pasivos_impuesto_corriente": 0.035, "otras_deudas_aapp": 0.035, "anticipos_clientes": 0.09,
+        "proveedores_empresas_grupo": 0.0,
+    },
+    "servicios_profesionales": {
+        "proveedores": 0.55, "personal": 0.16, "acreedores_varios": 0.09,
+        "pasivos_impuesto_corriente": 0.05, "otras_deudas_aapp": 0.045, "anticipos_clientes": 0.105,
+        "proveedores_empresas_grupo": 0.0,
+    },
+    "servicios_tic": {
+        "proveedores": 0.52, "personal": 0.15, "acreedores_varios": 0.08,
+        "pasivos_impuesto_corriente": 0.045, "otras_deudas_aapp": 0.04, "anticipos_clientes": 0.165,
+        "proveedores_empresas_grupo": 0.0,
+    },
+    "transporte_logistica": {
+        "proveedores": 0.75, "personal": 0.08, "acreedores_varios": 0.05,
+        "pasivos_impuesto_corriente": 0.03, "otras_deudas_aapp": 0.03, "anticipos_clientes": 0.06,
+        "proveedores_empresas_grupo": 0.0,
+    },
+    "comercio_hosteleria": {
+        "proveedores": 0.80, "personal": 0.065, "acreedores_varios": 0.045,
+        "pasivos_impuesto_corriente": 0.03, "otras_deudas_aapp": 0.03, "anticipos_clientes": 0.03,
+        "proveedores_empresas_grupo": 0.0,
+    },
+    "construccion": {
+        "proveedores": 0.68, "personal": 0.05, "acreedores_varios": 0.05,
+        "pasivos_impuesto_corriente": 0.03, "otras_deudas_aapp": 0.03, "anticipos_clientes": 0.16,
+        "proveedores_empresas_grupo": 0.0,
+    },
+    "administracion_educacion_sanidad": {
+        "proveedores": 0.58, "personal": 0.14, "acreedores_varios": 0.055,
+        "pasivos_impuesto_corriente": 0.035, "otras_deudas_aapp": 0.04, "anticipos_clientes": 0.15,
+        "proveedores_empresas_grupo": 0.0,
+    },
+    "inmobiliario": {
+        "proveedores": 0.65, "personal": 0.05, "acreedores_varios": 0.06,
+        "pasivos_impuesto_corriente": 0.035, "otras_deudas_aapp": 0.035, "anticipos_clientes": 0.17,
+        "proveedores_empresas_grupo": 0.0,
+    },
+}
+
+DISPERSION_PERFIL_DEUDORES_ACREEDORES = 0.20
+SUELO_COMPONENTE_DEUDORES_ACREEDORES_PCT = 0.002
+
+
+def generar_perfil_deudores(rng: np.random.Generator) -> dict[str, float]:
+    """Las 7 fracciones oficiales de deudores comerciales para UN caso — perfil único (ver
+    docstring arriba), mismo mecanismo que `generar_perfil_existencias` (ruido mixto,
+    renormalizado a 1.0)."""
+    brutos = {}
+    for componente, centro in PERFIL_DEUDORES_BASE.items():
+        suelo = SUELO_COMPONENTE_DEUDORES_ACREEDORES_PCT if centro > 0 else 0.0
+        valor, _ = _generar_partida(
+            rng, centro, max(centro, 0.01) * DISPERSION_PERFIL_DEUDORES_ACREEDORES, suelo=suelo,
+        )
+        brutos[componente] = valor if centro > 0 else 0.0
+    return _renormalizar_a_total(brutos, 1.0)
+
+
+def generar_perfil_acreedores(rng: np.random.Generator, categoria: str) -> dict[str, float]:
+    """Las 7 fracciones oficiales de acreedores comerciales para UN caso — perfil por categoría
+    de sector (ver docstring arriba), mismo mecanismo que `generar_perfil_existencias`."""
+    perfil_centro = PERFIL_ACREEDORES_POR_CATEGORIA[categoria]
+    brutos = {}
+    for componente, centro in perfil_centro.items():
+        suelo = SUELO_COMPONENTE_DEUDORES_ACREEDORES_PCT if centro > 0 else 0.0
+        valor, _ = _generar_partida(
+            rng, centro, max(centro, 0.01) * DISPERSION_PERFIL_DEUDORES_ACREEDORES, suelo=suelo,
+        )
+        brutos[componente] = valor if centro > 0 else 0.0
+    return _renormalizar_a_total(brutos, 1.0)
+
 
 def categoria_de_sector(sector_codigo: str) -> str:
     if sector_codigo not in CATEGORIA_SECTOR:
@@ -550,6 +676,15 @@ class EmpresaBase:
     periodificacion_activo_eur: float = 0.0
     periodificacion_pasivo_corto_eur: float = 0.0
     periodificacion_pasivo_largo_eur: float = 0.0
+    # Segundo lote de desglose de balance (deudores/acreedores comerciales) — mismo patrón:
+    # perfil (%) BASE fijo desde 2023 (arquetipo-agnóstico; `motor.evolucion_arquetipo` lo
+    # sobrescribe en el año base si el arquetipo 20 activa una operación comercial concreta,
+    # ver `ParametrosOperacionVinculada`), desglose (€) recalculado cada año sobre la masa
+    # agregada ya cuadrada de ese año.
+    deudores_perfil_pct: dict[str, float] = field(default_factory=dict)
+    deudores_desglose_eur: dict[str, float] = field(default_factory=dict)
+    acreedores_perfil_pct: dict[str, float] = field(default_factory=dict)
+    acreedores_desglose_eur: dict[str, float] = field(default_factory=dict)
 
 
 def _mapa_codigo_sector(catalogo: pd.DataFrame) -> dict[str, str]:
@@ -870,6 +1005,22 @@ def generar_empresa_base(
     periodificacion_pasivo_corto_eur = periodificacion_pasivo_corto_pct * balance_eur["otras_deudas_corto"]
     periodificacion_pasivo_largo_eur = periodificacion_pasivo_largo_pct * balance_eur["otras_deudas_largo"]
 
+    # Segundo lote de desglose de balance (deudores/acreedores comerciales) — RNG PROPIO E
+    # INDEPENDIENTE, mismo criterio que el resto de perfiles de este bloque. Perfil BASE
+    # (arquetipo-agnóstico): `motor.evolucion_arquetipo.generar_evolucion_combinada` lo
+    # sobrescribe en el año base si el arquetipo 20 está activo, ver ese módulo.
+    rng_desglose_balance_lote2 = np.random.default_rng(
+        [semilla, zlib.crc32(f"{sector}|{segmento}|desglose_balance_lote2".encode("utf-8"))]
+    )
+    perfil_deudores = generar_perfil_deudores(rng_desglose_balance_lote2)
+    perfil_acreedores = generar_perfil_acreedores(rng_desglose_balance_lote2, categoria)
+    deudores_desglose_eur = {
+        componente: fraccion * balance_eur["realizable"] for componente, fraccion in perfil_deudores.items()
+    }
+    acreedores_desglose_eur = {
+        componente: fraccion * balance_eur["acreedores_comerciales"] for componente, fraccion in perfil_acreedores.items()
+    }
+
     parcial_pyg = _generar_pyg_hasta_baii(rng, fila, ventas_objetivo, _AÑO_BASE_AMORTIZACION, amortizaciones_eur=amortizacion_eur_2023)
     pyg_pct, pyg_eur = _completar_pyg_con_deuda(parcial_pyg, deuda_financiera_eur)
 
@@ -911,4 +1062,8 @@ def generar_empresa_base(
         periodificacion_activo_eur=periodificacion_activo_eur,
         periodificacion_pasivo_corto_eur=periodificacion_pasivo_corto_eur,
         periodificacion_pasivo_largo_eur=periodificacion_pasivo_largo_eur,
+        deudores_perfil_pct=perfil_deudores,
+        deudores_desglose_eur=deudores_desglose_eur,
+        acreedores_perfil_pct=perfil_acreedores,
+        acreedores_desglose_eur=acreedores_desglose_eur,
     )

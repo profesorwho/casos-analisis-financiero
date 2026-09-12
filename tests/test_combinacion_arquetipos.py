@@ -31,7 +31,6 @@ from motor.evolucion_arquetipo import (
 from motor.memoria import (
     PLANTILLAS_ACTIVO_MANTENIDO_VENTA,
     PLANTILLAS_COBERTURAS,
-    _OPERACIONES_VINCULADAS,
     generar_caso_combinado,
 )
 
@@ -183,11 +182,22 @@ def test_etiquetas_de_18_19_20_21_son_exhaustivamente_disjuntas_dos_a_dos(catalo
         len(PLANTILLAS_ACTIVO_MANTENIDO_VENTA),
         "activo_mantenido_venta",
     )
-    etiquetas_20 = _recolectar(
-        __import__("motor.memoria", fromlist=["generar_nota_operaciones_vinculadas"]).generar_nota_operaciones_vinculadas,
-        len(_OPERACIONES_VINCULADAS),
-        "operaciones_vinculadas",
-    )
+    # operaciones_vinculadas (20) ya no encaja en `_recolectar` (desde el segundo lote de
+    # desglose de balance es `clase="cuantitativo"`, su nota ya no sortea nada por sí misma —
+    # ver motor/evolucion_arquetipo.py, ParametrosOperacionVinculada): se verifica igual —
+    # etiquetas fijas en un único conjunto — pero generando casos donde el arquetipo esté
+    # REALMENTE activo, no sobre `ejercicio_referencia` (que no lo tiene).
+    generar_nota_operaciones_vinculadas = __import__(
+        "motor.memoria", fromlist=["generar_nota_operaciones_vinculadas"]
+    ).generar_nota_operaciones_vinculadas
+    etiquetas_20: set[tuple[str, ...]] = set()
+    for semilla in range(8):
+        evolucion_vinculadas = generar_evolucion_arquetipo(
+            "24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=semilla, intensidad="fuerte",
+            arquetipo_id="operaciones_vinculadas", catalogo=catalogo, arquetipos=arquetipos,
+        )
+        nota_vinculadas = generar_nota_operaciones_vinculadas(evolucion_vinculadas.ejercicios[2025])
+        etiquetas_20.add(nota_vinculadas.etiquetas)
     etiquetas_21 = _recolectar(
         __import__("motor.memoria", fromlist=["generar_nota_coberturas"]).generar_nota_coberturas,
         len(PLANTILLAS_COBERTURAS),
