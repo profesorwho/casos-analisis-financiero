@@ -507,6 +507,7 @@ from motor.coberturas_subvenciones import (
     sortear_subvencion_baseline,
 )
 from motor.catalogo import cargar_y_validar_catalogo
+from motor.clasificacion_legal import estimar_plantilla, estimar_ventas_por_empleado
 from motor.empresa_base import (
     TOLERANCIA_CUADRE_EUR,
     EmpresaBase,
@@ -554,6 +555,14 @@ INTENSIDAD_BASE = {"leve": 0.15, "moderado": 0.30, "fuerte": 0.50}
 INTENSIDAD_BASE_APALANCAMIENTO = {"leve": 0.02, "moderado": 0.08, "fuerte": 0.25}
 INTENSIDAD_BASE_MEJORA_MARGEN = {"leve": 0.02, "moderado": 0.07, "fuerte": 0.22}
 INTENSIDAD_BASE_MEJORA_EBITDA = {"leve": 0.015, "moderado": 0.06, "fuerte": 0.22}
+
+# 8/16 (reclasificacion_deuda) — intento de recalibración (#76) PENDIENTE, no aplicado todavía:
+# al corregir el ancla a la definición ACCID de `ratios.calidad_deuda` (Pasivo corriente/Deudas
+# totales — ver #71/#74), CUALQUIER intensidad saturaba el reparto largo/corto al límite
+# estructural, incluida "leve" cerca de cero — se descubrió que `ratios.calidad_deuda` ya tiene un
+# suelo de ruido de base (~24-25%) idéntico al hallazgo mayor de #73/#75 (acumulación de ruido
+# entre años, independiente de cualquier arquetipo): no se puede calibrar esta escala de forma
+# aislada hasta que se decida el abordaje de #75. Ver decisiones_plausibilidad.md #76.
 
 # 14 (roe_elevado_apalancamiento) es una variante exacta de 9 (mismo EfectoApalancamiento, mismo
 # ratio_catalogo y dirección — ver docstring del módulo) y comparte su escala automáticamente.
@@ -797,6 +806,254 @@ class EvolucionArquetipoError(ValueError):
     """Parámetros de entrada inválidos."""
 
 
+# --------------------------------------------------------------------------------------------
+# Validación de plausibilidad del caso completo (sección 2.13) — pasada FINAL, independiente de
+# qué arquetipos estén activos, sobre el caso YA generado (3 años, con toda la desagregación).
+# Complementa (no sustituye) las contenciones ya existentes atadas a un arquetipo concreto
+# (endeudamiento, `_limitar_por_subtotal`, `_limitar_gastos_personal_por_baii`, masa_circulante):
+# esta pasada es DIAGNÓSTICO puro — nunca fuerza ningún valor — porque la mayoría de los 25
+# ratios del catálogo (`ratios.*`) no tienen ninguna palanca de amortiguación natural atada a
+# un mecanismo de arquetipo (ver CLAUDE.md, sección "Validación de plausibilidad del caso
+# completo", y decisiones_plausibilidad.md #70 en adelante para el diseño completo, aprobado por
+# el usuario antes de implementar). Cubre los 25 `ratios.*` + `pyg.baii_pct`/`pyg.margen_bruto_
+# pct` (para cerrar el hallazgo original que motivó este encargo — un caso sin arquetipo activo
+# puede salir implausible en esos dos SIN que nada lo detectara, ver decisiones #18/#39).
+#
+# Mismo criterio Huber±3·MAD ya usado en todo el proyecto (N_DESVIACIONES_TECHO_PYG/
+# _ENDEUDAMIENTO). Una señal NO es un error: el propio diseño de ruido (85% típico/15% atípico)
+# espera atípicos reales — el objetivo es que queden correctamente etiquetados, no eliminarlos.
+N_DESVIACIONES_PLAUSIBILIDAD_CASO = 3.0
+
+# Tolerancia mínima frente al techo/suelo — hallazgo del stress test: las contenciones ya
+# existentes (`_endeudamiento`, `_limitar_por_subtotal`, `_limitar_gastos_personal_por_baii`)
+# corrigen hasta dejar el valor EXACTO en su propio techo/suelo, pero la convergencia iterativa
+# de `_endeudamiento` (tolerancia en euros, `TOLERANCIA_CONVERGENCIA_DETERIORO_EUR`) y la propia
+# aritmética de coma flotante ("100.0 - techo_subtotal") dejan el valor final una fracción
+# ínfima (1e-11 a 1e-13 observado) por DEBAJO del techo exacto — sin esta tolerancia, un caso ya
+# corregido con éxito hasta el límite quedaba sin señalizar aquí, rompiendo el superconjunto del
+# punto 4. `1e-6` (en unidades de "número de MAD") es varios órdenes de magnitud mayor que el
+# ruido observado, pero sigue siendo perceptualmente cero frente al umbral de 3,0.
+EPSILON_DESVIACIONES_PLAUSIBILIDAD_CASO = 1e-6
+
+# Ratios con ancla de catálogo YA diagnosticada como contaminada en encargos anteriores —
+# incluirlos generaría ruido masivo sin decir nada nuevo (mismo hallazgo, no se re-investiga):
+#   - coste_deuda: denominador "Préstamos" distorsionado (decisiones #41-44).
+#   - pago_dias: mismo patrón, denominador de compras minúsculo en servicios (#55).
+#   - cobertura_gastos_fin: hereda la contaminación de "gastos financieros" (#45).
+# Se calculan igual (quedan expuestos en `PlausibilidadCaso.valores_por_año` para quien quiera
+# consultarlos) pero NUNCA generan una `SeñalRatio` — no cuentan como "caso implausible".
+RATIOS_ANCLA_CONTAMINADA_INFORMATIVOS = ("ratios.coste_deuda", "ratios.pago_dias", "ratios.cobertura_gastos_fin")
+
+# Circularidad — revisión sistemática de los 27 pedida explícitamente (no solo el caso que se
+# detectó por casualidad): ¿hay algún punto del motor que sortee un valor usando LITERALMENTE
+# el mismo huber_9y/huber_scale_mad que esta pasada comprobaría? Encontrados 2 (el resto solo
+# combina sorteos de columnas DISTINTAS — masa_circulante/calidad_deuda/capex anclan su
+# continuidad a una columna ratios.* distinta de la que sortea la masa en sí, balance.*, así que
+# no son circulares, son combinaciones genuinamente emergentes):
+#   - ventas_empleado: `motor.clasificacion_legal.estimar_plantilla` define
+#     `plantilla = cifra_negocio / ventas_empleado_sorteado` — recalcular ventas/plantilla
+#     reproduce EXACTO el valor sorteado, en los 3 años (la plantilla se deriva de él, no al
+#     revés). Excluido de señal siempre.
+#   - rotacion_activo: SOLO en el año base (2023) — `generar_empresa_base` sortea
+#     `rotacion_activo` y calcula `activo_total = ventas/rotacion_activo_sorteado` (el plug de
+#     cuadre solo toca `otras_deudas_corto`, nunca activo, así que no lo desvía) — recalcularlo
+#     en 2023 reproduce el mismo valor. En 2024/2025 NO es circular: no se vuelve a sortear, el
+#     activo evoluciona por ventas + efectos de arquetipo (capex/adquisición), así que la ratio
+#     derivada esos años sí puede desviarse de verdad. Excluido de señal solo en el año base.
+RATIO_CIRCULAR_SIEMPRE = "ratios.ventas_empleado"
+RATIO_CIRCULAR_SOLO_AÑO_BASE = "ratios.rotacion_activo"
+
+# Los 25 `ratios.*` (menos los 3 de ancla contaminada, informativos-sin-señal arriba, y menos
+# ventas_empleado, circular puro) + los 2 `pyg.*` que cierran el hallazgo original — 23 en total,
+# CADA UNO comprobado con Huber±3·MAD sobre el valor YA generado del caso (nunca sorteado aquí).
+RATIOS_PLAUSIBILIDAD_SEÑALIZABLES = (
+    "ratios.liquidez", "ratios.tesoreria", "ratios.disponibilidad_ratio",
+    "ratios.fm_ventas", "ratios.fm_activo", "ratios.endeudamiento",
+    "ratios.calidad_deuda", "ratios.capacidad_devolucion",
+    "ratios.rotacion_activo", "ratios.rotacion_activo_no_corriente", "ratios.rotacion_activo_corriente",
+    "ratios.rotacion_existencias", "ratios.plazo_existencias", "ratios.cobro_dias",
+    "ratios.financiacion_clientes", "ratios.roi", "ratios.roe",
+    "ratios.flujo_caja_activo", "ratios.flujo_caja_ventas",
+    "ratios.beneficio_empleado", "ratios.gastos_personal_empleado",
+    "pyg.baii_pct", "pyg.margen_bruto_pct",
+)
+
+
+def _ratios_derivados_del_caso(ejercicio: "EjercicioEmpresa", plantilla_estimada: float) -> dict[str, float | None]:
+    """Calcula TODOS los ratios de esta pasada (señalizables + informativos + circular) a partir
+    de cifras YA generadas del ejercicio — ninguno se sortea aquí. `None` si el denominador es
+    0 (caso degenerado, sin sentido comprobar). Fórmulas estándar del análisis de estados
+    financieros. Fórmulas verificadas contra el texto literal del PDF ACCID (`docs/ratios2024.
+    pdf`, secciones 4.2-4.6), no de memoria — mismo estándar ya aplicado a `coste_deuda` en su
+    momento (#41). Documenta 2 discrepancias encontradas al verificar, sobre mecanismos YA
+    existentes y cerrados (`rotacion_existencias` en `masa_circulante`, `calidad_deuda` en
+    `reclasificacion_deuda`) — ver decisiones_plausibilidad.md #71: esta función usa la fórmula
+    CORRECTA del PDF (necesario para que la comprobación contra el Huber del catálogo tenga
+    sentido), aunque difiera de la que usan esos mecanismos internos — no se tocó su código."""
+    b = ejercicio.balance_eur
+    p = ejercicio.pyg_eur
+    ventas = ejercicio.ventas
+    consumos_eur = p["consumos_explotacion"]
+    activo_total_eur = b["activo_no_corriente"] + b["activo_corriente"]
+    pasivo_total_eur = b["pasivo_no_corriente"] + b["pasivo_corriente"]
+    deuda_financiera_eur = b["deudas_fin_largo"] + b["deudas_fin_corto"]
+    fondo_maniobra_eur = b["activo_corriente"] - b["pasivo_corriente"]
+    flujo_caja_eur = p["resultado_ejercicio"] + p["amortizaciones"]
+
+    def _div(numerador: float, denominador: float) -> float | None:
+        return numerador / denominador if denominador else None
+
+    return {
+        "ratios.liquidez": _div(b["activo_corriente"], b["pasivo_corriente"]),
+        "ratios.tesoreria": _div(b["realizable"] + b["disponible"], b["pasivo_corriente"]),
+        "ratios.disponibilidad_ratio": _div(b["disponible"], b["pasivo_corriente"]),
+        "ratios.fm_ventas": _div(fondo_maniobra_eur, ventas),
+        "ratios.fm_activo": _div(fondo_maniobra_eur, activo_total_eur),
+        "ratios.endeudamiento": _div(pasivo_total_eur, activo_total_eur),
+        # PDF: "Calidad de la deuda = Pasivo corriente / Deudas totales" — proporción de deuda a
+        # CORTO sobre el TOTAL de pasivo (financiero + no financiero), cuanto más bajo mejor
+        # calidad. Distinto del que usa `reclasificacion_deuda` (deudas_fin_largo/deuda_
+        # financiera — solo deuda CON coste, polaridad inversa) — ver decisiones #71.
+        "ratios.calidad_deuda": _div(b["pasivo_corriente"], pasivo_total_eur),
+        # PDF: "Capacidad de devolución = (Resultado neto+Amortizaciones) / Deudas totales" (el
+        # propio texto explica que sustituye "Préstamos" por "total de deudas" al no poder
+        # aislar los préstamos en un balance abreviado real).
+        "ratios.capacidad_devolucion": _div(flujo_caja_eur, pasivo_total_eur),
+        "ratios.cobertura_gastos_fin": _div(p["baii"], p["gastos_financieros"]),
+        "ratios.coste_deuda": _div(p["gastos_financieros"], deuda_financiera_eur),
+        "ratios.rotacion_activo": _div(ventas, activo_total_eur),
+        "ratios.rotacion_activo_no_corriente": _div(ventas, b["activo_no_corriente"]),
+        "ratios.rotacion_activo_corriente": _div(ventas, b["activo_corriente"]),
+        # PDF: "Rotación de stocks = Consumos / Existencias" — NO ventas. Distinto del ancla que
+        # usa `masa_circulante` (arquetipos 1/5) para este mismo ratio, ver decisiones #71.
+        "ratios.rotacion_existencias": _div(consumos_eur, b["existencias"]),
+        # PDF: "Plazo de existencias = Existencias / Consumos de explotación × 365" — NO ventas
+        # (a diferencia de cobro_dias, que SÍ usa ventas).
+        "ratios.plazo_existencias": _div(b["existencias"], consumos_eur) * DIAS_AÑO if consumos_eur else None,
+        "ratios.cobro_dias": _div(b["realizable"], ventas) * DIAS_AÑO if ventas else None,
+        # PDF: "Plazo de pago = Acreedores comerciales / Compras × 365" — el motor no modela
+        # "Compras" como línea propia; se aproxima con consumos_explotacion (mismo denominador
+        # que plazo_existencias) — MISMA distorsión ya diagnosticada para pago_dias (#55), por
+        # eso queda excluido de señal dura de todos modos (RATIOS_ANCLA_CONTAMINADA_INFORMATIVOS).
+        "ratios.pago_dias": _div(b["acreedores_comerciales"], consumos_eur) * DIAS_AÑO if consumos_eur else None,
+        # PDF: "Financiación de la inversión en clientes por acreedores comerciales = Acreedores
+        # comerciales / Clientes" — un ratio directo, NO una cifra en días (mi primer borrador lo
+        # trataba como "días", fórmula equivocada — Clientes aproximado por `realizable`, mismo
+        # criterio ya establecido en el lote 2, cobro_dias ≈ realizable).
+        "ratios.financiacion_clientes": _div(b["acreedores_comerciales"], b["realizable"]),
+        "ratios.roi": _div(p["baii"], activo_total_eur),
+        "ratios.roe": _div(p["resultado_ejercicio"], b["patrimonio_neto"]),
+        "ratios.flujo_caja_activo": _div(flujo_caja_eur, activo_total_eur),
+        "ratios.flujo_caja_ventas": _div(flujo_caja_eur, ventas),
+        # Las 3 ratios "por empleado" del catálogo están en MILES de € (confirmado: huber_9y de
+        # ventas_empleado ronda 300-900, imposible en € crudos para una cifra "por empleado" —
+        # ya documentado así en motor.clasificacion_legal). Mi primer borrador devolvía € crudos
+        # — error de unidades, corregido (÷1000).
+        "ratios.ventas_empleado": _div(ventas, plantilla_estimada * 1000) if plantilla_estimada else None,
+        "ratios.beneficio_empleado": _div(p["resultado_ejercicio"], plantilla_estimada * 1000) if plantilla_estimada else None,
+        "ratios.gastos_personal_empleado": _div(p["gastos_personal"], plantilla_estimada * 1000) if plantilla_estimada else None,
+        "pyg.baii_pct": ejercicio.pyg_pct["baii"],
+        "pyg.margen_bruto_pct": ejercicio.pyg_pct["margen_bruto"],
+    }
+
+
+@dataclass(frozen=True)
+class SeñalRatio:
+    """Un ratio, en un año concreto, fuera de `huber_9y ± N_DESVIACIONES_PLAUSIBILIDAD_CASO ×
+    huber_scale_mad` del sector — diagnóstico, nunca una corrección: el valor citado aquí es el
+    mismo que ya quedó en `balance_eur`/`pyg_eur`, sin modificar."""
+
+    ratio: str
+    año: int
+    valor: float
+    huber_9y: float
+    huber_scale_mad: float
+    desviaciones: float  # (valor - huber_9y) / huber_scale_mad, CON signo
+    direccion: str  # "por_encima" | "por_debajo"
+
+
+@dataclass(frozen=True)
+class PlausibilidadCaso:
+    """Resultado de la pasada final de plausibilidad (sección 2.13) sobre un caso completo (los
+    3 años). Superconjunto de las señales ya existentes (`riesgo_endeudamiento`, `riesgo_
+    plausibilidad_pyg`, etc.) — nunca las sustituye ni las contradice: cuando esas ya están
+    activas, las señales de este informe para el mismo ratio/año deben coincidir siempre (
+    verificado en el stress test, no solo asumido)."""
+
+    señales: tuple[SeñalRatio, ...]
+    # TODOS los ratios calculados por año, señalizables o no (incluye los de ancla contaminada y
+    # el circular) — para quien quiera inspeccionar el detalle completo, no solo las señales.
+    valores_por_año: dict[int, dict[str, float | None]]
+
+    @property
+    def tiene_señales(self) -> bool:
+        return len(self.señales) > 0
+
+    def señales_de(self, ratio: str) -> tuple[SeñalRatio, ...]:
+        return tuple(s for s in self.señales if s.ratio == ratio)
+
+
+def _evaluar_plausibilidad_caso(
+    ejercicios: dict[int, "EjercicioEmpresa"], fila: pd.Series, plantilla_por_año: dict[int, float]
+) -> PlausibilidadCaso:
+    """Ejecuta la pasada sobre los 3 años ya generados — ver constantes/docstring arriba para el
+    diseño completo. Llamada UNA vez, al final de `generar_evolucion_combinada`, después de que
+    todos los arquetipos ya se aplicaron."""
+    señales: list[SeñalRatio] = []
+    valores_por_año: dict[int, dict[str, float | None]] = {}
+    for año, ejercicio in ejercicios.items():
+        valores = _ratios_derivados_del_caso(ejercicio, plantilla_por_año[año])
+        valores_por_año[año] = valores
+        for ratio in RATIOS_PLAUSIBILIDAD_SEÑALIZABLES:
+            if ratio == RATIO_CIRCULAR_SOLO_AÑO_BASE and año == AÑO_BASE:
+                continue
+            valor = valores[ratio]
+            if valor is None:
+                continue
+            huber = fila[f"{ratio}.huber_9y"]
+            mad = fila[f"{ratio}.huber_scale_mad"]
+            if mad < 0:
+                continue  # dato de catálogo inválido (no debería ocurrir, defensivo)
+            # `huber_scale_mad == 0` (varianza histórica nula en la muestra del sector) NO se
+            # salta — mismo criterio que ya usa `_endeudamiento` (huber + 3·0 = huber, degenera
+            # a un techo exacto): CUALQUIER desviación de `huber` es, por definición, un caso sin
+            # precedente en la muestra. `desviaciones` se reporta como +-inf en ese caso (no hay
+            # escala con la que medir "cuántas MAD", pero SÍ hay una dirección clara).
+            if mad == 0:
+                desviaciones = float("inf") if valor > huber else (float("-inf") if valor < huber else 0.0)
+            else:
+                desviaciones = (valor - huber) / mad
+            # Comparación INCLUSIVA (>=/<=), no estricta — hallazgo del stress test: las
+            # contenciones ya existentes (`_endeudamiento`, `_limitar_por_subtotal`,
+            # `_limitar_gastos_personal_por_baii`) corrigen ANALÍTICAMENTE hasta dejar el valor
+            # EXACTO en su propio techo/suelo (huber±3·MAD), nunca por debajo — con `>` estricto,
+            # un caso "corregido con éxito hasta el límite exacto" no quedaba señalizado aquí,
+            # rompiendo la garantía de superconjunto del punto 4 (`riesgo_endeudamiento`/
+            # `riesgo_plausibilidad_pyg` a True sin señal nueva correspondiente). Verificado
+            # también que degenera correctamente para las 8 desviaciones = 0 (mad=0, valor=huber).
+            tolerancia = EPSILON_DESVIACIONES_PLAUSIBILIDAD_CASO * mad if mad > 0 else EPSILON_DESVIACIONES_PLAUSIBILIDAD_CASO
+            if ratio == "ratios.endeudamiento":
+                # Mismo techo EXACTO que ya usa la contención de endeudamiento (huber+3·MAD
+                # recortado a TECHO_ENDEUDAMIENTO_MAXIMO_ABSOLUTO=0,85) — sin este ajuste, un
+                # caso con `riesgo_endeudamiento=True` por haber tocado el techo absoluto
+                # (huber+3·MAD de ese sector > 0,85) podría NO quedar señalizado aquí (huber+
+                # 3·MAD sin recortar es más laxo). El suelo (endeudamiento inusualmente BAJO) no
+                # tiene ningún recorte absoluto ya establecido, usa el criterio genérico.
+                techo = min(huber + N_DESVIACIONES_PLAUSIBILIDAD_CASO * mad, TECHO_ENDEUDAMIENTO_MAXIMO_ABSOLUTO)
+                suelo = huber - N_DESVIACIONES_PLAUSIBILIDAD_CASO * mad
+                fuera_de_rango = valor >= techo - tolerancia or valor <= suelo + tolerancia
+            else:
+                fuera_de_rango = abs(desviaciones) >= N_DESVIACIONES_PLAUSIBILIDAD_CASO - EPSILON_DESVIACIONES_PLAUSIBILIDAD_CASO
+            if fuera_de_rango:
+                señales.append(
+                    SeñalRatio(
+                        ratio=ratio, año=año, valor=valor, huber_9y=huber, huber_scale_mad=mad,
+                        desviaciones=desviaciones, direccion="por_encima" if desviaciones > 0 else "por_debajo",
+                    )
+                )
+    return PlausibilidadCaso(señales=tuple(señales), valores_por_año=valores_por_año)
+
+
 @dataclass(frozen=True)
 class NotaMemoria:
     """Una nota de memoria, con sus etiquetas temáticas — vive aquí (no en motor.memoria) porque
@@ -1008,6 +1265,7 @@ class EvolucionArquetipo:
     notas_memoria_pura: tuple[NotaMemoria, ...] = ()  # notas de arquetipos clase="memoria_pura" (7/19/20/21/22)
     # activos en el caso, si los hay — no van por año (no son de un ejercicio concreto), las genera y
     # resuelve motor.memoria.generar_caso_combinado, no este módulo (que no depende de motor.memoria).
+    plausibilidad: PlausibilidadCaso | None = None  # pasada final de plausibilidad (sección 2.13) — ver ese bloque arriba
 
 
 def _endeudamiento(balance_eur: dict[str, float]) -> float:
@@ -1085,9 +1343,23 @@ def _masa_circulante_objetivo(
 ) -> float:
     huber = fila[f"{efecto.ratio_catalogo}.huber_9y"]
     if efecto.formula == "rotacion":
-        ratio_anterior = anterior.ventas / anterior.balance_eur[efecto.variable]
+        if efecto.ratio_catalogo == "ratios.rotacion_existencias":
+            # ACCID (docs/ratios2024.pdf) define la rotación de existencias como Consumos de
+            # explotación / Existencias, NO Ventas/Existencias — el Huber/MAD del catálogo se
+            # calculó sobre esa definición, así que el ancla debe moverse en ese mismo espacio
+            # (ver decisiones_plausibilidad.md #71/#74: usar ventas aquí comparaba una magnitud
+            # contra el Huber de otra). Los consumos de ESTE año todavía no existen en este punto
+            # del pipeline (se generan después, en `_evaluar`) — se estiman proporcionales al
+            # mismo crecimiento que ya se aplicó a `ventas` (incluida cualquier inorgánica de
+            # adquisición), igual criterio que el resto de masas no tocadas por el arquetipo.
+            base_anterior_eur = anterior.pyg_eur["consumos_explotacion"]
+            base_actual_eur = base_anterior_eur * (ventas / anterior.ventas)
+        else:
+            base_anterior_eur = anterior.ventas
+            base_actual_eur = ventas
+        ratio_anterior = base_anterior_eur / anterior.balance_eur[efecto.variable]
         nuevo_ratio = _mover_ratio_continuo(ratio_anterior, efecto.direccion, intensidad_efectiva, huber)
-        return ventas / nuevo_ratio
+        return base_actual_eur / nuevo_ratio
     ratio_anterior = anterior.balance_eur[efecto.variable] / anterior.ventas * DIAS_AÑO
     nuevo_ratio = _mover_ratio_continuo(ratio_anterior, efecto.direccion, intensidad_efectiva, huber)
     return nuevo_ratio / DIAS_AÑO * ventas
@@ -1535,6 +1807,17 @@ def _evolucionar_un_año(
         ea_reclas = efectos_reclasificacion_deuda[0]
         efecto_reclas = ea_reclas.efecto
         deuda_financiera_total_proporcional_eur = deudas_fin_largo_proporcional_eur + deudas_fin_corto_proporcional_eur
+        # NOTA (decisiones_plausibilidad.md #71/#74/#76): este ancla usa deudas_fin_largo/deuda_
+        # financiera_total, que NO es la definición ACCID de `ratios.calidad_deuda` (Pasivo
+        # corriente/Deudas totales) contra la que se compara su Huber/MAD — discrepancia conocida,
+        # documentada, NO corregida todavía. La versión fiel a ACCID (#74) se descartó por
+        # saturación estructural; el intento de recalibrar su intensidad (#76) reveló que
+        # `ratios.calidad_deuda` YA tiene un suelo estructural de ruido de base (~24-25% incluso
+        # con intensidad de arquetipo ≈0, confirmado idéntico bajo un arquetipo que no la toca en
+        # absoluto — mismo fenómeno del hallazgo mayor de #73/#75, "paseo aleatorio" del PN vía el
+        # plug de cuadre) — no se puede calibrar "leve" a un rango razonable de forma aislada
+        # mientras ese hallazgo siga sin resolver. Revertido de nuevo a la fórmula anterior;
+        # pendiente de retomar #76 una vez decidido el abordaje de #75.
         deuda_financiera_anterior_eur = anterior.balance_eur["deudas_fin_largo"] + anterior.balance_eur["deudas_fin_corto"]
         calidad_deuda_anterior = (
             anterior.balance_eur["deudas_fin_largo"] / deuda_financiera_anterior_eur
@@ -1684,7 +1967,8 @@ def _evolucionar_un_año(
             riesgo_plausibilidad_pyg = True
             pyg_subtotales_sin_contener[subtotal_topado] = subtotal_sin_contener
     parcial_pyg = _generar_pyg_hasta_baii(
-        rng_pyg, fila, ventas, año, primitivas_forzadas=primitivas_forzadas, amortizaciones_eur=amortizacion_eur_año
+        rng_pyg, fila, ventas, año, primitivas_forzadas=primitivas_forzadas, amortizaciones_eur=amortizacion_eur_año,
+        anterior_pyg_pct=anterior.pyg_pct, anterior_tipo_interes=anterior.tipo_interes,
     )
     for ea in efectos_pyg_base_dinamica:
         efecto = ea.efecto
@@ -2674,6 +2958,18 @@ def generar_evolucion_combinada(
         arquetipo_str = "+".join(sorted(arquetipos_intensidades))
         intensidad_str = "+".join(f"{aid}:{arquetipos_intensidades[aid]}" for aid in sorted(arquetipos_intensidades))
 
+    # Validación de plausibilidad del caso completo (sección 2.13) — pasada FINAL, después de
+    # aplicar todos los arquetipos, sobre los 3 años ya generados. `plantilla_estimada` reutiliza
+    # el mismo mecanismo ya construido para la clasificación legal (`motor.clasificacion_legal`)
+    # — sorteo único por caso (sector+segmento+semilla, no por año), escalado por la cifra de
+    # negocio YA generada de cada año — no un sorteo nuevo.
+    ventas_empleado_miles_eur, _ = estimar_ventas_por_empleado(sector, segmento, semilla, catalogo)
+    plantilla_por_año = {
+        año: estimar_plantilla(ejercicio.pyg_eur["cifra_negocios"], ventas_empleado_miles_eur)
+        for año, ejercicio in ejercicios.items()
+    }
+    plausibilidad = _evaluar_plausibilidad_caso(ejercicios, fila, plantilla_por_año)
+
     return EvolucionArquetipo(
         sector_codigo=sector,
         sector_nombre=fila["sector"],
@@ -2684,6 +2980,7 @@ def generar_evolucion_combinada(
         crecimiento_pleno_objetivo=crecimiento_pleno_objetivo,
         ejercicios=ejercicios,
         catalogo_version=catalogo.attrs.get("catalogo_version", "desconocida"),
+        plausibilidad=plausibilidad,
     )
 
 

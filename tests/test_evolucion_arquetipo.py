@@ -361,25 +361,25 @@ def test_catalogo_version_es_la_del_catalogo_pasado_explicitamente(catalogo, arq
 
 def test_reimplementacion_generica_reproduce_los_valores_de_referencia(catalogo, arquetipos):
     # Regresión dura: valores exactos del arquetipo 1 para este caso concreto (sector 24.1,
-    # semilla 5, fuerte). endeudamiento 2024/2025 RE-PINNEADO tras el encargo que sustituyó la
-    # fuente de `tipo_interes` (antes `ratios.coste_deuda` del catálogo, contaminado — ver
-    # decisiones_plausibilidad.md #41-43 — ahora Euríbor 12M + prima de riesgo por categoría/
-    # tamaño, motor/empresa_base.py). El mecanismo del arquetipo 1 (existencias por continuidad)
-    # NO cambió — existencias 2023/2024/2025 idénticas a antes — pero el nuevo tipo_interes
-    # cambia gastos_financieros, que cambia resultado_ejercicio/PN, que cambia endeudamiento, que
-    # cambia CUÁNTO amortigua la contención de plausibilidad sobre existencias en 2024/2025
-    # (2023 no se mueve: el tipo_interes de 2023 no afecta al BALANCE de 2023, solo a su PyG,
-    # igual que ya pasó con la amortización). Si este test vuelve a fallar SIN que se haya tocado
-    # deliberadamente ni la semilla del RNG ni la fuente de tipo_interes, sí es una regresión real
-    # del arquetipo 1.
+    # semilla 5, fuerte). RE-PINNEADO tras el encargo de continuidad del sorteo anual de PyG
+    # (decisiones_plausibilidad.md #75/#77/#78): `_generar_pyg_hasta_baii` ya no redibuja cada
+    # año como una empresa nueva contra el Huber del sector — 2024/2025 ahora tienen memoria del
+    # año anterior y menos varianza (`_generar_partida_con_memoria`, motor/ruido.py). El año base
+    # (2023) sigue siendo un sorteo limpio, sin cambios — existencias 2023 idéntica a antes. El
+    # mecanismo del arquetipo 1 en sí (existencias por continuidad) NO cambió, pero al cambiar el
+    # ruido de fondo de PyG cambia resultado_ejercicio/PN, que cambia endeudamiento, que cambia
+    # CUÁNTO amortigua la contención de plausibilidad sobre existencias en 2024/2025 — mismo tipo
+    # de re-pin ya hecho una vez antes, para el cambio de fuente de `tipo_interes` (#41-43). Si
+    # este test vuelve a fallar SIN que se haya tocado deliberadamente la semilla del RNG ni el
+    # mecanismo de continuidad de PyG, sí es una regresión real del arquetipo 1.
     evolucion = _generar(catalogo, arquetipos, "24.1", 5, "fuerte")
     ej = evolucion.ejercicios
     assert ej[2023].balance_eur["existencias"] == pytest.approx(2_344_937, abs=1)
-    assert ej[2024].balance_eur["existencias"] == pytest.approx(2_861_635, abs=1)
-    assert ej[2025].balance_eur["existencias"] == pytest.approx(3_422_807, abs=1)
+    assert ej[2024].balance_eur["existencias"] == pytest.approx(3_744_065, abs=1)
+    assert ej[2025].balance_eur["existencias"] == pytest.approx(4_478_283, abs=1)
     assert ej[2023].endeudamiento == pytest.approx(0.600, abs=1e-3)
-    assert ej[2024].endeudamiento == pytest.approx(0.672, abs=1e-3)
-    assert ej[2025].endeudamiento == pytest.approx(0.724, abs=1e-3)
+    assert ej[2024].endeudamiento == pytest.approx(0.669, abs=1e-3)
+    assert ej[2025].endeudamiento == pytest.approx(0.716, abs=1e-3)
 
 
 def test_sectores_distintos_no_comparten_crecimiento_pleno_objetivo(catalogo, arquetipos):

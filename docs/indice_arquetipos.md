@@ -10,6 +10,11 @@ Esta tabla describe cada arquetipo en SOLITARIO. Para generar un caso con varios
 combinaciones recomendadas de la sección 2.26, no para las 231 parejas de la matriz completa
 (sección 2.25).
 
+Independiente de qué arquetipos estén activos: `EvolucionArquetipo.plausibilidad` (sección 2.13,
+ver CLAUDE.md "Validación de plausibilidad del caso completo") comprueba los 25 `ratios.*` del
+catálogo + `pyg.baii_pct`/`pyg.margen_bruto_pct` contra Huber±3·MAD, superconjunto de las
+contenciones específicas de cada arquetipo listadas abajo — no sustituye nada de esta tabla.
+
 | # | Nombre corto | `id` en JSON | Mecanismo | Estado | Dependencias / notas |
 |---|---|---|---|---|---|
 | 1 | Crecimiento con destrucción de caja | `crecimiento_destruccion_caja` | `masa_circulante` (existencias+realizable) + `rango_crecimiento_pleno` propio | CERRADO | Único arquetipo con rango de crecimiento propio en el JSON |

@@ -280,7 +280,11 @@ def _ejercicio_con_derivado_pasivo(catalogo, arquetipos, sector="24.1", semilla_
     return None, None
 
 
-def _ejercicio_con_derivado_activo(catalogo, arquetipos, sector="24.1", semilla_max=40):
+def _ejercicio_con_derivado_activo(catalogo, arquetipos, sector="24.1", semilla_max=120):
+    # semilla_max ampliado de 40 a 120 tras el encargo de continuidad del sorteo anual de PyG
+    # (decisiones_plausibilidad.md #75/#77/#78): cambia la trayectoria de tipo_interes/Δr, y con
+    # ella qué semillas concretas producen un swap con valor positivo para este sector — no hay
+    # menos casos "derivado activo" en general, solo se desplazan qué semillas los dan.
     for semilla in range(semilla_max):
         evolucion = generar_evolucion_arquetipo(
             sector, "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=semilla, intensidad="fuerte",

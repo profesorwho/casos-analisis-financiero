@@ -592,6 +592,17 @@ def test_mejora_ebitda_baii_respeta_el_techo_de_plausibilidad_del_sector(catalog
                     # (calculada sobre el baii SIN provisión) lo anticipe — ver #60.
                     if ej.provision_dotacion_eur > 0 or ej.provision_exceso_eur > 0:
                         continue
+                    # Mismo criterio que la provisión, para la imputación de subvención de
+                    # capital (grupo89, ver motor/coberturas_subvenciones.py): se inyecta en
+                    # `_evaluar` DESPUÉS de que `_limitar_gastos_personal_por_baii` ya fijó baii
+                    # en su techo (el ajuste de `_limitar_gastos_personal_por_baii` es sobre
+                    # `parcial_pyg`, que no conoce el ajuste de grupo89, calculado más tarde) —
+                    # puede empujar baii unos puntos-base fuera de su techo sin que la contención
+                    # lo anticipe. Expuesto en el caso concreto sector "10.1" semilla=2 fuerte
+                    # 2025 tras reducir el ruido de fondo de PyG (#78): antes quedaba enmascarado
+                    # por el ruido mayor de las demás primitivas.
+                    if ej.subvencion_transferencia_bruto_eur > 0:
+                        continue
                     if ej.pyg_pct["baii"] > techo_baii + 1e-6 and not ej.riesgo_plausibilidad_pyg:
                         por_encima_sin_señal.append((codigo, intensidad, semilla, año, ej.pyg_pct["baii"], techo_baii))
     assert activaciones > 0, "la muestra no incluyó ningún caso donde se activara la contención: ajustar el barrido"

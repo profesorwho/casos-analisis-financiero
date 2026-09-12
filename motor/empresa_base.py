@@ -41,6 +41,7 @@ from motor.ruido import (  # noqa: F401
     DESVIACIONES_TIPICO,
     PROB_ATIPICO,
     _generar_partida,
+    _generar_partida_con_memoria,
     _normal_truncada,
     _renormalizar_a_total,
 )
@@ -902,6 +903,15 @@ def _generar_balance_pct(
     return balance_pct, modos
 
 
+# Continuidad del sorteo anual de PyG (ver decisiones_plausibilidad.md #75/#77/#78 y docstring
+# de `_generar_partida_con_memoria` en motor/ruido.py) — SOLO se aplica en 2024/2025 a las
+# primitivas que ningún arquetipo esté forzando ese año; el año base (2023) sigue siendo un
+# sorteo limpio contra el Huber del sector, sin cambios. Calibradas empíricamente con el mismo
+# método de siempre (barrido 27 sectores x 4 semillas, arquetipo "limpio" que no toca PyG).
+PESO_MEMORIA_PYG_ANUAL = 0.6
+FACTOR_REDUCCION_RUIDO_PYG_ANUAL = 0.3
+
+
 @dataclass(frozen=True)
 class _PygParcial:
     """Cascada de PyG calculada hasta BAII (no depende de la deuda financiera)."""
@@ -930,6 +940,8 @@ def _generar_pyg_hasta_baii(
     año: int,
     primitivas_forzadas: dict[str, float] | None = None,
     amortizaciones_eur: float | None = None,
+    anterior_pyg_pct: dict[str, float] | None = None,
+    anterior_tipo_interes: float | None = None,
 ) -> _PygParcial:
     """Sortea las primitivas de la PyG que no dependen de deuda, y el tipo de interés del
     ejercicio (mismo mecanismo típico/atípico que el resto de partidas, pero YA NO anclado a
@@ -953,6 +965,16 @@ def _generar_pyg_hasta_baii(
     calculado en este punto — ver más abajo). "amortizaciones" se excluye del sorteo/bucle de
     primitivas en ese caso (no consume ningún draw de `rng`) y su modo queda registrado como
     "derivado".
+
+    `anterior_pyg_pct`/`anterior_tipo_interes`: SOLO se pasan al generar 2024/2025 (el año base
+    no tiene "año anterior" al que agarrarse — sigue siendo un sorteo limpio contra el Huber del
+    sector, ver `generar_empresa_base`, que no los pasa). Cuando están presentes, cualquier
+    primitiva NO forzada por un arquetipo usa `_generar_partida_con_memoria` en vez de
+    `_generar_partida` — continuidad con el valor REAL del año anterior y varianza reducida, en
+    vez de un sorteo limpio nuevo cada año (ver decisiones_plausibilidad.md #75/#77/#78 y
+    docstring de `_generar_partida_con_memoria` en motor/ruido.py). No afecta en absoluto a las
+    primitivas SÍ forzadas por un arquetipo (siguen su propio mecanismo, `_mover_ratio_continuo`,
+    completamente aparte de este).
     """
     primitivas_forzadas = primitivas_forzadas or {}
     brutos: dict[str, float] = {}
@@ -968,7 +990,13 @@ def _generar_pyg_hasta_baii(
         huber = fila[f"pyg.{variable}.huber_9y"]
         mad = fila[f"pyg.{variable}.huber_scale_mad"]
         suelo = SUELO_PORCENTAJE if nombre_salida in PRIMITIVAS_PYG_NO_NEGATIVAS else None
-        valor, modo = _generar_partida(rng, huber, mad, suelo=suelo)
+        if anterior_pyg_pct is not None:
+            valor, modo = _generar_partida_con_memoria(
+                rng, anterior_pyg_pct[nombre_salida], huber, mad,
+                PESO_MEMORIA_PYG_ANUAL, FACTOR_REDUCCION_RUIDO_PYG_ANUAL, suelo=suelo,
+            )
+        else:
+            valor, modo = _generar_partida(rng, huber, mad, suelo=suelo)
         brutos[nombre_salida] = valor
         modos[f"pyg.{nombre_salida}"] = modo
 
@@ -976,13 +1004,20 @@ def _generar_pyg_hasta_baii(
     categoria = categoria_de_sector(codigo_sector)
     recargo_segmento = RECARGO_TIPO_INTERES_PEQUEÑAS_PP if fila["segmento"] == "pequeñas" else 0.0
     centro_tipo_interes = REFERENCIA_EURIBOR_12M_POR_AÑO[año] + PRIMA_RIESGO_POR_CATEGORIA[categoria] + recargo_segmento
-    tipo_interes, modo_tipo_interes = _generar_partida(
-        rng,
-        centro_tipo_interes,
-        DISPERSION_TIPO_INTERES_PP,
-        suelo=SUELO_TIPO_INTERES,
-        techo=TECHO_TIPO_INTERES,
-    )
+    if anterior_tipo_interes is not None:
+        tipo_interes, modo_tipo_interes = _generar_partida_con_memoria(
+            rng, anterior_tipo_interes, centro_tipo_interes, DISPERSION_TIPO_INTERES_PP,
+            PESO_MEMORIA_PYG_ANUAL, FACTOR_REDUCCION_RUIDO_PYG_ANUAL,
+            suelo=SUELO_TIPO_INTERES, techo=TECHO_TIPO_INTERES,
+        )
+    else:
+        tipo_interes, modo_tipo_interes = _generar_partida(
+            rng,
+            centro_tipo_interes,
+            DISPERSION_TIPO_INTERES_PP,
+            suelo=SUELO_TIPO_INTERES,
+            techo=TECHO_TIPO_INTERES,
+        )
     modos["pyg.tipo_interes"] = modo_tipo_interes
 
     cifra_negocios_eur = ventas_objetivo

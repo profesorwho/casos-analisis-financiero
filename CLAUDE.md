@@ -618,6 +618,122 @@ Derivados como línea propia para la cobertura del arquetipo 21. Ver decisiones 
   fórmula excluye el derivado (`a3f`→`c10`, ver sección EFE arriba). **EIGR no necesitó ningún
   cambio** (no referencia `balance_eur` ni la colocación del derivado en absoluto).
 
+## Validación de plausibilidad del caso completo — sección 2.13 (`motor/evolucion_arquetipo.py`)
+
+Pasada FINAL, independiente de qué arquetipos estén activos, sobre el caso YA generado (3 años,
+con toda la desagregación de los 4 lotes) — cierra el hueco de que cada mecanismo de arquetipo
+tenía su propia contención (endeudamiento, baii/margen_bruto...) pero ningún caso sin ese
+arquetipo concreto activo quedaba comprobado. Ver decisiones #70-73.
+
+- **Alcance**: los 25 `ratios.*` del catálogo + `pyg.baii_pct`/`pyg.margen_bruto_pct` (para cerrar
+  el hallazgo original que motivó el encargo, #18/#39 — un caso sin arquetipo activo podía salir
+  implausible ahí sin que nada lo detectara). 3 ratios (`coste_deuda`, `pago_dias`,
+  `cobertura_gastos_fin`) quedan como **informativos, sin señal dura** — ancla de catálogo YA
+  diagnosticada como contaminada en encargos anteriores (#41-44, #55, #45), incluirlos generaría
+  ruido sin decir nada nuevo. 2 ratios son **circulares** (revisión sistemática de los 27, pedida
+  explícitamente — no solo el caso detectado por casualidad, ver #70): `ventas_empleado`
+  (excluido siempre — se sortea directamente, recalcularlo solo reproduce el sorteo) y
+  `rotacion_activo` (excluido SOLO en el año base 2023 — se sortea ahí para fijar `activo_total`;
+  en 2024/2025 no se vuelve a sortear, así que sí es comprobable de verdad).
+- **`SeñalRatio`/`PlausibilidadCaso`** (`motor/evolucion_arquetipo.py`) — diagnóstico PURO, nunca
+  corrige ningún valor. `EvolucionArquetipo.plausibilidad` se calcula al final de
+  `generar_evolucion_combinada` (cubre también `generar_caso_combinado`, que la envuelve, sin
+  ningún hook adicional en `motor/memoria.py`), después de aplicar todos los arquetipos, sobre
+  los 3 años. Una señal NO es un error — el propio diseño de ruido (85% típico/15% atípico)
+  espera atípicos reales.
+- **Ninguna palanca de corrección nueva** (decisión explícita, ver #70): revisados los 25 uno a
+  uno, ninguno tiene una vía de amortiguación natural fuera de las ya existentes (masa_circulante,
+  `_limitar_por_subtotal`, `_limitar_gastos_personal_por_baii`, contención de endeudamiento) — el
+  catálogo no tiene ratios granulares por tipo (existencias/deudores por sub-partida), así que los
+  4 lotes de desglose no aportan ninguna palanca nueva sobre estos 25 ratios agregados.
+- **Fórmulas verificadas contra el PDF ACCID** (`docs/ratios2024.pdf`, no de memoria — mismo
+  estándar que `coste_deuda`, #41), no derivadas de la lógica interna del motor. Encontró y
+  corrigió **3 errores propios** antes del stress test (unidades de los ratios "por empleado" en
+  miles de €, `financiacion_clientes` como ratio directo no "días", `capacidad_devolucion` con
+  "deudas totales" no solo deuda financiera) — y reveló **2 discrepancias sobre mecanismos YA
+  existentes y cerrados**, documentadas como hallazgo, NO corregidas en este encargo (ver #71):
+  `rotacion_existencias` (el catálogo la define como Consumos/Existencias; el ancla de
+  `masa_circulante` para los arquetipos 1/5 usa Ventas/Existencias) y `calidad_deuda` (el catálogo
+  la define como Pasivo corriente/Deudas totales; `reclasificacion_deuda` — arquetipos 8/16 — usa
+  deudas_fin_largo/deuda_financiera, ámbito y polaridad distintos).
+- **Superconjunto de las señales ya existentes, con 2 ajustes necesarios encontrados en el stress
+  test** (ver #72): (1) `ratios.endeudamiento` usa el MISMO techo exacto que la contención
+  existente (huber+3·MAD recortado a `TECHO_ENDEUDAMIENTO_MAXIMO_ABSOLUTO=0,85`), no el genérico
+  sin recortar. (2) La comparación es **inclusiva** (`>=`/`<=`, no `>`/`<`): las contenciones ya
+  existentes corrigen ANALÍTICAMENTE hasta dejar el valor EXACTO en su propio techo/suelo — con
+  comparación estricta, un caso "corregido con éxito hasta el límite" no quedaba señalizado aquí.
+  Tolerancia `EPSILON_DESVIACIONES_PLAUSIBILIDAD_CASO=1e-6` (en unidades de MAD) absorbe el ruido
+  de coma flotante de esa corrección (1e-11 a 1e-13 observado — convergencia iterativa del
+  endeudamiento, aritmética "100−techo" de la PyG). **Excepción documentada, no un fallo**: cuando
+  una provisión (tercer lote) dota/libera el MISMO año que `mejora_ebitda`/`mejora_margen` actúan,
+  la dotación se inyecta DESPUÉS de que la contención de PyG ya fijó baii/margen_bruto en su
+  límite — puede devolver el valor final a un rango plausible, mismo patrón ya aceptado en #39/#60.
+- **Segunda excepción de superconjunto, encontrada en el stress test cuantificado de las 6
+  combinaciones (#73, NO cubierta por los 2 ajustes de #72)**: en combos con varios arquetipos
+  'fuerte' apilados (p. ej. combo F), `riesgo_endeudamiento=True` con `contencion_al_limite=True`
+  **y** `deterioro_aplicado_eur>0` puede no tener señal nueva — la amortiguación de circulante se
+  agota en una sola pasada del bucle sin reevaluar si el efecto secundario de esa pasada (menos
+  deuda nueva → menos gasto financiero → más PN) deja el endeudamiento FINAL por debajo del techo.
+  Mismo patrón que la excepción de provisión/PyG: señal sobre el proceso, no sobre el valor final.
+  NO aplica cuando el arquetipo no tiene palanca de circulante (`deterioro_aplicado_eur==0` —
+  apalancamiento/capex/adquisición en solitario): ahí el balance final coincide con el candidato
+  sin corregir y la señal SÍ debe (y sigue) coincidiendo.
+- **Stress test cuantificado (27 sectores × 2 segmentos × 4 semillas × 60 configuraciones,
+  12.960 casos, ver #73 para el detalle completo)**: 99,3% de los casos tienen al menos 1 ratio
+  señalizado; por ratio, entre el 3,3% y el 59,5%. Confirma el cierre del hallazgo original de
+  #18 de forma limpia (proxy `aumento_clientes:leve` aislado): la señal antigua nunca se activaba
+  (0,00%), la nueva detecta un 20,8% de esos mismos ejercicios. **Hallazgo mayor, traído sin
+  arreglar (mismo criterio que `coste_deuda`)**: esa tasa alta no es específica de baii/margen
+  bruto — se repite con arquetipos que no tocan en absoluto la magnitud comprobada (p. ej.
+  `apalancamiento:leve` sobre `ratios.liquidez`: 18,75%).
+- **De los 2 hallazgos de fórmula de #71, antes de aceptar el hallazgo mayor como estructural
+  (ver #74)**: `rotacion_existencias` corregido (`_masa_circulante_objetivo`, arquetipos 1/3/5,
+  usa ahora Consumos de explotación/Existencias como ACCID, no Ventas/Existencias — sin efectos
+  secundarios). `calidad_deuda` — intentado y **revertido**: la versión fiel a ACCID (Pasivo
+  corriente/Deudas totales) satura el mecanismo de `reclasificacion_deuda` (8/16) al límite
+  estructural (deuda financiera es una palanca demasiado pequeña frente al pasivo total en los
+  sectores probados) en 14-15 de 15 casos de prueba, con CUALQUIER intensidad — pendiente de
+  recalibrar antes de reintentarlo, sigue documentado sin corregir.
+- **Diagnóstico del hallazgo mayor (#75, NO un arreglo)**: la cola extrema y la tasa alta son
+  **predominantemente acumulación de ruido entre los 3 años de evolución, no combinación de
+  primitivas independientes dentro de un mismo año** — confirmado descomponiendo por año con
+  arquetipos que no tocan la magnitud comprobada: año base 2023 (un único sorteo, sin posible
+  acumulación) da tasas de señalización mucho más bajas (p. ej. 7,9% en `ratios.liquidez`) que
+  2024 (29,6%) y 2025 (55,6%) — y el mismo patrón aparece IDÉNTICO bajo un arquetipo que no toca
+  ni circulante ni deuda/PN (`resultado_extraordinario`), descartando que sea un efecto de "espiral
+  de deuda" filtrándose por otra vía. Mecanismo identificado: el patrimonio neto lleva ruido
+  independiente NUEVO cada año (vía las primitivas de PyG) mientras el resto del balance crece
+  proporcional a ventas; el plug de cuadre (`ajuste_cuadre_eur` en `_construir_balance`) absorbe
+  esa diferencia encogiendo `otras_deudas_corto` (o `disponible`) cada año — un patrón tipo "paseo
+  aleatorio" que crece con cada año adicional frente a un Huber/MAD sectorial que es un punto de
+  referencia ESTÁTICO. Mismo tipo de causa que la ya corregida en su día para los sub-lotes de
+  amortización. No se ha tocado ningún código de generación — pendiente de decisión conjunta sobre
+  el abordaje.
+- **Intento de recalibrar `reclasificacion_deuda` (8/16) con la fórmula ACCID — bloqueado (#76)**:
+  `ratios.calidad_deuda` resultó tener el MISMO suelo estructural (~24-25%) del hallazgo de #75,
+  confirmado idéntico con intensidad de arquetipo ≈0 y bajo un arquetipo que no la toca en
+  absoluto — no se puede calibrar "leve" a un rango razonable hasta resolver #75. Revertido de
+  nuevo a la fórmula anterior (ninguna de las dos versiones de calidad_deuda está aplicada).
+- **Diagnóstico de precisión sobre #75, PN vs. resto del balance (#77)**: predominantemente "el
+  PN varía de más" — `_generar_pyg_hasta_baii` sorteaba CADA AÑO, con ruido típico/atípico
+  completo contra el Huber/MAD (medida transversal entre empresas), cada primitiva de PyG no
+  forzada por un arquetipo — un sorteo independiente de 2023, no anclado al año anterior.
+- **Implementado y calibrado (#78) — continuidad del sorteo anual de PyG**: `_generar_partida_
+  con_memoria` (`motor/ruido.py`, reversión a la media AR(1) + escala reducida), usada por
+  `_generar_pyg_hasta_baii` en 2024/2025 (año base sin cambios) para las 8 primitivas + tipo_
+  interes. `PESO_MEMORIA_PYG_ANUAL=0,6`, `FACTOR_REDUCCION_RUIDO_PYG_ANUAL=0,3`
+  (`motor/empresa_base.py`). **Mejora real pero limitada**: `pyg.baii_pct`/`margen_bruto_pct`
+  bajan de forma medible (2025: 16,7%→10,6% bajo `aumento_clientes:leve`) — pero `ratios.
+  liquidez`/`tesoreria`/`fm_activo` (los que dominan el hallazgo mayor de #73) apenas se mueven
+  (2025: 65,7%→64,8%), incluso con memoria casi extrema. **#77 estaba incompleto**: la causa
+  dominante del lado de circulante/liquidez NO es el ruido de PyG (una causa real pero menor,
+  ya corregida aquí) — es que el patrimonio neto retiene el 100% del resultado cada año (sin
+  dividendos/distribución modelada) y crece a un ritmo (~ROE, 8-16%/año) muy superior al del
+  resto del balance (proporcional a ventas, ~1-4%/año); el plug de cuadre absorbe esa brecha
+  DETERMINISTA (no aleatoria) cada año, encogiendo `otras_deudas_corto`. El hallazgo mayor de
+  #73 sigue mayormente sin cerrar — pendiente de decisión conjunta sobre la retención de
+  beneficios/distribución a PN como su propio encargo. No comiteado.
+
 ## Otros documentos de este índice
 
 - **`docs/indice_arquetipos.md`** — una línea por arquetipo (1-22): mecanismo, estado, dependencias.
