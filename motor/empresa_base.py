@@ -545,6 +545,138 @@ def generar_perfil_acreedores(rng: np.random.Generator, categoria: str) -> dict[
     return _renormalizar_a_total(brutos, 1.0)
 
 
+# --------------------------------------------------------------------------------------------
+# Cuarto y último lote de desglose de balance: Deudas financieras (largo y corto plazo)
+# desglosadas según el modelo oficial del PGC — I. Obligaciones y otros valores negociables,
+# II. Deudas con entidades de crédito, III. Acreedores por arrendamiento financiero,
+# IV. Derivados, V. Otros pasivos financieros. HIPÓTESIS DE DISEÑO (el catálogo ACCID nunca
+# desglosó `deudas_fin_largo`/`deudas_fin_corto` más allá del agregado; verificado que ninguna de
+# las 218 columnas del catálogo distingue esta financiación por instrumento).
+#
+# Solo 3 de las 5 categorías tienen un perfil PROPIO aquí (Obligaciones, Arrendamiento financiero,
+# Otros pasivos financieros) — "Entidades de crédito" NO se sortea: es el RESIDUAL de restar las
+# otras 4 al total (dominante por defecto, es la que ya genera todo el motor hoy). "Derivados" NO
+# se sortea aquí en absoluto: Tipo 2 puro, disparado exclusivamente por el arquetipo 21
+# (`motor.coberturas_subvenciones`, `cobertura_valor_swap_eur`) — sin probabilidad de fondo, a
+# diferencia de las provisiones (no hay razón de negocio para que aparezca sin la cobertura
+# activa). Ver `calcular_desglose_deudas_fin` para cómo se ensamblan las 5 juntas cada año.
+#
+# Arrendamiento financiero: peso por categoría de sector — mayor en sectores con activo material
+# significativo en vehículos/maquinaria (transporte_logistica 30%, construcción 22%, industria
+# 18% — flotas y maquinaria pesada, conecta de forma natural con las cohortes de amortización de
+# motor/amortizacion.py), menor en servicios de oficina (servicios_profesionales/TIC 4-5%).
+# Obligaciones y valores negociables: casi cero en la mayoría de sectores (poco típico de PYME/
+# empresa mediana española fuera de grandes cotizadas) salvo industria (4% — incluye energía/
+# siderurgia, mayor tamaño típico dentro del catálogo). Otros pasivos financieros: residual plano
+# (3%), sin base para variarlo por sector.
+PERFIL_DEUDAS_FIN_POR_CATEGORIA: dict[str, dict[str, float]] = {
+    "industria": {"obligaciones": 0.04, "arrendamiento_financiero": 0.18, "otros_pasivos_financieros": 0.03},
+    "servicios_industriales": {"obligaciones": 0.01, "arrendamiento_financiero": 0.15, "otros_pasivos_financieros": 0.03},
+    "servicios_profesionales": {"obligaciones": 0.01, "arrendamiento_financiero": 0.04, "otros_pasivos_financieros": 0.03},
+    "servicios_tic": {"obligaciones": 0.01, "arrendamiento_financiero": 0.05, "otros_pasivos_financieros": 0.03},
+    "transporte_logistica": {"obligaciones": 0.01, "arrendamiento_financiero": 0.30, "otros_pasivos_financieros": 0.03},
+    "comercio_hosteleria": {"obligaciones": 0.01, "arrendamiento_financiero": 0.08, "otros_pasivos_financieros": 0.03},
+    "construccion": {"obligaciones": 0.01, "arrendamiento_financiero": 0.22, "otros_pasivos_financieros": 0.03},
+    "administracion_educacion_sanidad": {"obligaciones": 0.01, "arrendamiento_financiero": 0.06, "otros_pasivos_financieros": 0.03},
+    "inmobiliario": {"obligaciones": 0.01, "arrendamiento_financiero": 0.05, "otros_pasivos_financieros": 0.03},
+}
+
+# Reparto largo/corto DENTRO de cada categoría — por TIPO de instrumento, no por sector (el
+# calendario típico de un contrato de leasing o de una emisión de bonos no varía por sector, a
+# diferencia de CUÁNTO peso tiene cada instrumento en el total, que sí es una cuestión sectorial).
+# FIJO por caso (sorteado una vez, ruido mixto alrededor de este centro) — la pieza central de la
+# confirmación del usuario: `reclasificacion_deuda` (arquetipos 8/16) NUNCA toca este reparto,
+# solo el de "Entidades de crédito" (ver `calcular_desglose_deudas_fin`) — un leasing tiene
+# calendario fijo por contrato, un bono no se renegocia como un préstamo bancario, ninguno de los
+# dos debería desplazarse solo porque el arquetipo 8/16 actúe sobre la deuda bancaria.
+FRACCION_LARGO_POR_TIPO_DEUDA_FIN: dict[str, float] = {
+    "arrendamiento_financiero": 0.75,  # contrato multianual: la mayor parte del saldo sigue siendo a largo
+    "obligaciones": 0.85,  # emisiones a varios años, largo salvo cerca del vencimiento
+    "otros_pasivos_financieros": 0.55,  # residual/mixto, sin sesgo fuerte hacia ningún plazo
+}
+
+DISPERSION_PERFIL_DEUDAS_FIN = 0.20
+SUELO_COMPONENTE_DEUDAS_FIN_PCT = 0.002
+DISPERSION_FRACCION_LARGO_DEUDAS_FIN = 0.15
+SUELO_FRACCION_LARGO_DEUDAS_FIN = 0.10
+TECHO_FRACCION_LARGO_DEUDAS_FIN = 0.95
+
+
+def generar_perfil_deudas_fin(rng: np.random.Generator, categoria: str) -> tuple[dict[str, float], dict[str, float]]:
+    """Perfil fijo por caso para el desglose de deudas financieras — `fraccion_total` (peso de
+    cada una de las 3 categorías con perfil propio sobre el total de deuda financiera CON coste,
+    ver docstring arriba) y `fraccion_largo` (su propio reparto largo/corto, fijo, por tipo de
+    instrumento). Ninguno de los dos se renormaliza a 1.0: "Entidades de crédito" absorbe lo que
+    quede del total, y "Derivados" no participa de este perfil en absoluto (ver
+    `calcular_desglose_deudas_fin`)."""
+    perfil_centro = PERFIL_DEUDAS_FIN_POR_CATEGORIA[categoria]
+    fraccion_total = {}
+    for tipo, centro in perfil_centro.items():
+        valor, _ = _generar_partida(rng, centro, centro * DISPERSION_PERFIL_DEUDAS_FIN, suelo=SUELO_COMPONENTE_DEUDAS_FIN_PCT)
+        fraccion_total[tipo] = valor
+    fraccion_largo = {}
+    for tipo, centro in FRACCION_LARGO_POR_TIPO_DEUDA_FIN.items():
+        valor, _ = _generar_partida(
+            rng, centro, centro * DISPERSION_FRACCION_LARGO_DEUDAS_FIN,
+            suelo=SUELO_FRACCION_LARGO_DEUDAS_FIN, techo=TECHO_FRACCION_LARGO_DEUDAS_FIN,
+        )
+        fraccion_largo[tipo] = valor
+    return fraccion_total, fraccion_largo
+
+
+def calcular_desglose_deudas_fin(
+    fraccion_total: dict[str, float],
+    fraccion_largo: dict[str, float],
+    deudas_fin_largo_con_coste_eur: float,
+    deudas_fin_corto_eur: float,
+    derivados_pasivo_largo_eur: float,
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Ensambla las 5 categorías del año (largo y corto), a partir del perfil FIJO del caso
+    (`fraccion_total`/`fraccion_largo`) aplicado sobre las masas YA cuadradas de ESTE año —
+    reutilizado tal cual desde `empresa_base.generar_empresa_base` (año base, sin reclasificación
+    ni derivados activos todavía) y desde `evolucion_arquetipo._evolucionar_un_año` (2024/2025,
+    después de la contención de endeudamiento). `deudas_fin_largo_con_coste_eur` es la base CON
+    coste (excluye derivados — ver docstring del módulo evolucion_arquetipo, "Derivados" bloque):
+    nunca incluye el derivado, que se añade aparte al final, siempre en largo plazo.
+
+    "Entidades de crédito" es el RESIDUAL (`deudas_fin_largo_con_coste_eur - suma de las otras 3
+    en largo`, y análogo en corto) — así absorbe automáticamente cualquier movimiento de
+    `reclasificacion_deuda` (arquetipos 8/16, que solo mueve el TOTAL entre largo y corto, ver
+    ese bloque) sin que arrendamiento financiero/obligaciones/otros pasivos financieros —cuyo
+    reparto largo/corto es fijo por contrato, no renegociable— se vean arrastrados. Técho
+    defensivo: si el reparto fijo de esas 3 categorías en largo (poco común, solo con
+    reclasificación muy agresiva) superara la base real de ese plazo, se reescala
+    proporcionalmente ENTRE ELLAS (conservando el total de cada categoría, solo cambia SU PROPIO
+    reparto largo/corto ese año) para que la suma nunca supere el total real — "Entidades de
+    crédito" nunca queda negativo, la suma de las 5 sigue cuadrando exacto con el total."""
+    deuda_total_con_coste_eur = deudas_fin_largo_con_coste_eur + deudas_fin_corto_eur
+    categoria_eur = {tipo: fraccion * deuda_total_con_coste_eur for tipo, fraccion in fraccion_total.items()}
+    categoria_largo_eur = {tipo: fraccion_largo[tipo] * valor for tipo, valor in categoria_eur.items()}
+    categoria_corto_eur = {tipo: categoria_eur[tipo] - categoria_largo_eur[tipo] for tipo in categoria_eur}
+
+    suma_largo_fijo_eur = sum(categoria_largo_eur.values())
+    if suma_largo_fijo_eur > deudas_fin_largo_con_coste_eur and suma_largo_fijo_eur > 0:
+        factor = deudas_fin_largo_con_coste_eur / suma_largo_fijo_eur
+        for tipo in categoria_largo_eur:
+            exceso_eur = categoria_largo_eur[tipo] * (1 - factor)
+            categoria_largo_eur[tipo] -= exceso_eur
+            categoria_corto_eur[tipo] += exceso_eur
+    suma_corto_fijo_eur = sum(categoria_corto_eur.values())
+    if suma_corto_fijo_eur > deudas_fin_corto_eur and suma_corto_fijo_eur > 0:
+        factor = deudas_fin_corto_eur / suma_corto_fijo_eur
+        for tipo in categoria_corto_eur:
+            exceso_eur = categoria_corto_eur[tipo] * (1 - factor)
+            categoria_corto_eur[tipo] -= exceso_eur
+            categoria_largo_eur[tipo] += exceso_eur
+
+    entidades_credito_largo_eur = deudas_fin_largo_con_coste_eur - sum(categoria_largo_eur.values())
+    entidades_credito_corto_eur = deudas_fin_corto_eur - sum(categoria_corto_eur.values())
+
+    desglose_largo_eur = {"entidades_credito": entidades_credito_largo_eur, **categoria_largo_eur, "derivados": derivados_pasivo_largo_eur}
+    desglose_corto_eur = {"entidades_credito": entidades_credito_corto_eur, **categoria_corto_eur, "derivados": 0.0}
+    return desglose_largo_eur, desglose_corto_eur
+
+
 def categoria_de_sector(sector_codigo: str) -> str:
     if sector_codigo not in CATEGORIA_SECTOR:
         raise EmpresaBaseError(f"Sector '{sector_codigo}' no tiene categoría asignada en CATEGORIA_SECTOR.")
@@ -685,6 +817,16 @@ class EmpresaBase:
     deudores_desglose_eur: dict[str, float] = field(default_factory=dict)
     acreedores_perfil_pct: dict[str, float] = field(default_factory=dict)
     acreedores_desglose_eur: dict[str, float] = field(default_factory=dict)
+    # Cuarto y último lote de desglose de balance (deudas financieras largo/corto plazo) — perfil
+    # FIJO desde 2023 (`fraccion_total`/`fraccion_largo`, arquetipo-agnóstico: ni la reclasifica-
+    # ción de deuda ni el derivado del arquetipo 21 tocan este perfil, solo el desglose en € de
+    # cada año — ver motor.evolucion_arquetipo y calcular_desglose_deudas_fin). "Derivados" en
+    # 0.0 en el año base: la cobertura nunca tiene valor razonable en 2023 (año de origen de
+    # medición, ver motor.coberturas_subvenciones).
+    deudas_fin_fraccion_total: dict[str, float] = field(default_factory=dict)
+    deudas_fin_fraccion_largo: dict[str, float] = field(default_factory=dict)
+    deudas_fin_largo_desglose_eur: dict[str, float] = field(default_factory=dict)
+    deudas_fin_corto_desglose_eur: dict[str, float] = field(default_factory=dict)
 
 
 def _mapa_codigo_sector(catalogo: pd.DataFrame) -> dict[str, str]:
@@ -1021,6 +1163,20 @@ def generar_empresa_base(
         componente: fraccion * balance_eur["acreedores_comerciales"] for componente, fraccion in perfil_acreedores.items()
     }
 
+    # Cuarto y último lote de desglose de balance (deudas financieras largo/corto plazo) — RNG
+    # PROPIO E INDEPENDIENTE, mismo criterio que el resto de perfiles de este bloque. Sin
+    # derivados en el año base (la cobertura del arquetipo 21 parte de valor razonable 0 en 2023,
+    # ver motor.coberturas_subvenciones) — la base "con coste" es, por tanto, el propio agregado
+    # `deudas_fin_largo`/`deudas_fin_corto` del catálogo, sin nada que excluir todavía.
+    rng_desglose_balance_lote4 = np.random.default_rng(
+        [semilla, zlib.crc32(f"{sector}|{segmento}|desglose_balance_lote4".encode("utf-8"))]
+    )
+    deudas_fin_fraccion_total, deudas_fin_fraccion_largo = generar_perfil_deudas_fin(rng_desglose_balance_lote4, categoria)
+    deudas_fin_largo_desglose_eur, deudas_fin_corto_desglose_eur = calcular_desglose_deudas_fin(
+        deudas_fin_fraccion_total, deudas_fin_fraccion_largo,
+        balance_eur["deudas_fin_largo"], balance_eur["deudas_fin_corto"], derivados_pasivo_largo_eur=0.0,
+    )
+
     parcial_pyg = _generar_pyg_hasta_baii(rng, fila, ventas_objetivo, _AÑO_BASE_AMORTIZACION, amortizaciones_eur=amortizacion_eur_2023)
     pyg_pct, pyg_eur = _completar_pyg_con_deuda(parcial_pyg, deuda_financiera_eur)
 
@@ -1066,4 +1222,8 @@ def generar_empresa_base(
         deudores_desglose_eur=deudores_desglose_eur,
         acreedores_perfil_pct=perfil_acreedores,
         acreedores_desglose_eur=acreedores_desglose_eur,
+        deudas_fin_fraccion_total=deudas_fin_fraccion_total,
+        deudas_fin_fraccion_largo=deudas_fin_fraccion_largo,
+        deudas_fin_largo_desglose_eur=deudas_fin_largo_desglose_eur,
+        deudas_fin_corto_desglose_eur=deudas_fin_corto_desglose_eur,
     )

@@ -108,22 +108,20 @@ def generar_efe(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligatori
     a3c = 0.0
     a3d = actual.balance_eur["acreedores_comerciales"] - anterior.balance_eur["acreedores_comerciales"]
     a3e = actual.balance_eur["otras_deudas_corto"] - anterior.balance_eur["otras_deudas_corto"]
-    # A.3.f excluye el grupo89 (cobertura si es pasivo + impuesto diferido de cobertura y
-    # subvención, ver motor/coberturas_subvenciones.py) alojado dentro de `otras_deudas_largo`:
-    # son valoraciones/reclasificaciones puramente contables sin ningún flujo de caja detrás
-    # (a diferencia de un pasivo operativo real) — su contrapartida es la línea de PN
-    # correspondiente, no caja, así que tratarlas aquí como "fuente de caja" duplicaría un
-    # movimiento que no existe. Mismo criterio que ya se aplica a la amortización (a2a).
-    # También excluye `deuda_grupo_largo_eur` (arquetipo 20, "financiación recibida de grupo"):
-    # es una actividad de FINANCIACIÓN (Sección C, ver más abajo, letra (c) del desglose oficial
-    # de la línea 10), no de explotación — mismo criterio de exclusión que grupo89, aunque la
+    # A.3.f excluye el grupo89 (impuesto diferido de cobertura y subvención, ver motor/
+    # coberturas_subvenciones.py) alojado dentro de `otras_deudas_largo`: son reclasificaciones
+    # puramente contables sin ningún flujo de caja detrás (a diferencia de un pasivo operativo
+    # real) — su contrapartida es la línea de PN correspondiente, no caja, así que tratarlas
+    # aquí como "fuente de caja" duplicaría un movimiento que no existe. Mismo criterio que ya se
+    # aplica a la amortización (a2a). El derivado de la cobertura, cuando es PASIVO, YA NO vive
+    # aquí desde el cuarto lote de desglose de balance (ver `c10` más abajo, que ahora es quien lo
+    # excluye — se movió de línea, no de tratamiento: sigue sin flujo de caja propio). También
+    # excluye `deuda_grupo_largo_eur` (arquetipo 20, "financiación recibida de grupo"): es una
+    # actividad de FINANCIACIÓN (Sección C, ver más abajo, letra (c) del desglose oficial de la
+    # línea 10), no de explotación — mismo criterio de exclusión que grupo89, aunque la
     # naturaleza sea distinta (aquí SÍ hay caja real detrás, solo que no es caja operativa).
-    grupo89_pasivo_no_corriente_actual = (
-        actual.pasivos_por_impuesto_diferido_eur + max(0.0, -actual.cobertura_valor_swap_eur) + actual.deuda_grupo_largo_eur
-    )
-    grupo89_pasivo_no_corriente_anterior = (
-        anterior.pasivos_por_impuesto_diferido_eur + max(0.0, -anterior.cobertura_valor_swap_eur) + anterior.deuda_grupo_largo_eur
-    )
+    grupo89_pasivo_no_corriente_actual = actual.pasivos_por_impuesto_diferido_eur + actual.deuda_grupo_largo_eur
+    grupo89_pasivo_no_corriente_anterior = anterior.pasivos_por_impuesto_diferido_eur + anterior.deuda_grupo_largo_eur
     a3f = (actual.balance_eur["otras_deudas_largo"] - grupo89_pasivo_no_corriente_actual) - (
         anterior.balance_eur["otras_deudas_largo"] - grupo89_pasivo_no_corriente_anterior
     )
@@ -168,9 +166,21 @@ def generar_efe(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligatori
 
     b8 = b_intangible + b_material + b_inversiones_inmobiliarias + b_otros_financieros + b_adquisicion + b_prestamo_grupo
 
-    # C) Financiación
-    deuda_financiera_actual = actual.balance_eur["deudas_fin_largo"] + actual.balance_eur["deudas_fin_corto"]
-    deuda_financiera_anterior = anterior.balance_eur["deudas_fin_largo"] + anterior.balance_eur["deudas_fin_corto"]
+    # C) Financiación — `c10` excluye el derivado de la cobertura (cuando es PASIVO): desde el
+    # cuarto lote de desglose de balance vive dentro de `deudas_fin_largo` (línea "IV. Derivados"
+    # de "Deudas financieras", ver motor/evolucion_arquetipo.py, `_construir_balance`) en vez de
+    # `otras_deudas_largo` (aproximación anterior, donde SÍ se excluía de A.3.f, ver arriba) —
+    # mismo tratamiento de siempre (sin flujo de caja propio, valoración a mercado pura), solo
+    # cambia qué línea del EFE es quien la excluye. El total del EFE no cambia en ningún caso: es
+    # el mismo importe excluido, solo se mueve de fórmula.
+    derivados_pasivo_actual = max(0.0, -actual.cobertura_valor_swap_eur)
+    derivados_pasivo_anterior = max(0.0, -anterior.cobertura_valor_swap_eur)
+    deuda_financiera_actual = (
+        actual.balance_eur["deudas_fin_largo"] - derivados_pasivo_actual + actual.balance_eur["deudas_fin_corto"]
+    )
+    deuda_financiera_anterior = (
+        anterior.balance_eur["deudas_fin_largo"] - derivados_pasivo_anterior + anterior.balance_eur["deudas_fin_corto"]
+    )
     c10 = deuda_financiera_actual - deuda_financiera_anterior
     # C.9 ("Cobros y pagos por instrumentos de patrimonio... subvenciones, donaciones y legados
     # recibidos") — antes siempre 0.0 por no existir ningún mecanismo detrás; el encargo de

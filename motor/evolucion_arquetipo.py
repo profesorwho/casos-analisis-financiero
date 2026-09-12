@@ -511,6 +511,7 @@ from motor.empresa_base import (
     TOLERANCIA_CUADRE_EUR,
     EmpresaBase,
     EmpresaBaseError,
+    calcular_desglose_deudas_fin,
     categoria_de_sector,
     generar_empresa_base,
     resolver_fila_sector,
@@ -939,6 +940,18 @@ class EjercicioEmpresa:
     provision_aplicacion_eur: float = 0.0
     provision_exceso_eur: float = 0.0
 
+    # --- Cuarto y último lote de desglose de balance (deudas financieras largo/corto plazo,
+    # ver motor/empresa_base.py y motor/coberturas_subvenciones.py) — `deudas_fin_fraccion_total`/
+    # `..._fraccion_largo` son el perfil FIJO del caso (leasing/obligaciones/otros pasivos
+    # financieros); `deudas_fin_largo_desglose_eur`/`..._corto_desglose_eur` son las 5 categorías
+    # ya resueltas de ESTE año (Entidades de crédito como residual, Derivados driven por el
+    # arquetipo 21), cada uno sumando exacto a `balance_eur["deudas_fin_largo"]`/
+    # `["deudas_fin_corto"]`. ---
+    deudas_fin_fraccion_total: dict[str, float] = field(default_factory=dict)
+    deudas_fin_fraccion_largo: dict[str, float] = field(default_factory=dict)
+    deudas_fin_largo_desglose_eur: dict[str, float] = field(default_factory=dict)
+    deudas_fin_corto_desglose_eur: dict[str, float] = field(default_factory=dict)
+
     @property
     def periodificacion_activo_eur(self) -> float:
         return self.periodificacion_activo_pct * self.balance_eur["realizable"]
@@ -1040,6 +1053,10 @@ def _ejercicio_desde_empresa_base(empresa: EmpresaBase) -> EjercicioEmpresa:
         deudores_desglose_eur=dict(empresa.deudores_desglose_eur),
         acreedores_perfil_pct=dict(empresa.acreedores_perfil_pct),
         acreedores_desglose_eur=dict(empresa.acreedores_desglose_eur),
+        deudas_fin_fraccion_total=dict(empresa.deudas_fin_fraccion_total),
+        deudas_fin_fraccion_largo=dict(empresa.deudas_fin_fraccion_largo),
+        deudas_fin_largo_desglose_eur=dict(empresa.deudas_fin_largo_desglose_eur),
+        deudas_fin_corto_desglose_eur=dict(empresa.deudas_fin_corto_desglose_eur),
         # Cobertura/subvención: en el año base (2023) todo el estado parte de cero — Δr no
         # existe todavía (no hay "año anterior" dentro de la serie) y la subvención nunca se
         # concede en 2023 (año_concesion siempre 2024 o 2025, ver
@@ -1463,9 +1480,12 @@ def _evolucionar_un_año(
     # partidas que deban crecer proporcional a ventas de un año a otro — se excluyen de la base
     # proporcional y se añaden después como un NIVEL ya recalculado de este año (igual criterio
     # en el lado del pasivo con `otras_deudas_largo_eur`). Si no hay grupo89 activo, esto es 0 y
-    # no cambia nada del comportamiento anterior.
+    # no cambia nada del comportamiento anterior. El derivado, cuando es PASIVO, ya NO vive en
+    # `otras_deudas_largo` desde el cuarto lote de desglose de balance (ver más abajo, "Deudas
+    # financieras") — así que `anterior_pasivo_grupo89_eur` deja de excluirlo aquí; su exclusión
+    # equivalente para la base de `deudas_fin_largo_proporcional_eur` está justo debajo.
     anterior_activo_grupo89_eur = max(0.0, anterior.cobertura_valor_swap_eur) + anterior.activos_por_impuesto_diferido_eur
-    anterior_pasivo_grupo89_eur = max(0.0, -anterior.cobertura_valor_swap_eur) + anterior.pasivos_por_impuesto_diferido_eur
+    anterior_pasivo_grupo89_eur = anterior.pasivos_por_impuesto_diferido_eur
 
     activo_no_corriente_proporcional_eur = (
         anterior.balance_eur["activo_no_corriente"] - anterior_activo_grupo89_eur
@@ -1476,7 +1496,13 @@ def _evolucionar_un_año(
         activo_no_corriente_eur = _activo_no_corriente_objetivo(
             ea_capex.efecto, anterior, ventas, fila, ea_capex.intensidad_efectiva
         )
-    deudas_fin_largo_proporcional_eur = anterior.balance_eur["deudas_fin_largo"] * (1 + crecimiento_ventas)
+    # Excluye el derivado del año anterior (si era pasivo) de la base CON COSTE — mismo criterio
+    # que `deuda_financiera_inicio_eur` más abajo: una valoración a mercado no debe componerse
+    # como si fuera principal prestado. Se pliega de nuevo al año, ya recalculado, en
+    # `_construir_balance` (ver bloque "Deudas financieras" más abajo).
+    deudas_fin_largo_proporcional_eur = (
+        anterior.balance_eur["deudas_fin_largo"] - max(0.0, -anterior.cobertura_valor_swap_eur)
+    ) * (1 + crecimiento_ventas)
     # Provisiones (tercer lote de desglose de balance): excluidas de la base proporcional, igual
     # criterio que grupo89 — no crecen con ventas, se recalculan cada año desde su propio saldo
     # (ver bloque "Provisiones" más abajo, que las vuelve a sumar tras este punto).
@@ -1492,7 +1518,14 @@ def _evolucionar_un_año(
         anterior.balance_eur["disponible"] * (1 + crecimiento_ventas),
         ea_tesoreria.intensidad_efectiva if ea_tesoreria else 0.0,
     )
-    deuda_financiera_inicio_eur = anterior.balance_eur["deudas_fin_largo"] + anterior.balance_eur["deudas_fin_corto"]
+    # Excluye el derivado del año anterior (si era pasivo) de la base "con coste" — desde el
+    # cuarto lote de desglose de balance, `anterior.balance_eur["deudas_fin_largo"]` YA incluye
+    # el derivado (ver `_construir_balance`, bloque "Deudas financieras" más abajo): sin esta
+    # exclusión, `deuda_financiera_inicio_eur` cargaría interés sobre una valoración a mercado
+    # que no es principal prestado.
+    deuda_financiera_inicio_eur = (
+        anterior.balance_eur["deudas_fin_largo"] - max(0.0, -anterior.cobertura_valor_swap_eur) + anterior.balance_eur["deudas_fin_corto"]
+    )
 
     # --- Reclasificación de deuda (arquetipo 8 "refinanciación"): mueve deuda financiera entre
     # largo y corto plazo SIN alterar el total (una renegociación cambia el vencimiento, no el
@@ -1726,15 +1759,24 @@ def _evolucionar_un_año(
     ajuste_otros_ingresos_explot_grupo89_eur = subvencion_transferencia_bruto_eur
 
     # Colocación en balance del grupo89 de ESTE año (nivel, no delta — ver más arriba por qué
-    # se excluyó del crecimiento proporcional): el derivado y el activo por impuesto diferido
-    # (si procede) suman a activo_no_corriente; el derivado si es pasivo y AMBOS pasivos por
-    # impuesto diferido (cobertura + subvención) suman a otras_deudas_largo (pasivo_no_corriente).
+    # se excluyó del crecimiento proporcional): el activo por impuesto diferido (si procede) suma
+    # a activo_no_corriente; AMBOS pasivos por impuesto diferido (cobertura + subvención) suman a
+    # otras_deudas_largo (pasivo_no_corriente). El derivado, si es activo (valor razonable
+    # positivo), sigue sumando a activo_no_corriente (lado activo — fuera del alcance de este
+    # cuarto lote, que solo desglosa el lado de "Deudas financieras"; sigue identificable de
+    # forma distinta vía `cobertura_valor_swap_eur`). Si es PASIVO, desde el cuarto lote de
+    # desglose de balance ya NO va a `otras_deudas_largo` (aproximación anterior) — tiene su
+    # línea propia "IV. Derivados" dentro de "Deudas financieras a largo plazo", plegada más
+    # abajo en `deudas_fin_largo_eur` dentro de `_construir_balance` (nunca en la base que
+    # alimenta gastos_financieros — ver bloque de deudas financieras más abajo, y CLAUDE.md
+    # "Deudas financieras — cuarto lote" para el porqué completo).
     activos_por_impuesto_diferido_eur = activo_por_impuesto_diferido_eur(cobertura_saldo_1340_bruto_eur)
     pasivos_por_impuesto_diferido_eur = pasivo_por_impuesto_diferido_eur(cobertura_saldo_1340_bruto_eur) + pasivo_por_impuesto_diferido_eur(
         subvencion_saldo_130_bruto_eur
     )
     activo_no_corriente_eur += max(0.0, cobertura_valor_swap_eur) + activos_por_impuesto_diferido_eur
-    otras_deudas_largo_eur += max(0.0, -cobertura_valor_swap_eur) + pasivos_por_impuesto_diferido_eur
+    otras_deudas_largo_eur += pasivos_por_impuesto_diferido_eur
+    derivados_pasivo_largo_eur = max(0.0, -cobertura_valor_swap_eur)
 
     # Subvención: el cobro de la ayuda es caja real, entra en el ejercicio de concesión y se
     # queda (la imputación posterior a la PyG es un reciclaje de PN -> resultado, no una salida
@@ -1840,9 +1882,15 @@ def _evolucionar_un_año(
         acreedores_comerciales_eur: float,
         disponible_eur: float,
         deudas_fin_corto_eur: float,
-        deudas_fin_largo_eur: float,
+        deudas_fin_largo_con_coste_eur: float,
         patrimonio_neto_eur: float,
     ) -> tuple[dict[str, float], float]:
+        # `deudas_fin_largo_con_coste_eur` es la base CON coste (alimenta gastos_financieros,
+        # ver `_evaluar` más abajo) — el derivado (IV. Derivados, cuarto lote de desglose de
+        # balance) se añade AQUÍ, solo para el balance reportado, nunca antes: una valoración a
+        # mercado del swap no es principal prestado, no debe generar "interés" a la tasa media
+        # del sector. Ver CLAUDE.md, "Deudas financieras — cuarto lote".
+        deudas_fin_largo_eur = deudas_fin_largo_con_coste_eur + derivados_pasivo_largo_eur
         balance = {
             "activo_no_corriente": activo_no_corriente_eur,
             "activo_corriente": existencias_eur + realizable_eur + disponible_eur,
@@ -2111,6 +2159,19 @@ def _evolucionar_un_año(
         else 0.0
     )
 
+    # Desglose de deudas financieras (cuarto y último lote de desglose de balance) — calculado
+    # DESPUÉS de la contención de endeudamiento, sobre el balance YA final de este año:
+    # "Entidades de crédito" es el residual (absorbe lo que `reclasificacion_deuda`, capex o
+    # adquisición hayan movido), "Derivados" es el nivel ya plegado en `balance_eur[
+    # "deudas_fin_largo"]` dentro de `_construir_balance` — se resta aquí para aislar la base
+    # CON COSTE que sí reparten los perfiles fijos de arrendamiento financiero/obligaciones/
+    # otros pasivos financieros. Ver `motor.empresa_base.calcular_desglose_deudas_fin`.
+    deudas_fin_largo_con_coste_año_eur = balance_eur["deudas_fin_largo"] - derivados_pasivo_largo_eur
+    deudas_fin_largo_desglose_eur_año, deudas_fin_corto_desglose_eur_año = calcular_desglose_deudas_fin(
+        anterior.deudas_fin_fraccion_total, anterior.deudas_fin_fraccion_largo,
+        deudas_fin_largo_con_coste_año_eur, balance_eur["deudas_fin_corto"], derivados_pasivo_largo_eur,
+    )
+
     return EjercicioEmpresa(
         año=año,
         ventas=ventas,
@@ -2208,6 +2269,10 @@ def _evolucionar_un_año(
         provision_dotacion_eur=paso_provision.dotacion_eur,
         provision_aplicacion_eur=paso_provision.aplicacion_eur,
         provision_exceso_eur=paso_provision.exceso_eur,
+        deudas_fin_fraccion_total=anterior.deudas_fin_fraccion_total,
+        deudas_fin_fraccion_largo=anterior.deudas_fin_fraccion_largo,
+        deudas_fin_largo_desglose_eur=deudas_fin_largo_desglose_eur_año,
+        deudas_fin_corto_desglose_eur=deudas_fin_corto_desglose_eur_año,
     )
 
 

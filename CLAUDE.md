@@ -171,17 +171,23 @@ sectores, 4 semillas, 2024 y 2025), 0 descuadres en ambos** — ver decisiones #
   deuda total, no es un flujo real); perfil de `activo_no_corriente` → B.6/7 por componente,
   aplicado al cambio ORGÁNICO (excluyendo el salto de adquisición del año); adquisición (18) →
   B.6.a "Empresas del grupo y asociadas", aparte. Líneas sin mecanismo que las alimente (siempre
-  0, documentado, no inventado): correcciones valorativas, provisiones, bajas de inmovilizado,
-  diferencias de cambio, valor razonable, dividendos de terceros, "otros activos corrientes"
-  (A.3.c). **C.9 ("Instrumentos de patrimonio... subvenciones") ya NO es siempre 0** desde el
-  encargo de coberturas/subvenciones: = cobro de caja de la subvención en su año de concesión
-  (ver sección "Coberturas y subvenciones" abajo). **B.6.c "Préstamo a empresas del grupo" y
-  C.10.c "Empresas del grupo"** (variación de `inversion_grupo_largo_eur`/`deuda_grupo_largo_eur`,
-  ambas siempre 0 salvo que el arquetipo 20 active esa operación concreta) desde el segundo lote
-  de desglose de balance — ver sección "Desglose de balance — segundo lote" más abajo. `c10`
-  (deuda con entidades de crédito) queda estrictamente separado de `c10c` (deuda con el grupo,
-  sin coste financiero): mezclarlos confundiría deuda que sí genera `gastos_financieros` con
-  deuda que no.
+  0, documentado, no inventado): correcciones valorativas, bajas de inmovilizado, diferencias de
+  cambio, valor razonable, dividendos de terceros, "otros activos corrientes" (A.3.c). **Las
+  provisiones (tercer lote) SÍ tienen mecanismo desde ese encargo — fluyen por A.3.e/A.3.f, sin
+  ninguna línea nueva, ver sección "Provisiones" abajo.** **C.9 ("Instrumentos de patrimonio...
+  subvenciones") ya NO es siempre 0** desde el encargo de coberturas/subvenciones: = cobro de
+  caja de la subvención en su año de concesión (ver sección "Coberturas y subvenciones" abajo).
+  **B.6.c "Préstamo a empresas del grupo" y C.10.c "Empresas del grupo"** (variación de
+  `inversion_grupo_largo_eur`/`deuda_grupo_largo_eur`, ambas siempre 0 salvo que el arquetipo 20
+  active esa operación concreta) desde el segundo lote de desglose de balance — ver sección
+  "Desglose de balance — segundo lote" más abajo. `c10` (deuda con entidades de crédito) queda
+  estrictamente separado de `c10c` (deuda con el grupo, sin coste financiero): mezclarlos
+  confundiría deuda que sí genera `gastos_financieros` con deuda que no. **`c10` excluye el
+  derivado del arquetipo 21 cuando es PASIVO** (cuarto y último lote de desglose de balance,
+  `max(0.0, -cobertura_valor_swap_eur)`, en ambos años) — desde ese lote vive dentro de
+  `deudas_fin_largo` en vez de `otras_deudas_largo` (aproximación anterior, donde SÍ se excluía
+  de `a3f`); mismo tratamiento de siempre (sin flujo de caja propio), solo cambió qué línea lo
+  excluye — ver sección "Deudas financieras — cuarto lote" más abajo.
 - **Amortización (A.2.a) — sigue en 0,0 en el EFE, por una razón que YA NO es "no hay ningún
   activo real detrás"** (eso se arregló, ver "Amortización derivada" abajo y decisiones #27-#32)
   **sino que el `activo_no_corriente` del BALANCE todavía no se neta de la amortización
@@ -223,10 +229,12 @@ deterioro, no a una reserva de PN).
   BRUTO íntegro, DESACOPLADOS del `impuesto_beneficios_pct` genérico ya sorteado (aplicado
   después de `_completar_pyg_con_deuda`, en `_evaluar`) — de lo contrario el balance deja de
   cuadrar por una fracción de euro. La cobertura coloca en balance el valor razonable BRUTO
-  completo del derivado (`cobertura_valor_swap_eur`, con signo: activo si positivo, pasivo si
-  negativo); la subvención coloca un cobro de caja FIJO en `disponible` (el importe concedido,
-  una sola vez, que no "se devuelve" al imputarse) — asimetría real entre ambas operaciones, no
-  arbitraria.
+  completo del derivado (`cobertura_valor_swap_eur`, con signo: activo si positivo → sigue en
+  `activo_no_corriente`; pasivo si negativo → desde el cuarto lote de desglose de balance,
+  línea propia "IV. Derivados" dentro de `deudas_fin_largo`, NUNCA dentro de la base que alimenta
+  `gastos_financieros`, ver sección "Deudas financieras — cuarto lote" más abajo); la subvención
+  coloca un cobro de caja FIJO en `disponible` (el importe concedido, una sola vez, que no "se
+  devuelve" al imputarse) — asimetría real entre ambas operaciones, no arbitraria.
 - **Tipo impositivo**: `TIPO_IMPOSITIVO_GENERAL = 0.25` (Ley 27/2014), plano, sin distinguir por
   segmento — el motor no tiene ya construido ningún mecanismo de tipo reducido en ningún otro
   punto, así que introducir uno aquí sería una hipótesis nueva no pedida por el encargo.
@@ -248,8 +256,11 @@ deterioro, no a una reserva de PN).
   siempre 0). `a2k_otros_ingresos_gastos` (antes siempre 0) reversa el importe bruto que la
   cobertura/subvención inyectó en `a1` vía PyG — es una reclasificación contable pura sin caja
   detrás, mismo motivo que `a2a` (amortización). `a3f` y el cálculo de B (inversión) EXCLUYEN el
-  grupo89 alojado dentro de `otras_deudas_largo`/`activo_no_corriente` — sin flujo de caja, se
-  duplicaría si se tratara como fuente/uso operativo u orgánico.
+  impuesto diferido de grupo89 y el derivado-si-es-ACTIVO alojados en `otras_deudas_largo`/
+  `activo_no_corriente` — sin flujo de caja, se duplicaría si se tratara como fuente/uso
+  operativo u orgánico. **El derivado-si-es-PASIVO ya NO se excluye aquí** (desde el cuarto lote
+  de desglose de balance ya no vive en `otras_deudas_largo`) — su exclusión equivalente está
+  ahora en `c10`, ver arriba.
 - **Documento A (EIGR, `generar_eigr`)** — estructura mínima: A (resultado), B.2/B.7/B.9
   (cobertura/subvención/efecto impositivo, ORIGINACIÓN de este año), C.2/C.7/C.9 (mismas 3,
   RECLASIFICACIÓN a PyG de este año, signo negativo salvo que el saldo bruto de origen ya fuera
@@ -556,6 +567,56 @@ corto plazo"), hoy ausentes del motor. Ver decisiones #60-64.
   dotación/exceso de provisión SIEMPRE tiene contrapartida real en `otras_deudas_largo`/
   `otras_deudas_corto`, así que A.3.e/A.3.f (ya existentes) la reconcilian exactamente sin ningún
   cambio en `motor/efe.py` — verificado, no asumido (0 descuadres en 200 EFE con provisión activa).
+
+## Deudas financieras — cuarto y último lote de desglose de balance (`motor/empresa_base.py`)
+
+Completa el desglose granular de balance/PyG según el PGC — 5 categorías oficiales de "Deudas
+financieras" (largo y corto plazo, carve-out de `deudas_fin_largo`/`deudas_fin_corto`), con
+Derivados como línea propia para la cobertura del arquetipo 21. Ver decisiones #66-69.
+
+- **Clasificación por Tipo** (`PERFIL_DEUDAS_FIN_POR_CATEGORIA`, `calcular_desglose_deudas_fin` en
+  `motor/empresa_base.py`): **Entidades de crédito** — Tipo 1, NUNCA sorteado, es el RESIDUAL tras
+  restar las otras 3 al total con coste (dominante por defecto). **Arrendamiento financiero** —
+  Tipo 1, perfil por categoría de sector (mayor en transporte_logistica 30%/construcción
+  22%/industria 18% — activo material pesado, conecta con las cohortes de `motor/amortizacion.py`;
+  menor en servicios de oficina 4-6%), sin ancla de catálogo (hipótesis de diseño, verificado que
+  ninguna de las 218 columnas distingue esta financiación). **Obligaciones y valores negociables**
+  — Tipo 1, casi cero salvo industria (4%, incluye energía/siderurgia). **Otros pasivos
+  financieros** — Tipo 1, residual plano 3%. **Derivados** — Tipo 2 puro, sin probabilidad de
+  fondo, disparado exclusivamente por `cobertura_valor_swap_eur < 0` (arquetipo 21).
+- **`reclasificacion_deuda` (8/16) opera SOLO sobre "Entidades de crédito"** — decisión del
+  usuario, corregida ANTES de implementar (ver #67): el mismo argumento que justifica el Tipo
+  propio del leasing ("calendario fijo por contrato, no se renegocia como un préstamo bancario")
+  es el argumento contra dejar que 8/16 lo mueva. El mecanismo en sí (`_mover_ratio_continuo`
+  sobre `deudas_fin_largo/corto_proporcional_eur`) NO se tocó — la exclusión se logra enteramente
+  en el desglose posterior: arrendamiento financiero/obligaciones/otros mantienen su propio
+  reparto largo/corto FIJO por caso (`FRACCION_LARGO_POR_TIPO_DEUDA_FIN`, por TIPO de
+  instrumento, no por sector), y "Entidades de crédito" absorbe como residual lo que 8/16 mueva.
+  Verificado cuantitativamente (no asumido): con 16 activo, la fracción largo/total de
+  leasing/obligaciones/otros se mantiene estable (Δ<0,03) mientras la de entidades de crédito se
+  mueve con fuerza (Δ>0,05). **Techo defensivo**: si el reparto fijo de esas 3 categorías pidiera
+  más "largo" del que existe ese año (sectores/semillas con un draw atípico del catálogo,
+  `deudas_fin_largo` ya casi nulo por el ruido 85%/15% — no relacionado con la reclasificación en
+  sí), se reescala proporcionalmente ENTRE ELLAS (nunca a costa de "Entidades de crédito", que ya
+  es 0 en ese caso) para que la suma nunca supere el total real — verificado en 648 ejercicios de
+  estrés: 0 casos negativos, 0 descuadres.
+- **Endeudamiento (9/14/17/18/20) sin cambios** — `_endeudamiento` opera sobre `pasivo_no_
+  corriente`/`pasivo_corriente` ya agregados; el desglose interno (una partición de esos mismos
+  euros) no puede, por construcción, alterar ese total — confirmado, no solo argumentado.
+- **Migración del derivado del arquetipo 21** — desde la aproximación anterior ("otros activos
+  financieros" si es activo / "otras deudas" si es pasivo) a su línea propia "IV. Derivados"
+  dentro de "Deudas financieras a largo plazo" (solo el lado PASIVO — el lado activo queda fuera
+  del alcance de este lote, sigue en `activo_no_corriente`, identificable vía `cobertura_valor_
+  swap_eur`). El riesgo real: `deudas_fin_largo_eur`/`corto_eur` alimentan `gastos_financieros =
+  deuda_financiera_media × tipo_interés` — plegar ahí el derivado sin más generaría "interés"
+  sobre una valoración a mercado. **Solución**: el derivado se añade DENTRO de
+  `_construir_balance` (para el balance reportado), nunca antes de `deuda_financiera_media_eur`
+  (que sigue usando solo la base "con coste") — misma exclusión aplicada en cascada donde
+  `anterior.balance_eur["deudas_fin_largo"]` se usaba como base proporcional/de inicio. **0
+  cambios en ningún total de EFE/ECPN/interés ya validado** (los 602 tests preexistentes
+  siguieron en verde sin modificar ni un valor de referencia tras la migración) — solo cambió QUÉ
+  fórmula excluye el derivado (`a3f`→`c10`, ver sección EFE arriba). **EIGR no necesitó ningún
+  cambio** (no referencia `balance_eur` ni la colocación del derivado en absoluto).
 
 ## Otros documentos de este índice
 
