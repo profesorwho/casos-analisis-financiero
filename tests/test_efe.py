@@ -114,8 +114,10 @@ def test_efe_lineas_sin_mecanismo_quedan_en_cero(catalogo, arquetipos):
 
 def test_efe_apalancamiento_genera_flujo_bruto_de_financiacion(catalogo, arquetipos):
     """El mecanismo de apalancamiento (9/14) financia una distribución con deuda nueva — se
-    espera un C.11.a (dividendos, pago) exactamente igual a -apalancamiento_extra_eur cuando el
-    efecto actúa ese año."""
+    espera un C.11.a (dividendos, pago) exactamente igual a -(apalancamiento_extra_eur +
+    payout_dividendos_eur) cuando el efecto actúa ese año — el payout de fondo (#79-#80) es
+    transversal, comparte la misma línea C.11.a (mismo criterio que el modelo oficial PGC, que
+    no distingue la fuente de financiación del dividendo, ver decisiones #80)."""
     evolucion = generar_evolucion_arquetipo(
         "24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=0, intensidad="fuerte",
         arquetipo_id="apalancamiento", catalogo=catalogo, arquetipos=arquetipos,
@@ -124,7 +126,9 @@ def test_efe_apalancamiento_genera_flujo_bruto_de_financiacion(catalogo, arqueti
         ejercicio = evolucion.ejercicios[año]
         efe = generar_efe(evolucion.ejercicios[año - 1], ejercicio, obligatorio=True)
         if ejercicio.apalancamiento_extra_eur > 0:
-            assert efe.c11a_dividendos == pytest.approx(-ejercicio.apalancamiento_extra_eur)
+            assert efe.c11a_dividendos == pytest.approx(
+                -(ejercicio.apalancamiento_extra_eur + ejercicio.payout_dividendos_eur)
+            )
 
 
 def test_efe_obligatorio_se_marca_explicitamente(catalogo, arquetipos):

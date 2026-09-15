@@ -86,7 +86,9 @@ def test_patrimonio_neto_sigue_el_resultado_del_ejercicio(catalogo, arquetipos, 
     motor/coberturas_subvenciones.py): 0 en los casos sin cobertura/subvención, pero no siempre
     (la subvención tiene una probabilidad de fondo incluso sin arquetipo, ver
     PROPENSION_SUBVENCION_BASELINE_POR_CATEGORIA) — no se puede asumir 0 a priori para
-    cualquier sector/semilla."""
+    cualquier sector/semilla — MENOS el payout de dividendos (#79-#80, transversal, activo en
+    cualquier caso independientemente del arquetipo — arquetipo 1 no genera `apalancamiento_
+    extra_eur`, así que no hace falta restarlo aquí, pero el payout sí aplica siempre)."""
     for evolucion in _casos(catalogo, arquetipos, sector, intensidad):
         ej = evolucion.ejercicios
         delta_grupo89_2024 = (ej[2024].ajustes_cambio_valor_pn_eur - ej[2023].ajustes_cambio_valor_pn_eur) + (
@@ -96,10 +98,18 @@ def test_patrimonio_neto_sigue_el_resultado_del_ejercicio(catalogo, arquetipos, 
             ej[2025].subvenciones_pn_eur - ej[2024].subvenciones_pn_eur
         )
         assert ej[2024].balance_eur["patrimonio_neto"] == pytest.approx(
-            ej[2023].balance_eur["patrimonio_neto"] + ej[2024].pyg_eur["resultado_ejercicio"] + delta_grupo89_2024, abs=0.01
+            ej[2023].balance_eur["patrimonio_neto"]
+            + ej[2024].pyg_eur["resultado_ejercicio"]
+            + delta_grupo89_2024
+            - ej[2024].payout_dividendos_eur,
+            abs=0.01,
         )
         assert ej[2025].balance_eur["patrimonio_neto"] == pytest.approx(
-            ej[2024].balance_eur["patrimonio_neto"] + ej[2025].pyg_eur["resultado_ejercicio"] + delta_grupo89_2025, abs=0.01
+            ej[2024].balance_eur["patrimonio_neto"]
+            + ej[2025].pyg_eur["resultado_ejercicio"]
+            + delta_grupo89_2025
+            - ej[2025].payout_dividendos_eur,
+            abs=0.01,
         )
 
 

@@ -72,7 +72,7 @@ class EstadoFlujosEfectivo:
     c9_instrumentos_patrimonio: float  # = cobro de subvenciones de capital en el año de concesión (ver motor/coberturas_subvenciones.py) — 0.0 si no hay subvención; capital social sigue fijo, sin ampliaciones/reducciones modeladas
     c10_variacion_neta_deuda_financiera: float  # neto emisión/devolución de deudas_fin_largo/corto — el motor no distingue gross issuance/repayment dentro del año
     c10c_empresas_grupo: float  # arquetipo 20, "financiación recibida de grupo" — variación de deuda_grupo_largo_eur (letra (c) del desglose oficial de la línea 10, NUNCA mezclada con c10: esa masa no genera gastos financieros, ver motor/evolucion_arquetipo.py)
-    c11a_dividendos: float  # arquetipo 9/14 (apalancamiento): la distribución financiada con la deuda nueva de C.10
+    c11a_dividendos: float  # arquetipo 9/14 (apalancamiento, financiada con la deuda nueva de C.10) + payout de fondo (financiado con caja real, #79-#80) — una sola línea, mismo criterio que el modelo oficial PGC (no distingue fuente de financiación del dividendo)
     c12_flujo_financiacion: float
 
     # D) y E)
@@ -193,7 +193,7 @@ def generar_efe(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligatori
     # nunca alimenta gastos_financieros, ver motor/evolucion_arquetipo.py — mezclarla con c10
     # confundiría "deuda con coste" con "deuda sin coste" en la misma línea).
     c10c = actual.deuda_grupo_largo_eur - anterior.deuda_grupo_largo_eur
-    c11a = -actual.apalancamiento_extra_eur
+    c11a = -(actual.apalancamiento_extra_eur + actual.payout_dividendos_eur)
     c12 = c9 + c10 + c10c + c11a
 
     d = 0.0

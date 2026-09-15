@@ -730,9 +730,36 @@ arquetipo concreto activo quedaba comprobado. Ver decisiones #70-73.
   ya corregida aquí) — es que el patrimonio neto retiene el 100% del resultado cada año (sin
   dividendos/distribución modelada) y crece a un ritmo (~ROE, 8-16%/año) muy superior al del
   resto del balance (proporcional a ventas, ~1-4%/año); el plug de cuadre absorbe esa brecha
-  DETERMINISTA (no aleatoria) cada año, encogiendo `otras_deudas_corto`. El hallazgo mayor de
-  #73 sigue mayormente sin cerrar — pendiente de decisión conjunta sobre la retención de
-  beneficios/distribución a PN como su propio encargo. No comiteado.
+  DETERMINISTA (no aleatoria) cada año, encogiendo `otras_deudas_corto`. Comiteado (13da6c8).
+- **Payout de dividendos — mecanismo transversal implementado (#79-#80)**: el catálogo/PDFs ACCID
+  no tienen ningún dato de payout/dividendos (verificado, no asumido) — la fórmula se deriva
+  matemáticamente de `ratios.roe` real: `payout_caso = clamp(1 − g_caso/ROE_caso, 0, 1)`, con
+  `ROE_caso` sorteado UNA vez por caso (mismo criterio que `capital_social` — no redibujado cada
+  año, para no reintroducir ruido) con el mismo ruido mixto de siempre sobre `ratios.roe.huber_9y`
+  /`huber_scale_mad`. El techo (100%) es una cota matemática que nunca se alcanza; el suelo (0%,
+  sin efecto) se activa para sectores/sorteos de ROE bajo — limitación documentada, no forzada,
+  mismo criterio que el aviso de fiabilidad del sector 30.3. `EjercicioEmpresa.payout_dividendos_
+  eur` resta de PN y de `disponible` (caja real — a diferencia de la distribución de apalancamiento,
+  financiada con deuda nueva sin impacto de caja). **Comparte línea con el dividendo de
+  apalancamiento** (`c11a_dividendos` en EFE, `operaciones_con_socios` en ECPN — verificado en
+  código antes de decidir que `apalancamiento_extra_eur` es una variable aislada, sumable sin
+  romper nada; el modelo oficial PGC solo tiene una línea de "Dividendos", sin distinguir fuente
+  de financiación). **Verificación de no-conflicto** (27 sectores × 4 semillas, `apalancamiento:
+  fuerte` + payout, 216 ejercicios): 183 con ambos mecanismos activos a la vez, 0 descuadres de
+  balance/EFE/ECPN, importes independientemente distinguibles. **Mejora sustancial confirmada**
+  (mismo método de control que #78): `ratios.liquidez`/`tesoreria`/`fm_activo` en 2025 — 65,7%
+  (original) → 64,8% (#78, solo ruido) → **39,8% (con payout)** — 25 puntos de caída real, no
+  marginal. **Mejora real y validada — el residuo frente al ~16% del año base NO es el suelo de
+  payout=0% en sectores de ROE bajo, descartado cuantitativamente (#81, hallazgo abierto): la
+  correlación ROE↔tasa de señal es prácticamente nula (0,01), y los sectores donde el payout está
+  SIEMPRE activo tienen tasa media de señal MAYOR (44,1%) que los que a veces se clampan a 0
+  (32,5%) — causa real sin investigar todavía, pendiente de la siguiente sesión.** **Stress test
+  completo repetido** (27×2×4×60, 12.960 casos): casos con
+  señal 99,3%→97,9%; `liquidez` 59,5%→40,9%, `tesoreria` 57,7%→39,4%, `fm_activo` 48,6%→30,8%,
+  `disponibilidad_ratio` 51,0%→45,1%; total señales >8 desviaciones 56.826→48.601 (-14,5%). Nuevas
+  discrepancias de `riesgo_endeudamiento` (sectores distintos, por el desplazamiento de `rng_
+  tendencia`) verificadas una a una — encajan en la excepción ya documentada de #73, no son
+  nuevas. Ver `docs/decisiones_plausibilidad.md` #80-#81.
 
 ## Otros documentos de este índice
 

@@ -89,7 +89,7 @@ class EstadoCambiosPatrimonioNeto:
 
     saldo_inicio: FilaECPN
     total_ingresos_gastos_reconocidos: FilaECPN  # = Documento A, fila D, desagregada por columna de PN
-    operaciones_con_socios: FilaECPN  # arquetipo 9/14 (apalancamiento): distribución con cargo a reservas
+    operaciones_con_socios: FilaECPN  # arquetipo 9/14 (apalancamiento) + payout de fondo (#79-#80): distribución con cargo a reservas
     otras_variaciones: FilaECPN  # SIEMPRE 0 — sin mecanismo que lo alimente
     saldo_final: FilaECPN
 
@@ -187,7 +187,11 @@ def generar_ecpn(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligator
         resultado_ejercicio=actual.pyg_eur["resultado_ejercicio"],
     )
     operaciones_con_socios = FilaECPN(
-        capital=0.0, reservas=-actual.apalancamiento_extra_eur, ajustes_cambio_valor=0.0, subvenciones=0.0, resultado_ejercicio=0.0
+        capital=0.0,
+        reservas=-(actual.apalancamiento_extra_eur + actual.payout_dividendos_eur),
+        ajustes_cambio_valor=0.0,
+        subvenciones=0.0,
+        resultado_ejercicio=0.0,
     )
     otras_variaciones = FilaECPN(capital=0.0, reservas=0.0, ajustes_cambio_valor=0.0, subvenciones=0.0, resultado_ejercicio=0.0)
 

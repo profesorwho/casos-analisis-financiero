@@ -525,6 +525,7 @@ from motor.provisiones import (
     sortear_provision_baseline,
 )
 from motor.empresa_base import _completar_pyg_con_deuda, _generar_pyg_hasta_baii  # reutiliza la cascada de PyG
+from motor.ruido import _generar_partida
 
 AÑOS = (2023, 2024, 2025)
 AÑO_BASE = 2023
@@ -578,6 +579,11 @@ FRACCION_AÑO = {2024: 0.6, 2025: 1.0}
 # Crecimiento de ventas para arquetipos que no definen su propio rango_crecimiento_pleno (ver
 # docstring del módulo). Fijo, no escalado por intensidad ni por fracción del año.
 RANGO_CRECIMIENTO_ORGANICO = (0.01, 0.04)
+
+# Payout de dividendos (decisiones_plausibilidad.md #79-#80) — cota matemática, no un número
+# elegido a ojo: con g>0 y ROE_caso>0, payout_necesario=1-g/ROE_caso nunca la alcanza (ver
+# docstring de `generar_evolucion_combinada`, sección del sorteo de payout_caso).
+TECHO_PAYOUT_DIVIDENDOS = 1.0
 
 DIAS_AÑO = 365.0
 
@@ -1101,6 +1107,7 @@ class EjercicioEmpresa:
     deterioro_aplicado_eur: float = 0.0  # exceso de circulante amortiguado por plausibilidad
     contencion_al_limite: bool = False  # True si no se pudo llegar al techo (nada que amortiguar, o se agotó)
     apalancamiento_extra_eur: float = 0.0  # deuda a largo extra por el efecto "apalancamiento", si lo hay
+    payout_dividendos_eur: float = 0.0  # dividendo con cargo a resultado retenido (payout de fondo, ver #79-#80)
     riesgo_plausibilidad_pyg: bool = False  # True si algún efecto pyg_primitiva topó el techo/suelo de su subtotal
     pyg_subtotales_sin_contener: dict[str, float] = field(default_factory=dict)  # {subtotal: valor antes de topar}
     pyg_contencion_al_limite: bool = False  # True si un efecto de "base dinámica" (baii) tuvo que invertir su
@@ -1681,6 +1688,7 @@ def _evolucionar_un_año(
     parametros_grupo89: ParametrosGrupo89 = PARAMETROS_GRUPO89_INACTIVOS,
     parametros_operacion_vinculada: ParametrosOperacionVinculada = PARAMETROS_OPERACION_VINCULADA_INACTIVOS,
     parametros_provision: ParametrosProvision = PARAMETROS_PROVISION_INACTIVA,
+    payout_caso: float = 0.0,
 ) -> EjercicioEmpresa:
     """`efectos_activos` ya viene fusionado (uno o varios arquetipos combinados, cada `Efecto`
     emparejado con la intensidad de SU PROPIO arquetipo de origen, y los `masa_circulante` que
@@ -2219,7 +2227,7 @@ def _evolucionar_un_año(
         realizable_eur: float,
         acreedores_comerciales_eur: float,
         extra_deuda_largo_eur: float = 0.0,
-    ) -> tuple[dict[str, float], float, float, dict[str, float], dict[str, float]]:
+    ) -> tuple[dict[str, float], float, float, dict[str, float], dict[str, float], float]:
         """Evalúa un escenario de forma autoconsistente: la deuda financiera final de ESE
         escenario (incluida la extra por apalancamiento, si la hay) determina sus propios
         gastos financieros. `extra_deuda_largo_eur` financia una distribución a PN por el
@@ -2269,22 +2277,32 @@ def _evolucionar_un_año(
             pyg_eur["resultado_ejercicio"] += bai_delta_eur
             pyg_pct = {k: v / pyg_eur["ingresos_explotacion"] * 100 for k, v in pyg_eur.items()}
 
+        # Payout de dividendos (sección "Retención de beneficios/distribución a PN" —
+        # decisiones_plausibilidad.md #79-#80): a diferencia de la distribución de apalancamiento
+        # (financiada con deuda nueva, sin impacto de caja — ver más abajo), esta SÍ sale de caja
+        # real, así que se resta de `disponible_eur` aquí, sobre el resultado YA final (después
+        # del ajuste de grupo89/provisión de arriba). Nunca sobre un ejercicio en pérdidas
+        # (`max(0.0, ...)`) ni más de lo que hay en caja (`min(..., disponible_eur)` — mismo
+        # criterio defensivo que `TECHO_FRACCION_DISPONIBLE_PRESTAMO_MATRIZ` del arquetipo 20).
+        payout_dividendos_eur = min(max(0.0, pyg_eur["resultado_ejercicio"]) * payout_caso, disponible_eur)
+
         patrimonio_neto_eur = (
             anterior.balance_eur["patrimonio_neto"]
             + pyg_eur["resultado_ejercicio"]
             - extra_deuda_largo_eur
+            - payout_dividendos_eur
             + delta_pn_grupo89_eur
         )
         balance, ajuste_cuadre_eur = _construir_balance(
             existencias_eur,
             realizable_eur,
             acreedores_comerciales_eur,
-            disponible_eur,
+            disponible_eur - payout_dividendos_eur,
             deudas_fin_corto_eur,
             deudas_fin_largo_eur,
             patrimonio_neto_eur,
         )
-        return balance, ajuste_cuadre_eur, deuda_extra_por_nof_eur, pyg_pct, pyg_eur
+        return balance, ajuste_cuadre_eur, deuda_extra_por_nof_eur, pyg_pct, pyg_eur, payout_dividendos_eur
 
     huber_endeudamiento = fila["ratios.endeudamiento.huber_9y"]
     mad_endeudamiento = fila["ratios.endeudamiento.huber_scale_mad"]
@@ -2297,7 +2315,7 @@ def _evolucionar_un_año(
     # techo de plausibilidad), resuelto en forma cerrada sobre el balance SIN este efecto. ---
     apalancamiento_extra_eur = 0.0
     if efectos_apalancamiento:
-        balance_base, _, _, _, _ = _evaluar(
+        balance_base, _, _, _, _, _ = _evaluar(
             existencias_eur, realizable_eur, acreedores_comerciales_eur, extra_deuda_largo_eur=0.0
         )
         # Topado al techo ANTES de aplicar la intensidad (no solo el objetivo final): si el año
@@ -2324,7 +2342,7 @@ def _evolucionar_un_año(
         # 4 de 3.000 combinaciones). Techo defensivo, no el mecanismo habitual.
         apalancamiento_extra_eur = min(extra_deuda_objetivo_eur, max(0.0, balance_base["patrimonio_neto"]))
 
-    balance_eur, ajuste_cuadre_eur, deuda_extra_por_nof_eur, pyg_pct, pyg_eur = _evaluar(
+    balance_eur, ajuste_cuadre_eur, deuda_extra_por_nof_eur, pyg_pct, pyg_eur, payout_dividendos_eur = _evaluar(
         existencias_eur, realizable_eur, acreedores_comerciales_eur, extra_deuda_largo_eur=apalancamiento_extra_eur
     )
 
@@ -2403,7 +2421,7 @@ def _evolucionar_un_año(
             existencias_eur = objetivos_circulante_amortiguados["existencias"]
             realizable_eur = objetivos_circulante_amortiguados["realizable"]
 
-            balance_eur, ajuste_cuadre_eur, deuda_extra_por_nof_eur, pyg_pct, pyg_eur = _evaluar(
+            balance_eur, ajuste_cuadre_eur, deuda_extra_por_nof_eur, pyg_pct, pyg_eur, payout_dividendos_eur = _evaluar(
                 existencias_eur,
                 realizable_eur,
                 acreedores_comerciales_eur,
@@ -2473,6 +2491,7 @@ def _evolucionar_un_año(
         deterioro_aplicado_eur=deterioro_aplicado_eur,
         contencion_al_limite=contencion_al_limite,
         apalancamiento_extra_eur=apalancamiento_extra_eur,
+        payout_dividendos_eur=payout_dividendos_eur,
         riesgo_plausibilidad_pyg=riesgo_plausibilidad_pyg,
         pyg_subtotales_sin_contener=pyg_subtotales_sin_contener,
         pyg_contencion_al_limite=pyg_contencion_al_limite,
@@ -2734,6 +2753,26 @@ def generar_evolucion_combinada(
         bajo, alto = RANGO_CRECIMIENTO_ORGANICO
     crecimiento_pleno_objetivo = bajo + rng_tendencia.random() * (alto - bajo)
 
+    # Payout de dividendos (sección "Retención de beneficios/distribución a PN", decisiones_
+    # plausibilidad.md #79-#80): sorteo ÚNICO por caso (mismo criterio que capital_social/
+    # ventas_por_empleado/rotacion_activo — rasgo estructural de la empresa, no de un año
+    # concreto; redibujarlo cada año reintroduciría el mismo tipo de acumulación de ruido que
+    # #78 acaba de corregir), con `rng_tendencia` justo después de crecimiento_pleno_objetivo
+    # (antes del sorteo CONDICIONAL de año_evento_puntual, para que su posición en la secuencia
+    # no dependa de qué arquetipo esté activo). ROE_caso se sortea con el mismo ruido mixto
+    # típico/atípico de siempre, centrado en `ratios.roe` real del sector (ninguna dispersión
+    # inventada) — payout_caso = 1 − g/ROE_caso, recortado a [0, TECHO_PAYOUT_DIVIDENDOS]: nunca
+    # negativo (sin sentido económico, "repartir negativo" sería una aportación de capital no
+    # pedida) y el techo (100%) es una cota matemática, no un número elegido a ojo — con g>0 y
+    # ROE_caso>0 el payout objetivo nunca lo alcanza (verificado: máximo 94,2% en los 27
+    # sectores reales). Sectores/sorteos de ROE_caso <= g (payout objetivo negativo, clampado a
+    # 0%) quedan sin efecto del mecanismo — limitación conocida y documentada, no forzada (mismo
+    # criterio que el aviso de fiabilidad muestral del sector 30.3 en `coste_deuda`).
+    huber_roe = fila["ratios.roe.huber_9y"]
+    mad_roe = fila["ratios.roe.huber_scale_mad"]
+    roe_caso, _ = _generar_partida(rng_tendencia, huber_roe, mad_roe)
+    payout_caso = 0.0 if roe_caso <= 0 else min(max(1 - crecimiento_pleno_objetivo / roe_caso, 0.0), TECHO_PAYOUT_DIVIDENDOS)
+
     # Año único del suceso puntual (arquetipo 12, "resultado extraordinario"): sorteado 50/50
     # entre 2024 y 2025 con rng_tendencia — mismo generador ya independiente por sector+segmento,
     # NO por intensidad (el año en que ocurrió el suceso es un hecho de la propia empresa: no
@@ -2944,6 +2983,7 @@ def generar_evolucion_combinada(
             parametros_grupo89,
             parametros_operacion_vinculada,
             parametros_provision,
+            payout_caso=payout_caso,
         )
         ejercicios[año] = ejercicio
         anterior = ejercicio
