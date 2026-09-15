@@ -244,6 +244,8 @@ def test_riesgo_refinanciacion_balances_cuadran(catalogo, arquetipos, sector):
 
 @pytest.mark.parametrize("sector", SECTORES)
 def test_riesgo_refinanciacion_no_altera_la_deuda_financiera_total(catalogo, arquetipos, sector):
+    # Resta `payout_deuda_extra_eur` (#82) — deuda a corto NUEVA que financia el payout de fondo
+    # transversal cuando la caja no basta, ajena a la reclasificación en sí.
     for semilla in SEMILLAS:
         evolucion = _generar(catalogo, arquetipos, "riesgo_refinanciacion", sector, semilla)
         ej = evolucion.ejercicios
@@ -252,7 +254,11 @@ def test_riesgo_refinanciacion_no_altera_la_deuda_financiera_total(catalogo, arq
             deuda_total_proporcional = (
                 ej[año_anterior].balance_eur["deudas_fin_largo"] + ej[año_anterior].balance_eur["deudas_fin_corto"]
             ) * (1 + crecimiento_ventas)
-            deuda_total_real = ej[año].balance_eur["deudas_fin_largo"] + ej[año].balance_eur["deudas_fin_corto"]
+            deuda_total_real = (
+                ej[año].balance_eur["deudas_fin_largo"]
+                + ej[año].balance_eur["deudas_fin_corto"]
+                - ej[año].payout_deuda_extra_eur
+            )
             assert deuda_total_real == pytest.approx(deuda_total_proporcional, abs=1.0)
 
 

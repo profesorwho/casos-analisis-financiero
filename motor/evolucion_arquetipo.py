@@ -830,6 +830,25 @@ class EvolucionArquetipoError(ValueError):
 # espera atípicos reales — el objetivo es que queden correctamente etiquetados, no eliminarlos.
 N_DESVIACIONES_PLAUSIBILIDAD_CASO = 3.0
 
+# Ensanchamiento de la banda de plausibilidad para 2024/2025 (decisiones_plausibilidad.md
+# #81-#82) — el año base (2023) es una comparación válida contra el Huber transversal del sector
+# (una única fotografía). 2024/2025 son la evolución de la MISMA empresa simulada — incluso con
+# el ruido de PyG corregido (#78) y la retención de beneficios corregida (#80), queda un residuo
+# de deriva pequeño pero real (PN crece unas décimas de punto por encima de ventas en años
+# típicos) que el plug de cuadre absorbe año a año — para sectores con MAD real ya estrecho, eso
+# basta para disparar muchas "desviaciones" aunque la magnitud económica sea modesta (correlación
+# MAD/huber↔tasa de señal = -0,454 en el barrido de #81). MAD efectivo = mad·√(1+k·FACTOR), con
+# k=años desde el año base (0 en 2023 → sin cambio, 1 en 2024, 2 en 2025) — la forma funcional
+# (varianza acumulada ≈ lineal en k) refleja el propio diagnóstico de "paseo aleatorio" de #75/
+# #77, no es arbitraria, aunque con solo 2 puntos (k=1,2) no se puede confirmar la forma exacta.
+# Calibrado empíricamente (mismo método de siempre) para que 2025 se acerque a la tasa de señal
+# del propio año base bajo un control limpio (`aumento_clientes:leve`, `ratios.liquidez`/
+# `tesoreria`/`fm_activo`) — a `factor=3,0`, 2025 coincide EXACTO con el año base (16,2%);
+# 2024 queda más laxo de lo que necesitaría en solitario (8,3% frente al 16,2% objetivo) — una
+# única constante para k=1 y k=2 no puede calibrar ambos años de forma independiente, y el
+# encargo pidió priorizar 2025 explícitamente. Ver #82.
+FACTOR_ACUMULACION_VARIANZA_PLAUSIBILIDAD = 3.0
+
 # Tolerancia mínima frente al techo/suelo — hallazgo del stress test: las contenciones ya
 # existentes (`_endeudamiento`, `_limitar_por_subtotal`, `_limitar_gastos_personal_por_baii`)
 # corrigen hasta dejar el valor EXACTO en su propio techo/suelo, pero la convergencia iterativa
@@ -1010,6 +1029,10 @@ def _evaluar_plausibilidad_caso(
     for año, ejercicio in ejercicios.items():
         valores = _ratios_derivados_del_caso(ejercicio, plantilla_por_año[año])
         valores_por_año[año] = valores
+        # Ensanchamiento por año evolucionado (#81-#82) — k=0 en el año base (factor=1, sin
+        # cambio: sigue siendo una comparación transversal válida), k=1/2 en 2024/2025.
+        k_año = año - AÑO_BASE
+        factor_ensanchamiento = (1 + k_año * FACTOR_ACUMULACION_VARIANZA_PLAUSIBILIDAD) ** 0.5
         for ratio in RATIOS_PLAUSIBILIDAD_SEÑALIZABLES:
             if ratio == RATIO_CIRCULAR_SOLO_AÑO_BASE and año == AÑO_BASE:
                 continue
@@ -1020,15 +1043,22 @@ def _evaluar_plausibilidad_caso(
             mad = fila[f"{ratio}.huber_scale_mad"]
             if mad < 0:
                 continue  # dato de catálogo inválido (no debería ocurrir, defensivo)
+            # `ratios.endeudamiento` NUNCA se ensancha — su techo es el MISMO límite absoluto
+            # que ya usa la contención de endeudamiento (ver más abajo), no una banda estadística
+            # que deba ampliarse con los años: TECHO_ENDEUDAMIENTO_MAXIMO_ABSOLUTO es un límite
+            # económico duro, no un percentil de una distribución transversal.
+            mad_efectivo = mad if ratio == "ratios.endeudamiento" else mad * factor_ensanchamiento
             # `huber_scale_mad == 0` (varianza histórica nula en la muestra del sector) NO se
             # salta — mismo criterio que ya usa `_endeudamiento` (huber + 3·0 = huber, degenera
             # a un techo exacto): CUALQUIER desviación de `huber` es, por definición, un caso sin
             # precedente en la muestra. `desviaciones` se reporta como +-inf en ese caso (no hay
-            # escala con la que medir "cuántas MAD", pero SÍ hay una dirección clara).
-            if mad == 0:
+            # escala con la que medir "cuántas MAD", pero SÍ hay una dirección clara). Un
+            # `mad` original igual a 0 sigue dando `mad_efectivo=0` (0 × cualquier factor = 0),
+            # así que este caso degenera igual de bien ensanchado o sin ensanchar.
+            if mad_efectivo == 0:
                 desviaciones = float("inf") if valor > huber else (float("-inf") if valor < huber else 0.0)
             else:
-                desviaciones = (valor - huber) / mad
+                desviaciones = (valor - huber) / mad_efectivo
             # Comparación INCLUSIVA (>=/<=), no estricta — hallazgo del stress test: las
             # contenciones ya existentes (`_endeudamiento`, `_limitar_por_subtotal`,
             # `_limitar_gastos_personal_por_baii`) corrigen ANALÍTICAMENTE hasta dejar el valor
@@ -1037,7 +1067,11 @@ def _evaluar_plausibilidad_caso(
             # rompiendo la garantía de superconjunto del punto 4 (`riesgo_endeudamiento`/
             # `riesgo_plausibilidad_pyg` a True sin señal nueva correspondiente). Verificado
             # también que degenera correctamente para las 8 desviaciones = 0 (mad=0, valor=huber).
-            tolerancia = EPSILON_DESVIACIONES_PLAUSIBILIDAD_CASO * mad if mad > 0 else EPSILON_DESVIACIONES_PLAUSIBILIDAD_CASO
+            tolerancia = (
+                EPSILON_DESVIACIONES_PLAUSIBILIDAD_CASO * mad_efectivo
+                if mad_efectivo > 0
+                else EPSILON_DESVIACIONES_PLAUSIBILIDAD_CASO
+            )
             if ratio == "ratios.endeudamiento":
                 # Mismo techo EXACTO que ya usa la contención de endeudamiento (huber+3·MAD
                 # recortado a TECHO_ENDEUDAMIENTO_MAXIMO_ABSOLUTO=0,85) — sin este ajuste, un
@@ -1108,6 +1142,7 @@ class EjercicioEmpresa:
     contencion_al_limite: bool = False  # True si no se pudo llegar al techo (nada que amortiguar, o se agotó)
     apalancamiento_extra_eur: float = 0.0  # deuda a largo extra por el efecto "apalancamiento", si lo hay
     payout_dividendos_eur: float = 0.0  # dividendo con cargo a resultado retenido (payout de fondo, ver #79-#80)
+    payout_deuda_extra_eur: float = 0.0  # deuda a corto NUEVA que financia el payout cuando la caja no basta (#82)
     riesgo_plausibilidad_pyg: bool = False  # True si algún efecto pyg_primitiva topó el techo/suelo de su subtotal
     pyg_subtotales_sin_contener: dict[str, float] = field(default_factory=dict)  # {subtotal: valor antes de topar}
     pyg_contencion_al_limite: bool = False  # True si un efecto de "base dinámica" (baii) tuvo que invertir su
@@ -2227,7 +2262,7 @@ def _evolucionar_un_año(
         realizable_eur: float,
         acreedores_comerciales_eur: float,
         extra_deuda_largo_eur: float = 0.0,
-    ) -> tuple[dict[str, float], float, float, dict[str, float], dict[str, float], float]:
+    ) -> tuple[dict[str, float], float, float, dict[str, float], dict[str, float], float, float]:
         """Evalúa un escenario de forma autoconsistente: la deuda financiera final de ESE
         escenario (incluida la extra por apalancamiento, si la hay) determina sus propios
         gastos financieros. `extra_deuda_largo_eur` financia una distribución a PN por el
@@ -2282,9 +2317,25 @@ def _evolucionar_un_año(
         # (financiada con deuda nueva, sin impacto de caja — ver más abajo), esta SÍ sale de caja
         # real, así que se resta de `disponible_eur` aquí, sobre el resultado YA final (después
         # del ajuste de grupo89/provisión de arriba). Nunca sobre un ejercicio en pérdidas
-        # (`max(0.0, ...)`) ni más de lo que hay en caja (`min(..., disponible_eur)` — mismo
-        # criterio defensivo que `TECHO_FRACCION_DISPONIBLE_PRESTAMO_MATRIZ` del arquetipo 20).
-        payout_dividendos_eur = min(max(0.0, pyg_eur["resultado_ejercicio"]) * payout_caso, disponible_eur)
+        # (`max(0.0, ...)`).
+        #
+        # Hallazgo #82: topar el payout a `disponible_eur` (versión anterior) dejaba, en los
+        # casos donde la NOF ya había consumido la caja disponible, el beneficio de más RETENIDO
+        # en PN en vez de repartido — justo en los años en que el circulante ya estaba tenso,
+        # componiendo la distorsión de liquidez que #80 intentaba corregir (3,2% de los casos en
+        # el barrido de control, con el doble de tasa de señal residual). Corregido: el payout
+        # objetivo se financia con deuda a corto NUEVA cuando la caja no basta — mismo criterio
+        # que ya usa `_deficit_y_deuda_corto` para el déficit de NOF (líneas arriba), no un
+        # mecanismo nuevo. No retroalimenta `gastos_financieros` de ESTE año (misma aproximación
+        # ya aceptada para los ajustes post-hoc de grupo89/provisión — la deuda extra sí acumula
+        # interés a partir del año siguiente, vía `deuda_financiera_inicio_eur`).
+        payout_dividendos_eur = max(0.0, pyg_eur["resultado_ejercicio"]) * payout_caso
+        disponible_tras_payout_eur = disponible_eur - payout_dividendos_eur
+        payout_deuda_extra_eur = 0.0
+        if disponible_tras_payout_eur < 0:
+            payout_deuda_extra_eur = -disponible_tras_payout_eur
+            deudas_fin_corto_eur += payout_deuda_extra_eur
+            disponible_tras_payout_eur = 0.0
 
         patrimonio_neto_eur = (
             anterior.balance_eur["patrimonio_neto"]
@@ -2297,12 +2348,12 @@ def _evolucionar_un_año(
             existencias_eur,
             realizable_eur,
             acreedores_comerciales_eur,
-            disponible_eur - payout_dividendos_eur,
+            disponible_tras_payout_eur,
             deudas_fin_corto_eur,
             deudas_fin_largo_eur,
             patrimonio_neto_eur,
         )
-        return balance, ajuste_cuadre_eur, deuda_extra_por_nof_eur, pyg_pct, pyg_eur, payout_dividendos_eur
+        return balance, ajuste_cuadre_eur, deuda_extra_por_nof_eur, pyg_pct, pyg_eur, payout_dividendos_eur, payout_deuda_extra_eur
 
     huber_endeudamiento = fila["ratios.endeudamiento.huber_9y"]
     mad_endeudamiento = fila["ratios.endeudamiento.huber_scale_mad"]
@@ -2315,7 +2366,7 @@ def _evolucionar_un_año(
     # techo de plausibilidad), resuelto en forma cerrada sobre el balance SIN este efecto. ---
     apalancamiento_extra_eur = 0.0
     if efectos_apalancamiento:
-        balance_base, _, _, _, _, _ = _evaluar(
+        balance_base, _, _, _, _, _, _ = _evaluar(
             existencias_eur, realizable_eur, acreedores_comerciales_eur, extra_deuda_largo_eur=0.0
         )
         # Topado al techo ANTES de aplicar la intensidad (no solo el objetivo final): si el año
@@ -2342,7 +2393,7 @@ def _evolucionar_un_año(
         # 4 de 3.000 combinaciones). Techo defensivo, no el mecanismo habitual.
         apalancamiento_extra_eur = min(extra_deuda_objetivo_eur, max(0.0, balance_base["patrimonio_neto"]))
 
-    balance_eur, ajuste_cuadre_eur, deuda_extra_por_nof_eur, pyg_pct, pyg_eur, payout_dividendos_eur = _evaluar(
+    balance_eur, ajuste_cuadre_eur, deuda_extra_por_nof_eur, pyg_pct, pyg_eur, payout_dividendos_eur, payout_deuda_extra_eur = _evaluar(
         existencias_eur, realizable_eur, acreedores_comerciales_eur, extra_deuda_largo_eur=apalancamiento_extra_eur
     )
 
@@ -2421,7 +2472,7 @@ def _evolucionar_un_año(
             existencias_eur = objetivos_circulante_amortiguados["existencias"]
             realizable_eur = objetivos_circulante_amortiguados["realizable"]
 
-            balance_eur, ajuste_cuadre_eur, deuda_extra_por_nof_eur, pyg_pct, pyg_eur, payout_dividendos_eur = _evaluar(
+            balance_eur, ajuste_cuadre_eur, deuda_extra_por_nof_eur, pyg_pct, pyg_eur, payout_dividendos_eur, payout_deuda_extra_eur = _evaluar(
                 existencias_eur,
                 realizable_eur,
                 acreedores_comerciales_eur,
@@ -2492,6 +2543,7 @@ def _evolucionar_un_año(
         contencion_al_limite=contencion_al_limite,
         apalancamiento_extra_eur=apalancamiento_extra_eur,
         payout_dividendos_eur=payout_dividendos_eur,
+        payout_deuda_extra_eur=payout_deuda_extra_eur,
         riesgo_plausibilidad_pyg=riesgo_plausibilidad_pyg,
         pyg_subtotales_sin_contener=pyg_subtotales_sin_contener,
         pyg_contencion_al_limite=pyg_contencion_al_limite,

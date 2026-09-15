@@ -493,7 +493,10 @@ def test_refinanciacion_balances_cuadran(catalogo, arquetipos, sector):
 @pytest.mark.parametrize("sector", SECTORES)
 def test_refinanciacion_no_altera_la_deuda_financiera_total(catalogo, arquetipos, sector):
     # Reclasifica largo/corto plazo sin cambiar el total: una renegociación cambia el
-    # vencimiento, no el importe (ver EfectoReclasificacionDeuda en motor/arquetipos.py).
+    # vencimiento, no el importe (ver EfectoReclasificacionDeuda en motor/arquetipos.py). Resta
+    # `payout_deuda_extra_eur` (#82) — deuda a corto NUEVA que financia el payout de fondo
+    # transversal cuando la caja no basta, ajena a la reclasificación en sí, que sí puede alterar
+    # el total observado si no se descuenta.
     for semilla in SEMILLAS:
         evolucion = _generar(catalogo, arquetipos, "refinanciacion", sector, semilla)
         ej = evolucion.ejercicios
@@ -502,12 +505,20 @@ def test_refinanciacion_no_altera_la_deuda_financiera_total(catalogo, arquetipos
             deuda_total_proporcional = (
                 ej[año_anterior].balance_eur["deudas_fin_largo"] + ej[año_anterior].balance_eur["deudas_fin_corto"]
             ) * (1 + crecimiento_ventas)
-            deuda_total_real = ej[año].balance_eur["deudas_fin_largo"] + ej[año].balance_eur["deudas_fin_corto"]
+            deuda_total_real = (
+                ej[año].balance_eur["deudas_fin_largo"]
+                + ej[año].balance_eur["deudas_fin_corto"]
+                - ej[año].payout_deuda_extra_eur
+            )
             assert deuda_total_real == pytest.approx(deuda_total_proporcional, abs=1.0)
 
 
 @pytest.mark.parametrize("sector", SECTORES)
 def test_refinanciacion_sube_la_proporcion_a_largo_plazo(catalogo, arquetipos, sector):
+    # `deudas_fin_corto` se descuenta de `payout_deuda_extra_eur` (#82) antes de calcular la
+    # proporción — el payout de fondo SIEMPRE inyecta deuda a CORTO nueva cuando hace falta
+    # financiarlo, algo ajeno a la reclasificación en sí, que podría enmascarar (o simular) su
+    # propio efecto sobre la proporción largo/total si no se aísla.
     for semilla in SEMILLAS:
         evolucion = _generar(catalogo, arquetipos, "refinanciacion", sector, semilla, intensidad="fuerte")
         ej = evolucion.ejercicios
@@ -515,8 +526,9 @@ def test_refinanciacion_sube_la_proporcion_a_largo_plazo(catalogo, arquetipos, s
             calidad_anterior = ej[año_anterior].balance_eur["deudas_fin_largo"] / (
                 ej[año_anterior].balance_eur["deudas_fin_largo"] + ej[año_anterior].balance_eur["deudas_fin_corto"]
             )
+            deudas_fin_corto_sin_payout = ej[año].balance_eur["deudas_fin_corto"] - ej[año].payout_deuda_extra_eur
             calidad_actual = ej[año].balance_eur["deudas_fin_largo"] / (
-                ej[año].balance_eur["deudas_fin_largo"] + ej[año].balance_eur["deudas_fin_corto"]
+                ej[año].balance_eur["deudas_fin_largo"] + deudas_fin_corto_sin_payout
             )
             assert calidad_actual >= calidad_anterior - 1e-9
 

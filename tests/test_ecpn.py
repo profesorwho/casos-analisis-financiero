@@ -89,14 +89,20 @@ def test_ecpn_capital_social_constante_entre_ejercicios(catalogo, arquetipos):
     assert capitales[2023] > 0
 
 
-def test_ecpn_operaciones_con_socios_solo_cuando_hay_apalancamiento(catalogo, arquetipos):
+def test_ecpn_operaciones_con_socios_coincide_con_apalancamiento_mas_payout(catalogo, arquetipos):
+    """Desde el payout de fondo (#79-#80, transversal — activo en cualquier caso, no solo con
+    apalancamiento), `operaciones_con_socios` ya no es 0 salvo apalancamiento: coincide siempre
+    con -(apalancamiento_extra_eur + payout_dividendos_eur), sea cual sea el arquetipo."""
     evolucion = generar_evolucion_arquetipo(
         "24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=0, intensidad="fuerte",
         arquetipo_id="exceso_stock", catalogo=catalogo, arquetipos=arquetipos,
     )
     for año in (2024, 2025):
-        ecpn = generar_ecpn(evolucion.ejercicios[año - 1], evolucion.ejercicios[año], obligatorio=True)
-        assert ecpn.operaciones_con_socios.total == 0.0
+        ejercicio = evolucion.ejercicios[año]
+        ecpn = generar_ecpn(evolucion.ejercicios[año - 1], ejercicio, obligatorio=True)
+        assert ecpn.operaciones_con_socios.total == pytest.approx(
+            -(ejercicio.apalancamiento_extra_eur + ejercicio.payout_dividendos_eur)
+        )
 
 
 def test_ecpn_otras_variaciones_siempre_cero(catalogo, arquetipos):

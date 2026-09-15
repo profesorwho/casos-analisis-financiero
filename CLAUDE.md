@@ -760,6 +760,31 @@ arquetipo concreto activo quedaba comprobado. Ver decisiones #70-73.
   discrepancias de `riesgo_endeudamiento` (sectores distintos, por el desplazamiento de `rng_
   tendencia`) verificadas una a una — encajan en la excepción ya documentada de #73, no son
   nuevas. Ver `docs/decisiones_plausibilidad.md` #80-#81.
+- **Diagnóstico desde cero del residuo de #81 y arreglo del criterio de plausibilidad (#82-#83)**:
+  4 causas encontradas, la dominante y cuantificada es que el criterio Huber±3·MAD (variación
+  TRANSVERSAL entre empresas) sigue penalizando con fuerza un residuo YA pequeño (PN creciendo
+  ~1-2pp/año por encima de `g`, no las decenas de antes) en sectores con MAD real estrecho —
+  correlación `mad/huber`↔tasa de señal = -0,454. Otras 2 causas menores confirmadas: el control
+  `resultado_extraordinario` usado en #75/#77/#78/#81 estaba parcialmente contaminado (el propio
+  arquetipo SÍ inyecta un pico de PN en un año, por diseño); el tope defensivo `min(payout,
+  disponible)` de #80 se activa en 3,2% de los casos. Los 4 lotes de desglose granular quedaron
+  descartados (sin correlación con el residuo). **Implementado (#83)**: `mad_efectivo = mad·
+  √(1+k·FACTOR_ACUMULACION_VARIANZA_PLAUSIBILIDAD)` en `_evaluar_plausibilidad_caso`, `k=años
+  desde el año base` (0 en 2023, sin cambio — comparación transversal válida), aplicado a TODOS
+  los ratios EXCEPTO `ratios.endeudamiento` (su techo es un límite absoluto, no una banda
+  estadística). `FACTOR=3,0`, calibrado para que 2025 coincida con la tasa del año base en el
+  control limpio (16,2%→16,2%, exacto). Stress test completo: casos con señal 97,9%→94,5%;
+  `liquidez` 40,9%→20,3%, `tesoreria` 39,4%→21,6%, `fm_activo` 30,8%→14,4%; hallazgo original
+  18,56%→9,65% (ya cerca del 6,9% de #18); señales >8 desviaciones 48.601→28.237 (-41,9%). Suite
+  completa verde SIN re-pinear ningún valor (cambio puro de criterio, no toca generación). Ver
+  `docs/decisiones_plausibilidad.md` #82-#83.
+- **Corregida la causa (2) de #82 — el payout ya no se recorta por falta de caja (#84)**: el
+  déficit se financia con deuda a corto NUEVA (mismo criterio que `_deficit_y_deuda_corto` para
+  el déficit de NOF), no un mecanismo nuevo. Nuevo campo `EjercicioEmpresa.payout_deuda_extra_eur`
+  (mismo patrón que `deuda_extra_por_nof_eur`). 4 tests corregidos para aislar esta deuda de la
+  que generan los propios arquetipos (`refinanciacion`/`riesgo_refinanciacion`, ECPN). Tasa de
+  señal 2025 en el control limpio: 16,2%→**13,0%**, ya por debajo del propio año base. Ver
+  `docs/decisiones_plausibilidad.md` #84.
 
 ## Otros documentos de este índice
 

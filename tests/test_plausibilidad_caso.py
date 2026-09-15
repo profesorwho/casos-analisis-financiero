@@ -14,8 +14,11 @@ import pytest
 
 from motor.arquetipos import cargar_arquetipos
 from motor.catalogo import cargar_y_validar_catalogo
+from motor.empresa_base import resolver_fila_sector
 from motor.evolucion_arquetipo import (
     AÑO_BASE,
+    FACTOR_ACUMULACION_VARIANZA_PLAUSIBILIDAD,
+    N_DESVIACIONES_PLAUSIBILIDAD_CASO,
     RATIO_CIRCULAR_SIEMPRE,
     RATIO_CIRCULAR_SOLO_AÑO_BASE,
     RATIOS_ANCLA_CONTAMINADA_INFORMATIVOS,
@@ -201,11 +204,22 @@ def test_riesgo_plausibilidad_pyg_implica_señal_de_baii_o_margen_bruto(catalogo
     (o alejarlo más), así que `riesgo_plausibilidad_pyg=True` (una señal sobre el momento de la
     contención, no sobre el valor final) puede legítimamente no coincidir con esta pasada (que
     mira el valor YA final). Confirmado en el barrido: las discrepancias encontradas antes de
-    esta exclusión SIEMPRE tenían `provision_dotacion_eur>0` ese año."""
+    esta exclusión SIEMPRE tenían `provision_dotacion_eur>0` ese año.
+
+    En 2024/2025, la garantía de superconjunto YA NO es exacta por diseño (#81-#82): la banda de
+    plausibilidad se ensancha con los años evolucionados (`FACTOR_ACUMULACION_VARIANZA_
+    PLAUSIBILIDAD`), mientras que `_limitar_por_subtotal`/`_limitar_gastos_personal_por_baii`
+    (la contención que fija `riesgo_plausibilidad_pyg`) siguen usando el techo SIN ensanchar —
+    un caso corregido exactamente en el techo viejo puede caer dentro de la banda nueva, más
+    ancha, sin que sea un fallo. Se verifica explícitamente que la discrepancia se explica por
+    el ensanchamiento (el valor cae dentro del techo/suelo YA ensanchado), no se excluye a
+    ciegas — si algún caso de 2024/2025 quedara fuera incluso de la banda ensanchada, el test
+    seguiría fallando."""
     comprobados = 0
     activaciones = 0
     for codigo in _sectores(catalogo):
         for arquetipo_id in ("mejora_ebitda", "mejora_margen"):
+            subtotal = "pyg.baii_pct" if arquetipo_id == "mejora_ebitda" else "pyg.margen_bruto_pct"
             for intensidad in ("leve", "moderado", "fuerte"):
                 for semilla in range(3):
                     evolucion = generar_evolucion_arquetipo(
@@ -222,6 +236,21 @@ def test_riesgo_plausibilidad_pyg_implica_señal_de_baii_o_margen_bruto(catalogo
                                 s.año == año and s.ratio in ("pyg.baii_pct", "pyg.margen_bruto_pct")
                                 for s in evolucion.plausibilidad.señales
                             )
+                            if tiene_señal:
+                                continue
+                            k_año = año - AÑO_BASE
+                            if k_año > 0:
+                                factor = (1 + k_año * FACTOR_ACUMULACION_VARIANZA_PLAUSIBILIDAD) ** 0.5
+                                fila = resolver_fila_sector(catalogo, codigo, "grandes_medianas")
+                                huber = fila[f"{subtotal}.huber_9y"]
+                                mad = fila[f"{subtotal}.huber_scale_mad"]
+                                valor = evolucion.plausibilidad.valores_por_año[año][subtotal]
+                                dentro_de_banda_ensanchada = huber - N_DESVIACIONES_PLAUSIBILIDAD_CASO * mad * factor <= valor <= huber + N_DESVIACIONES_PLAUSIBILIDAD_CASO * mad * factor
+                                assert dentro_de_banda_ensanchada, (
+                                    f"{codigo} {arquetipo_id} {intensidad} semilla={semilla} año={año}: sin señal nueva "
+                                    "y tampoco explicado por el ensanchamiento de la banda"
+                                )
+                                continue
                             assert tiene_señal, f"{codigo} {arquetipo_id} {intensidad} semilla={semilla} año={año}: sin señal nueva"
     assert activaciones > 0
     assert comprobados > 0
