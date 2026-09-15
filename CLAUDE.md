@@ -785,6 +785,14 @@ arquetipo concreto activo quedaba comprobado. Ver decisiones #70-73.
   que generan los propios arquetipos (`refinanciacion`/`riesgo_refinanciacion`, ECPN). Tasa de
   señal 2025 en el control limpio: 16,2%→**13,0%**, ya por debajo del propio año base. Ver
   `docs/decisiones_plausibilidad.md` #84.
+- **Verificada la calibración de intensidad de 9/14/10/11 (#20) tras #78/#80/#82-83 — SIN
+  cambios (#85)**: comprobado con el mismo método (barrido 27×4×2 segmentos), el gradiente
+  leve/moderado/fuerte sigue dentro del objetivo en los 3 arquetipos — `mejora_margen`
+  prácticamente idéntico a #20; `apalancamiento` ligeramente más bajo en "leve" pero dentro de
+  rango; `mejora_ebitda` mejora (su "leve" pasa de 8,8% —por encima del objetivo por el suelo
+  estructural de #18— a 3,2%, ya dentro de rango, sin tocar la escala). Ninguno se acerca a
+  saturar en "fuerte". No se tocó ninguna constante de intensidad. Ver
+  `docs/decisiones_plausibilidad.md` #85.
 
 ## Otros documentos de este índice
 
