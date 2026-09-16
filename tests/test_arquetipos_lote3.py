@@ -92,6 +92,9 @@ def test_beneficio_sin_cash_flow_balances_cuadran(catalogo, arquetipos, sector):
 
 @pytest.mark.parametrize("sector", SECTORES)
 def test_beneficio_sin_cash_flow_no_toca_circulante_ni_pyg(catalogo, arquetipos, sector):
+    # El deterioro de insolvencia de clientes (motor/insolvencias.py, probabilidad de fondo
+    # independiente de cualquier arquetipo) SÍ puede tocar "realizable" — se descuenta
+    # explícitamente, ver test_exceso_stock_solo_toca_existencias en test_arquetipos_generalizados.py.
     for semilla in SEMILLAS:
         evolucion = _generar(catalogo, arquetipos, "beneficio_sin_cash_flow", sector, semilla, intensidad="moderado")
         ej = evolucion.ejercicios
@@ -99,6 +102,8 @@ def test_beneficio_sin_cash_flow_no_toca_circulante_ni_pyg(catalogo, arquetipos,
             crecimiento_ventas = ej[año].ventas / ej[año_anterior].ventas - 1
             for variable in ("existencias", "realizable", "acreedores_comerciales"):
                 proporcional = ej[año_anterior].balance_eur[variable] * (1 + crecimiento_ventas)
+                if variable == "realizable":
+                    proporcional -= ej[año].insolvencia_deduccion_realizable_eur
                 assert ej[año].balance_eur[variable] == pytest.approx(proporcional, rel=1e-9)
             for modo in ej[año].modos.values():
                 # "derivado" = amortizaciones (ya no se sortea, se deriva de la colección de
@@ -189,6 +194,9 @@ def test_resultado_extraordinario_distribucion_del_año_no_esta_sesgada(catalogo
 
 @pytest.mark.parametrize("sector", SECTORES)
 def test_resultado_extraordinario_no_altera_el_circulante(catalogo, arquetipos, sector):
+    # El deterioro de insolvencia de clientes (motor/insolvencias.py, probabilidad de fondo
+    # independiente de cualquier arquetipo) SÍ puede tocar "realizable" — se descuenta
+    # explícitamente, ver test_exceso_stock_solo_toca_existencias en test_arquetipos_generalizados.py.
     for semilla in SEMILLAS:
         evolucion = _generar(catalogo, arquetipos, "resultado_extraordinario", sector, semilla, intensidad="moderado")
         ej = evolucion.ejercicios
@@ -196,6 +204,8 @@ def test_resultado_extraordinario_no_altera_el_circulante(catalogo, arquetipos, 
             crecimiento_ventas = ej[año].ventas / ej[año_anterior].ventas - 1
             for variable in ("existencias", "realizable", "acreedores_comerciales"):
                 proporcional = ej[año_anterior].balance_eur[variable] * (1 + crecimiento_ventas)
+                if variable == "realizable":
+                    proporcional -= ej[año].insolvencia_deduccion_realizable_eur
                 assert ej[año].balance_eur[variable] == pytest.approx(proporcional, rel=1e-9)
 
 
@@ -346,6 +356,9 @@ def test_capex_elevado_activo_no_corriente_crece_mas_que_ventas(catalogo, arquet
 
 @pytest.mark.parametrize("sector", SECTORES)
 def test_capex_elevado_no_toca_circulante(catalogo, arquetipos, sector):
+    # El deterioro de insolvencia de clientes (motor/insolvencias.py, probabilidad de fondo
+    # independiente de cualquier arquetipo) SÍ puede tocar "realizable" — se descuenta
+    # explícitamente, ver test_exceso_stock_solo_toca_existencias en test_arquetipos_generalizados.py.
     for semilla in SEMILLAS:
         evolucion = _generar(catalogo, arquetipos, "capex_elevado", sector, semilla, intensidad="moderado")
         ej = evolucion.ejercicios
@@ -353,6 +366,8 @@ def test_capex_elevado_no_toca_circulante(catalogo, arquetipos, sector):
             crecimiento_ventas = ej[año].ventas / ej[año_anterior].ventas - 1
             for variable in ("existencias", "realizable", "acreedores_comerciales"):
                 proporcional = ej[año_anterior].balance_eur[variable] * (1 + crecimiento_ventas)
+                if variable == "realizable":
+                    proporcional -= ej[año].insolvencia_deduccion_realizable_eur
                 assert ej[año].balance_eur[variable] == pytest.approx(proporcional, rel=1e-9)
 
 

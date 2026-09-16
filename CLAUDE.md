@@ -23,11 +23,12 @@ Especificación funcional completa: `docs/especificaciones_proyecto_casos_balanc
 | `arquetipos.py` | Carga y valida `data/arquetipos.json` como dataclasses tipadas. **Sin lógica de generación.** | `cargar_arquetipos(ruta=...) -> dict[str, DefinicionArquetipo]` | Tipos de efecto: `EfectoMasaCirculante`, `EfectoPygPrimitiva`, `EfectoApalancamiento`, `EfectoTesoreria`, `EfectoReclasificacionDeuda`, `EfectoEventoPuntual`, `EfectoCapex`, `EfectoAdquisicion`, `EfectoCobertura`, `EfectoOperacionVinculada`. |
 | `evolucion_arquetipo.py` | Motor genérico: evoluciona una empresa 3 ejercicios (2023 base + 2024/2025 con el/los arquetipo(s) aplicado(s)), interpretando cada tipo de `Efecto`. Contiene toda la lógica de mecanismo — **no releer para saber qué arquetipos toca cada mecanismo, ver tabla de mecanismos abajo**. `generar_evolucion_arquetipo` (un solo arquetipo) es un wrapper de una línea sobre `generar_evolucion_combinada` con un dict de 1 elemento — **garantía estructural**: cualquier test de un arquetipo en solitario que siga pasando prueba que la combinación no le cambió el comportamiento. | `generar_evolucion_combinada(sector, segmento, ventas_objetivo_2023, semilla, arquetipos_intensidades: dict[str,str], catalogo=None, arquetipos=None) -> EvolucionArquetipo` (motor general); `generar_evolucion_arquetipo(sector, segmento, ventas_objetivo_2023, semilla, intensidad, arquetipo_id, catalogo=None, arquetipos=None) -> EvolucionArquetipo` (caso de 1 arquetipo) | Todos los arquetipos de `clase="cuantitativo"` (18 — "coberturas" (21) y "operaciones_vinculadas" (20) pasaron de `memoria_pura` a `cuantitativo`, ver `docs/indice_arquetipos.md`); rechaza `clase="memoria_pura"` con `EvolucionArquetipoError`. |
 | `coberturas_subvenciones.py` | Coberturas de flujos de efectivo (arquetipo 21, `EfectoCobertura`) y subvenciones de capital (transversal, disparada por el arquetipo 17 o por una probabilidad de fondo por categoría de sector) — grupo 8/9 del PGC + efecto impositivo (subgrupo 83). Ver sección "Coberturas y subvenciones" abajo para el diseño completo del cuadre. | `evolucionar_cobertura(...)`/`evolucionar_subvencion(...)` (paso anual, llamados desde `_evolucionar_un_año`); `sortear_parametros_cobertura(...)`/`sortear_subvencion_baseline(...)`/`sortear_pct_cofinanciacion(...)` (sorteos únicos por caso); `presentacion_neta_eur`/`activo_por_impuesto_diferido_eur`/`pasivo_por_impuesto_diferido_eur` (helpers puros del efecto impositivo) | `evolucion_arquetipo.py` (balance/PyG, todos los años) y `ecpn.py`/`efe.py` (consumen los campos ya expuestos en `EjercicioEmpresa`, no llaman a este módulo directamente). |
-| `memoria.py` | Genera notas de memoria puramente cualitativas — arquetipos de `clase="memoria_pura"` (sin efectos numéricos, `efectos: []` en el JSON) — y orquesta el caso combinado completo (mezcla `clase="cuantitativo"` + `clase="memoria_pura"`). | `generar_nota_memoria_pura(arquetipo_id, sector, segmento, intensidad, semilla, ejercicio, etiquetas_ya_usadas=frozenset()) -> NotaMemoria` (o la función específica `generar_nota_<arquetipo>(...)`); `generar_caso_combinado(sector, segmento, ventas_objetivo_2023, semilla, arquetipos_intensidades, catalogo=None, arquetipos=None) -> EvolucionArquetipo` (punto de entrada general, cualquier mezcla de clases) | Arquetipos 7, 19, 22 (3, desde que "coberturas" -21- y "operaciones_vinculadas" -20- pasaron a `cuantitativo` — ambos siguen generando su nota cualitativa como caso especial dentro de `generar_caso_combinado`; a diferencia de 21, la de 20 ya NO sortea nada — solo formatea el importe ya calculado en `evolucion_arquetipo.py`, ver sección "Desglose de balance — segundo lote" abajo). `NotaMemoria` (definida en `evolucion_arquetipo.py`, no aquí — ver "Combinación de arquetipos" abajo) lleva `texto` + `etiquetas` (temas, usadas por el mecanismo de coherencia de la sección 2.12). |
+| `memoria.py` | Genera notas de memoria puramente cualitativas — arquetipos de `clase="memoria_pura"` (sin efectos numéricos, `efectos: []` en el JSON) — y orquesta el caso combinado completo (mezcla `clase="cuantitativo"` + `clase="memoria_pura"`). | `generar_nota_memoria_pura(arquetipo_id, sector, segmento, intensidad, semilla, ejercicio, etiquetas_ya_usadas=frozenset()) -> NotaMemoria` (o la función específica `generar_nota_<arquetipo>(...)`); `generar_caso_combinado(sector, segmento, ventas_objetivo_2023, semilla, arquetipos_intensidades, catalogo=None, arquetipos=None) -> EvolucionArquetipo` (punto de entrada general, cualquier mezcla de clases) | Arquetipos 7, 19, 22 (3, desde que "coberturas" -21- y "operaciones_vinculadas" -20- pasaron a `cuantitativo` — ambos siguen generando su nota cualitativa como caso especial dentro de `generar_caso_combinado`; a diferencia de 21, la de 20 ya NO sortea nada — solo formatea el importe ya calculado en `evolucion_arquetipo.py`, ver sección "Desglose de balance — segundo lote" abajo). `NotaMemoria` (definida en `evolucion_arquetipo.py`, no aquí — ver "Combinación de arquetipos" abajo) lleva `texto` + `etiquetas` (temas, usadas por el mecanismo de coherencia de la sección 2.12). Desde el encargo de insolvencias de clientes, `generar_caso_combinado` también detecta si el 7 ("dependencia_pocos_clientes") está activo y lo pasa como booleano a `generar_evolucion_combinada` — el único caso en que un arquetipo `memoria_pura` influye en la evolución NUMÉRICA, ver `motor/insolvencias.py` y la sección "Deterioro de valor de créditos por operaciones comerciales" abajo. |
 | `clasificacion_legal.py` | Clasifica cada caso como modelo abreviado/normal (Art. 257 LSC) — capa de cálculo pura sobre datos que el motor YA genera (activo, cifra de negocio) más una plantilla ESTIMADA (no generada) a partir de `ratios.ventas_empleado` del catálogo. No genera balance/PyG, no toca `empresa_base.py`/`evolucion_arquetipo.py`. Ver sección "Clasificación legal" abajo. | `estimar_ventas_por_empleado(sector, segmento, semilla, catalogo=None) -> (float, str)`; `estimar_plantilla(cifra_negocio_eur, ventas_empleado_miles_eur) -> float`; `clasificar_ejercicio(año, activo_eur, cifra_negocio_eur, plantilla_estimada) -> ResultadoClasificacionLegal`; `clasificar_par_ejercicios(resultado_anterior, resultado_actual) -> "abreviado"\|"normal"` | Cualquier caso ya generado (empresa_base o evolución completa) — consume su balance/PyG, no interviene en su generación. |
 | `efe.py` | Estado de Flujos de Efectivo, método indirecto, modelo NORMAL del PGC — capa de cálculo pura sobre dos `EjercicioEmpresa` consecutivos. Ver sección "EFE y ECPN" abajo para el mapeo completo y la corrección sobre la amortización. C.9 (subvenciones) y A.2.k (reverso no-cash de cobertura/subvención) desde el encargo de coberturas/subvenciones. | `generar_efe(anterior, actual, obligatorio: bool) -> EstadoFlujosEfectivo` (con propiedad `.cuadra`) | Ningún módulo de generación — solo lee `balance_eur`/`pyg_eur` ya generados, incluida la desagregación de PN/activo_no_corriente. |
 | `ecpn.py` | Estado de Cambios en el Patrimonio Neto — Documento B ("Estado total de cambios en el patrimonio neto") Y Documento A ("Estado de ingresos y gastos reconocidos", EIGR, ya NO aparcado desde el encargo de coberturas/subvenciones — ver sección "Coberturas y subvenciones" abajo) del modelo NORMAL del PGC. Capa de cálculo pura sobre `EjercicioEmpresa`. | `generar_ecpn(anterior, actual, obligatorio: bool) -> EstadoCambiosPatrimonioNeto` (Documento B, con propiedad `.cuadra`); `generar_eigr(actual, obligatorio: bool) -> EstadoIngresosGastosReconocidos` (Documento A — fotografía de UN ejercicio, no de dos) | Igual que `efe.py` — ninguno de generación. |
 | `provisiones.py` | Provisiones a largo/corto plazo (subgrupo 14 del PGC + 4994/4999) — tercer lote de desglose de balance, probabilidad de fondo INDEPENDIENTE de cualquier arquetipo (mismo patrón que la subvención de fondo). Ver sección "Provisiones a largo/corto plazo" abajo para el diseño completo. **No confundir con el arquetipo 22** (contingencia, puramente textual, sin tocar balance — sin cambios en este lote). | `sortear_provision_baseline(sector, segmento, semilla, categoria_sector, tier_existencias_sector) -> ParametrosProvision` (sorteo único por caso: activa/categoría/naturaleza PyG/año de dotación/plazo); `sortear_importe_provision_eur(...)`; `evolucionar_provision(parametros, importe_dotado_eur, saldo_anterior_eur, año) -> PasoProvision` (paso anual, llamado desde `_evolucionar_un_año`) | `evolucion_arquetipo.py` (balance/PyG, todos los años) — `efe.py` NO necesita ningún cambio (ver sección abajo, la dotación/exceso se reconcilia con las líneas A.3.e/f ya existentes). |
+| `insolvencias.py` | Deterioro de valor de créditos por operaciones comerciales (cuenta 490 del PGC) — DETERIORO DE ACTIVO (resta de "Clientes"/`realizable`, no añade pasivo — a diferencia de `provisiones.py`). Probabilidad de fondo INDEPENDIENTE de cualquier arquetipo, anclada a `ratios.cobro_dias`, con boost si el arquetipo 4 o el 7 están activos. Ver sección "Deterioro de valor de créditos por operaciones comerciales" abajo para el diseño completo. | `factor_riesgo_cobro_dias(cobro_dias_huber) -> float`; `probabilidad_insolvencia(cobro_dias_huber, deterioro_ciclo_caja_activo, dependencia_clientes_activo) -> float`; `sortear_insolvencia_baseline(sector, segmento, semilla, cobro_dias_huber, deterioro_ciclo_caja_activo, dependencia_clientes_activo) -> ParametrosInsolvencia` (sorteo único por caso); `sortear_importe_insolvencia_eur(...)`; `evolucionar_insolvencia(parametros, importe_dotado_eur, saldo_anterior_eur, exceso_acumulado_anterior_eur, año) -> PasoInsolvencia` (paso anual, llamado desde `_evolucionar_un_año`) | `evolucion_arquetipo.py` (balance/PyG, todos los años; resta de `realizable_eur` SOLO dentro de `_evaluar`, nunca antes de `_deficit_y_deuda_corto`) y `memoria.py` (`generar_caso_combinado` detecta el arquetipo 7 y lo pasa como booleano) — `efe.py` NO necesita ningún cambio (ver sección abajo, `a3b_deudores` ya existente la reconcilia). |
 
 ## Mecanismos reutilizables ya construidos (en `evolucion_arquetipo.py`, salvo que se indique)
 
@@ -567,6 +568,90 @@ corto plazo"), hoy ausentes del motor. Ver decisiones #60-64.
   dotación/exceso de provisión SIEMPRE tiene contrapartida real en `otras_deudas_largo`/
   `otras_deudas_corto`, así que A.3.e/A.3.f (ya existentes) la reconcilian exactamente sin ningún
   cambio en `motor/efe.py` — verificado, no asumido (0 descuadres en 200 EFE con provisión activa).
+
+## Deterioro de valor de créditos por operaciones comerciales (`motor/insolvencias.py`)
+
+Cuenta 490 del PGC — DETERIORO DE ACTIVO: resta directamente de "Clientes" dentro de
+`realizable` (Deudores comerciales y otras cuentas a cobrar), a diferencia de las provisiones de
+arriba (subgrupo 14, pasivo, no añade ninguna deuda nueva). Ver decisiones #86.
+
+- **Probabilidad de fondo, independiente de cualquier arquetipo** (mismo patrón que provisiones/
+  subvención de fondo) — puede aparecer con el arquetipo 6 ("Aumento de clientes (base)"), sin
+  depender de que haya un arquetipo de riesgo activo. Verificado: 26,4% observado en un barrido
+  de 216 casos (27 sectores × 8 semillas) con el 6, dentro del 20%-40% de base pedido.
+- **Magnitud (probabilidad Y importe) anclada a `ratios.cobro_dias` del catálogo, no un sorteo
+  independiente**: rampa lineal (`factor_riesgo_cobro_dias`) entre 60 días (`UMBRAL_COBRO_DIAS_
+  INSOLVENCIA`, sin riesgo adicional sobre el suelo) y 150 días (`TECHO_COBRO_DIAS_INSOLVENCIA`,
+  riesgo máximo) — ambos anclados a la distribución real de `ratios.cobro_dias.huber_9y` de los
+  27 sectores (9,6-186,3 días, media≈86,3, mediana≈84,0). Probabilidad 20%-40%
+  (`PROBABILIDAD_INSOLVENCIA_SUELO/TECHO`); importe 2%-5% de "Clientes" en el extremo sin riesgo,
+  4%-10% en el extremo de mayor riesgo (`RANGO_IMPORTE_PCT_CLIENTES_SUELO/TECHO`), suelo
+  defensivo 5.000€. Verificado empíricamente (no solo por construcción de la rampa): sector de
+  cobro largo (30.2, 186,3 días) con tasa de activación Y magnitud media mayores que sector de
+  cobro corto (47.1, 9,6 días) en barridos de 25 semillas cada uno.
+- **Boost de arquetipo 4 (deterioro del ciclo de caja) y 7 (dependencia de pocos clientes)**:
+  +10pp de probabilidad cada uno (acumulables, tope absoluto `TECHO_PROBABILIDAD_INSOLVENCIA_
+  ABSOLUTO=60%`), ×1,3 de magnitud si cualquiera de los dos está activo (no acumulable entre
+  ambos — misma razón económica "esto es más arriesgado de lo normal", no dos riesgos
+  independientes que se sumen). El 4 es `clase="cuantitativo"`, se detecta directamente en
+  `generar_evolucion_combinada`. **El 7 es `clase="memoria_pura"` — caso especial, único
+  arquetipo de esa clase que influye en la evolución NUMÉRICA**: `motor.memoria.generar_caso_
+  combinado` detecta `"dependencia_pocos_clientes" in ids_memoria_pura` y lo pasa como booleano
+  (`dependencia_pocos_clientes_activo`) a `generar_evolucion_combinada` — el único puente que
+  existe hoy entre ambas clases (`generar_evolucion_combinada` en solitario sigue sin aceptar
+  ningún arquetipo `memoria_pura`, solo este booleano aislado). **Verificado EN LA PRÁCTICA, no
+  solo a nivel de fórmula** (pedido explícitamente): vía `generar_caso_combinado`, sector de
+  cobro corto (47.1, probabilidad de base en su suelo 20%), 40 semillas — tasa de activación
+  20,0% sin el 7 → 27,5% con el 7; semilla 23 es un caso "flip" completo (sin el 7 no activa, con
+  el 7 sí); en los casos donde ambos activan, el importe dotado con el 7 escala EXACTAMENTE
+  ×1,3000 (mismo draw de magnitud, RNG independiente del boost — solo cambia el multiplicador
+  final).
+- **Movimiento anual** (saldo inicial/dotación/aplicación/reversión/saldo final,
+  `EjercicioEmpresa.insolvencia_saldo_eur`/`..._dotacion_eur`/`..._aplicacion_eur`/`..._exceso_
+  eur`) — mismo patrón que provisiones: dotación ÍNTEGRA el año de dotación (2024 o 2025, 50/50,
+  nunca en el año base), liberación LINEAL a partir de ahí (tasa anual = importe dotado / plazo,
+  `RANGO_PLAZO_TOTAL_AÑOS_INSOLVENCIA=(0,5, 2,0)`, horizonte más corto que provisiones — un
+  cliente concreto se resuelve más rápido que una provisión genérica), `FRACCION_APLICACION=0,70`
+  aplicación / 0,30 exceso.
+- **Aplicación vs. reversión — asimetría deliberada, DISTINTA de provisiones**: en provisiones
+  (pasivo), tanto la aplicación (uso real) como el exceso (reversión) liberan el pasivo por
+  igual. Aquí NO: la aplicación es la baja DEFINITIVA del derecho de cobro — retira a la vez, por
+  el mismo importe, "Clientes" bruto y el deterioro que lo cubría, efecto NETO cero sobre
+  `realizable` (la pérdida ya se reconoció íntegra en PyG el año de la dotación, no se revierte).
+  La reversión SÍ es una mejora económica real (el cliente pagó después de todo) — libera
+  `realizable` de verdad. Por eso `EjercicioEmpresa.insolvencia_deduccion_realizable_eur` (lo que
+  de verdad se resta de `realizable_eur`, `= importe_dotado_eur − exceso_acumulado_eur`) es
+  DISTINTO de `insolvencia_saldo_eur` (el deterioro vivo, expuesto para la memoria/futura
+  incidencia didáctica, que decrece con aplicación Y reversión como en provisiones) — verificado
+  con un test dedicado, no solo documentado.
+- **Dónde se aplica la deducción — NO donde se sortea**: `realizable_eur` es una de las 3 masas
+  de circulante que alimentan `_deficit_y_deuda_corto` (déficit de NOF) — restar ahí el deterioro
+  lo contaminaría con un evento que no es de ciclo de caja. La deducción se aplica SOLO dentro de
+  `_evaluar`, justo antes de `_construir_balance` (`realizable_neto_insolvencia_eur`), después de
+  que `_deficit_y_deuda_corto` ya vio el `realizable_eur` bruto — mismo criterio que evitar que el
+  payout (deuda extra) retroalimente su propio año. El endeudamiento (chequeo incondicional, ver
+  "Mecanismos reutilizables") SÍ ve el `realizable` ya neto (activo total menor, correcto: un
+  deterioro real reduce el activo que respalda la deuda).
+- **Conexión con PyG**: dotación resta SIEMPRE de `otros_gastos_explot` (cuenta 490, nunca gasto
+  de personal, a diferencia de la categoría 140 de provisiones); exceso suma a `otros_ingresos_
+  explot` ("Excesos de provisiones", misma línea que provisiones). Inyectado POST-HOC en el MISMO
+  bloque compartido que grupo89/provisión, dentro de `_evaluar` — misma interacción ya aceptada
+  con la contención de plausibilidad de PyG (#39/#60), extendida aquí a `insolvencia_dotacion_
+  eur`/`..._exceso_eur` en los tests de `margen_bruto`/`baii` (0 re-pins).
+- **Desglose de deudores** (`deudores_desglose_eur`, segundo lote) — sin código especial: el
+  perfil % fijo se aplica al `realizable` YA neto de insolvencia, así que "Clientes" (~88% del
+  total) y el resto de sub-partidas reflejan el deterioro proporcionalmente, igual que ya ocurre
+  con el exceso de stock del arquetipo 5 sobre existencias. Suma exacta verificada (no asumida).
+- **EFE: SIN líneas nuevas, verificado EMPÍRICAMENTE** (no solo algebraico) — `a3b_deudores`
+  (`motor/efe.py`, `= -(actual.balance_eur["realizable"] - anterior.balance_eur["realizable"])`)
+  ya absorbe el efecto exacto, sin ningún cambio en `motor/efe.py` (0 descuadres, `a3b_deudores`
+  comprobado contra la fórmula esperada caso a caso).
+- **Preparación para el futuro sistema de incidencias didácticas** (aplazado, no forma parte de
+  este encargo): `insolvencia_activa`/`insolvencia_categoria` (no aplica, cuenta única)/
+  `insolvencia_importe_dotado_eur`/`insolvencia_saldo_eur`/movimiento anual completo quedan
+  expuestos en `EjercicioEmpresa`, mismo criterio que amortización/provisiones, para que la
+  incidencia "cliente deteriorado no provisionado" pueda identificar y suprimir esta provisión
+  sobre un caso ya generado cuando se construya esa capa.
 
 ## Deudas financieras — cuarto y último lote de desglose de balance (`motor/empresa_base.py`)
 

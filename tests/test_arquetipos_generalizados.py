@@ -68,15 +68,19 @@ def test_exceso_stock_balances_cuadran(catalogo, arquetipos, sector):
 
 @pytest.mark.parametrize("sector", SECTORES)
 def test_exceso_stock_solo_toca_existencias(catalogo, arquetipos, sector):
-    # A diferencia del arquetipo 1, este NO debe tocar "realizable": tiene que quedarse
-    # exactamente en su crecimiento proporcional a ventas cada año.
+    # A diferencia del arquetipo 1, este NO debe tocar "realizable" por sí mismo: tiene que
+    # quedarse exactamente en su crecimiento proporcional a ventas cada año, salvo el deterioro
+    # de insolvencia de clientes (motor/insolvencias.py, probabilidad de fondo INDEPENDIENTE de
+    # cualquier arquetipo — puede tocar `realizable` aquí
+    # igual que en cualquier otro caso) — se descuenta explícitamente, no se asume ausente.
     for semilla in SEMILLAS:
         evolucion = _generar(catalogo, arquetipos, "exceso_stock", sector, semilla, intensidad="moderado")
         ej = evolucion.ejercicios
         for año_anterior, año in ((2023, 2024), (2024, 2025)):
             crecimiento_ventas = ej[año].ventas / ej[año_anterior].ventas - 1
             realizable_proporcional = ej[año_anterior].balance_eur["realizable"] * (1 + crecimiento_ventas)
-            assert ej[año].balance_eur["realizable"] == pytest.approx(realizable_proporcional, rel=1e-9)
+            realizable_esperado = realizable_proporcional - ej[año].insolvencia_deduccion_realizable_eur
+            assert ej[año].balance_eur["realizable"] == pytest.approx(realizable_esperado, rel=1e-9)
 
 
 @pytest.mark.parametrize("sector", SECTORES)
@@ -106,7 +110,10 @@ def test_mejora_margen_balances_cuadran(catalogo, arquetipos, sector):
 
 @pytest.mark.parametrize("sector", SECTORES)
 def test_mejora_margen_no_toca_el_circulante(catalogo, arquetipos, sector):
-    # Ni existencias ni clientes se desvían: el efecto es puramente de PyG.
+    # Ni existencias ni clientes se desvían por el efecto en sí: el arquetipo es puramente de
+    # PyG. El deterioro de insolvencia de clientes (motor/insolvencias.py, probabilidad de fondo
+    # independiente de cualquier arquetipo) SÍ puede tocar "realizable" — se descuenta
+    # explícitamente, ver test_exceso_stock_solo_toca_existencias.
     for semilla in SEMILLAS:
         evolucion = _generar(catalogo, arquetipos, "mejora_margen", sector, semilla, intensidad="moderado")
         ej = evolucion.ejercicios
@@ -114,6 +121,8 @@ def test_mejora_margen_no_toca_el_circulante(catalogo, arquetipos, sector):
             crecimiento_ventas = ej[año].ventas / ej[año_anterior].ventas - 1
             for variable in ("existencias", "realizable"):
                 proporcional = ej[año_anterior].balance_eur[variable] * (1 + crecimiento_ventas)
+                if variable == "realizable":
+                    proporcional -= ej[año].insolvencia_deduccion_realizable_eur
                 assert ej[año].balance_eur[variable] == pytest.approx(proporcional, rel=1e-9)
 
 
@@ -146,6 +155,9 @@ def test_apalancamiento_balances_cuadran(catalogo, arquetipos, sector):
 
 @pytest.mark.parametrize("sector", SECTORES)
 def test_apalancamiento_no_toca_el_circulante(catalogo, arquetipos, sector):
+    # El deterioro de insolvencia de clientes (motor/insolvencias.py, probabilidad de fondo
+    # independiente de cualquier arquetipo) SÍ puede tocar "realizable" — se descuenta
+    # explícitamente, ver test_exceso_stock_solo_toca_existencias.
     for semilla in SEMILLAS:
         evolucion = _generar(catalogo, arquetipos, "apalancamiento", sector, semilla, intensidad="moderado")
         ej = evolucion.ejercicios
@@ -153,6 +165,8 @@ def test_apalancamiento_no_toca_el_circulante(catalogo, arquetipos, sector):
             crecimiento_ventas = ej[año].ventas / ej[año_anterior].ventas - 1
             for variable in ("existencias", "realizable"):
                 proporcional = ej[año_anterior].balance_eur[variable] * (1 + crecimiento_ventas)
+                if variable == "realizable":
+                    proporcional -= ej[año].insolvencia_deduccion_realizable_eur
                 assert ej[año].balance_eur[variable] == pytest.approx(proporcional, rel=1e-9)
 
 
@@ -239,9 +253,12 @@ def test_riesgo_liquidez_balances_cuadran(catalogo, arquetipos, sector):
 
 @pytest.mark.parametrize("sector", SECTORES)
 def test_riesgo_liquidez_no_toca_el_circulante_ni_la_pyg(catalogo, arquetipos, sector):
-    # El efecto es puramente sobre disponible: existencias/realizable proporcionales, y la PyG
-    # sigue su cascada normal (no hay primitivas forzadas) — es la divergencia "beneficio sano,
-    # caja tensa" de la huella del arquetipo.
+    # El efecto en sí es puramente sobre disponible: existencias/realizable proporcionales
+    # (salvo el deterioro de insolvencia de clientes, motor/insolvencias.py — probabilidad de
+    # fondo independiente de cualquier arquetipo, se descuenta explícitamente, ver
+    # test_exceso_stock_solo_toca_existencias), y la PyG sigue su cascada normal (no hay
+    # primitivas forzadas) — es la divergencia "beneficio sano, caja tensa" de la huella del
+    # arquetipo.
     for semilla in SEMILLAS:
         evolucion = _generar(catalogo, arquetipos, "riesgo_liquidez_pese_beneficio", sector, semilla, intensidad="moderado")
         ej = evolucion.ejercicios
@@ -249,6 +266,8 @@ def test_riesgo_liquidez_no_toca_el_circulante_ni_la_pyg(catalogo, arquetipos, s
             crecimiento_ventas = ej[año].ventas / ej[año_anterior].ventas - 1
             for variable in ("existencias", "realizable"):
                 proporcional = ej[año_anterior].balance_eur[variable] * (1 + crecimiento_ventas)
+                if variable == "realizable":
+                    proporcional -= ej[año].insolvencia_deduccion_realizable_eur
                 assert ej[año].balance_eur[variable] == pytest.approx(proporcional, rel=1e-9)
             for modo in ej[año].modos.values():
                 # "derivado" = amortizaciones (ya no se sortea, se deriva de la colección de
@@ -395,6 +414,12 @@ def test_margen_bruto_respeta_el_techo_de_plausibilidad_del_sector(catalogo, arq
                     ej = evolucion.ejercicios[año]
                     if ej.riesgo_plausibilidad_pyg:
                         activaciones += 1
+                    # Mismo criterio que test_margen_bruto_nunca_supera_el_techo_del_sector (ver
+                    # abajo): el exceso de provisión (motor/provisiones.py) e insolvencia (motor/
+                    # insolvencias.py) se pliega en `otros_ingresos_explot` DESPUÉS de que la
+                    # contención de PyG ya fijó margen_bruto en su límite.
+                    if ej.provision_exceso_eur > 0 or ej.insolvencia_exceso_eur > 0:
+                        continue
                     if ej.pyg_pct["margen_bruto"] > techo_margen + 1e-6 and not ej.riesgo_plausibilidad_pyg:
                         por_encima_sin_señal.append((codigo, intensidad, semilla, año, ej.pyg_pct["margen_bruto"], techo_margen))
     assert activaciones > 0, "la muestra no incluyó ningún caso donde se activara la contención: ajustar el barrido"
@@ -420,10 +445,15 @@ def test_margen_bruto_nunca_supera_el_techo_del_sector(catalogo, arquetipos):
                 # (verificado: sector 62, semilla 1, 2025, +0,017 puntos) — no es un fallo de la
                 # contención, es un efecto real (la subvención SÍ sube el margen) que la
                 # contención no anticipa. Se excluye ese caso de la comprobación estricta. Mismo
-                # criterio para el exceso de provisión (tercer lote, motor/provisiones.py): se
-                # pliega en `otros_ingresos_explot`, igual que la imputación de subvención — ver
+                # criterio para el exceso de provisión (tercer lote, motor/provisiones.py) y de
+                # insolvencia de clientes (motor/insolvencias.py): ambos se pliegan en
+                # `otros_ingresos_explot`, igual que la imputación de subvención — ver
                 # decisiones_plausibilidad.md #39 (subvención) / #60 (provisiones).
-                if ejercicio.subvencion_transferencia_bruto_eur > 0 or ejercicio.provision_exceso_eur > 0:
+                if (
+                    ejercicio.subvencion_transferencia_bruto_eur > 0
+                    or ejercicio.provision_exceso_eur > 0
+                    or ejercicio.insolvencia_exceso_eur > 0
+                ):
                     continue
                 assert ejercicio.pyg_pct["margen_bruto"] <= techo_margen + 1e-6
 
@@ -599,10 +629,16 @@ def test_mejora_ebitda_baii_respeta_el_techo_de_plausibilidad_del_sector(catalog
                     if ej.riesgo_plausibilidad_pyg:
                         activaciones += 1
                     # Mismo criterio que en margen_bruto (ver arriba, #39): la dotación/exceso de
-                    # provisión (tercer lote) se inyecta DESPUÉS de esta contención, así que
-                    # puede empujar baii unos puntos-base fuera de su techo sin que la contención
-                    # (calculada sobre el baii SIN provisión) lo anticipe — ver #60.
-                    if ej.provision_dotacion_eur > 0 or ej.provision_exceso_eur > 0:
+                    # provisión (tercer lote) y de insolvencia de clientes (motor/insolvencias.py)
+                    # se inyectan DESPUÉS de esta contención, así que pueden
+                    # empujar baii unos puntos-base fuera de su techo sin que la contención
+                    # (calculada sobre el baii SIN provisión/insolvencia) lo anticipe — ver #60.
+                    if (
+                        ej.provision_dotacion_eur > 0
+                        or ej.provision_exceso_eur > 0
+                        or ej.insolvencia_dotacion_eur > 0
+                        or ej.insolvencia_exceso_eur > 0
+                    ):
                         continue
                     # Mismo criterio que la provisión, para la imputación de subvención de
                     # capital (grupo89, ver motor/coberturas_subvenciones.py): se inyecta en

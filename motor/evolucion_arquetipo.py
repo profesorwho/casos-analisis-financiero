@@ -524,6 +524,12 @@ from motor.provisiones import (
     sortear_importe_provision_eur,
     sortear_provision_baseline,
 )
+from motor.insolvencias import (
+    ParametrosInsolvencia,
+    evolucionar_insolvencia,
+    sortear_importe_insolvencia_eur,
+    sortear_insolvencia_baseline,
+)
 from motor.empresa_base import _completar_pyg_con_deuda, _generar_pyg_hasta_baii  # reutiliza la cascada de PyG
 from motor.ruido import _generar_partida
 
@@ -1239,6 +1245,25 @@ class EjercicioEmpresa:
     provision_aplicacion_eur: float = 0.0
     provision_exceso_eur: float = 0.0
 
+    # --- Deterioro de valor de créditos por operaciones comerciales (cuenta 490, ver
+    # motor/insolvencias.py) — DETERIORO DE ACTIVO (resta de `realizable`), a diferencia de las
+    # provisiones de arriba (pasivo). Probabilidad de fondo independiente de cualquier arquetipo,
+    # anclada a `ratios.cobro_dias`, con boost de probabilidad/magnitud si el arquetipo 4
+    # (deterioro del ciclo de caja) o el 7 (dependencia de pocos clientes) están activos.
+    # `insolvencia_saldo_eur`/`..._dotacion_eur`/`..._aplicacion_eur`/`..._exceso_eur` son el
+    # movimiento anual completo (mismo criterio que provisiones); `insolvencia_deduccion_
+    # realizable_eur` es lo que de verdad se resta de `balance_eur["realizable"]` este año — NO
+    # coincide con `saldo_eur` (ver docstring del módulo: la aplicación no recupera realizable,
+    # solo la reversión). ---
+    insolvencia_activa: bool = False
+    insolvencia_importe_dotado_eur: float = 0.0
+    insolvencia_saldo_eur: float = 0.0
+    insolvencia_exceso_acumulado_eur: float = 0.0
+    insolvencia_dotacion_eur: float = 0.0
+    insolvencia_aplicacion_eur: float = 0.0
+    insolvencia_exceso_eur: float = 0.0
+    insolvencia_deduccion_realizable_eur: float = 0.0
+
     # --- Cuarto y último lote de desglose de balance (deudas financieras largo/corto plazo,
     # ver motor/empresa_base.py y motor/coberturas_subvenciones.py) — `deudas_fin_fraccion_total`/
     # `..._fraccion_largo` son el perfil FIJO del caso (leasing/obligaciones/otros pasivos
@@ -1641,6 +1666,7 @@ class ParametrosOperacionVinculada:
 
 PARAMETROS_OPERACION_VINCULADA_INACTIVOS = ParametrosOperacionVinculada()
 PARAMETROS_PROVISION_INACTIVA = ParametrosProvision()
+PARAMETROS_INSOLVENCIA_INACTIVA = ParametrosInsolvencia()
 
 
 def _sortear_operacion_vinculada(sector: str, segmento: str, semilla: int, intensidad: str) -> ParametrosOperacionVinculada:
@@ -1723,7 +1749,10 @@ def _evolucionar_un_año(
     parametros_grupo89: ParametrosGrupo89 = PARAMETROS_GRUPO89_INACTIVOS,
     parametros_operacion_vinculada: ParametrosOperacionVinculada = PARAMETROS_OPERACION_VINCULADA_INACTIVOS,
     parametros_provision: ParametrosProvision = PARAMETROS_PROVISION_INACTIVA,
+    parametros_insolvencia: ParametrosInsolvencia = PARAMETROS_INSOLVENCIA_INACTIVA,
     payout_caso: float = 0.0,
+    deterioro_ciclo_caja_activo: bool = False,
+    dependencia_pocos_clientes_activo: bool = False,
 ) -> EjercicioEmpresa:
     """`efectos_activos` ya viene fusionado (uno o varios arquetipos combinados, cada `Efecto`
     emparejado con la intensidad de SU PROPIO arquetipo de origen, y los `masa_circulante` que
@@ -2172,6 +2201,33 @@ def _evolucionar_un_año(
     )
     ajuste_otros_ingresos_explot_provision_eur = paso_provision.exceso_eur
 
+    # --- Deterioro de valor de créditos por operaciones comerciales (cuenta 490, motor/
+    # insolvencias.py) — probabilidad de fondo independiente de cualquier arquetipo, anclada a
+    # `ratios.cobro_dias` + boost si el arquetipo 4/7 están activos. La magnitud se sortea UNA
+    # vez, el año de la dotación, sobre "Clientes" YA resuelto del año anterior (mismo criterio
+    # "anclado en `anterior`" de toda esta función) y se lleva sin cambios de ahí en adelante. A
+    # diferencia de provisiones, la deducción sobre `realizable_eur` NO se pliega aquí (esa masa
+    # sí alimenta `_deficit_y_deuda_corto` — hacerlo aquí contaminaría el cálculo de NOF con un
+    # deterioro que no es un evento de ciclo de caja): se aplica más abajo, dentro de `_evaluar`,
+    # solo para el balance final — ver docstring de motor.insolvencias. ---
+    cobro_dias_huber = fila["ratios.cobro_dias.huber_9y"]
+    insolvencia_importe_dotado_eur = anterior.insolvencia_importe_dotado_eur
+    if parametros_insolvencia.activa and año == parametros_insolvencia.año_dotacion:
+        clientes_referencia_eur = anterior.deudores_perfil_pct.get("clientes", 0.0) * anterior.balance_eur["realizable"]
+        boost_magnitud_insolvencia_activo = deterioro_ciclo_caja_activo or dependencia_pocos_clientes_activo
+        insolvencia_importe_dotado_eur = sortear_importe_insolvencia_eur(
+            sector, segmento, semilla, clientes_referencia_eur, cobro_dias_huber, boost_magnitud_insolvencia_activo
+        )
+    paso_insolvencia = evolucionar_insolvencia(
+        parametros_insolvencia,
+        insolvencia_importe_dotado_eur,
+        anterior.insolvencia_saldo_eur,
+        anterior.insolvencia_exceso_acumulado_eur,
+        año,
+    )
+    ajuste_otros_gastos_explot_insolvencia_eur = paso_insolvencia.dotacion_eur
+    ajuste_otros_ingresos_explot_insolvencia_eur = paso_insolvencia.exceso_eur
+
     ajustes_cambio_valor_pn_eur = presentacion_neta_eur(cobertura_saldo_1340_bruto_eur)
     subvenciones_pn_eur = presentacion_neta_eur(subvencion_saldo_130_bruto_eur)
     delta_pn_grupo89_eur = (
@@ -2275,33 +2331,44 @@ def _evolucionar_un_año(
         deuda_financiera_media_eur = (deuda_financiera_inicio_eur + deuda_financiera_fin_eur) / 2
         pyg_pct, pyg_eur = _completar_pyg_con_deuda(parcial_pyg, deuda_financiera_media_eur)
 
-        # Ajuste de grupo89 (cobertura/subvención) y de provisiones (dotación/exceso, tercer
-        # lote) — importe BRUTO completo, desacoplado del `impuesto_beneficios` ya sorteado (que
-        # no debe gravar dos veces estas partidas ni dejarlas sin gravar del todo): ver docstring
-        # de motor.coberturas_subvenciones (punto 1 del diseño de cuadre) y de motor.provisiones.
+        # Ajuste de grupo89 (cobertura/subvención), provisiones (dotación/exceso, tercer lote) e
+        # insolvencia de clientes (dotación/exceso, cuenta 490) — importe BRUTO completo,
+        # desacoplado del `impuesto_beneficios` ya sorteado (que no debe gravar dos veces estas
+        # partidas ni dejarlas sin gravar del todo): ver docstring de motor.coberturas_
+        # subvenciones (punto 1 del diseño de cuadre), motor.provisiones y motor.insolvencias.
         # Se aplica DESPUÉS de `_completar_pyg_con_deuda` para no alterar la base sobre la que se
-        # sorteó `impuesto_beneficios_pct`. El exceso de provisión se pliega en
+        # sorteó `impuesto_beneficios_pct`. El exceso de provisión/insolvencia se pliega en
         # `otros_ingresos_explot` (línea "Excesos de provisiones" del modelo oficial, no
         # desglosada como línea propia en `pyg_eur` — mismo criterio de simplificación ya usado
         # para la imputación de subvenciones, ver arriba: el importe distinto SÍ queda expuesto
-        # aparte, en `EjercicioEmpresa.provision_exceso_eur`); la dotación resta de
-        # `gastos_personal` u `otros_gastos_explot` según la categoría de la provisión.
+        # aparte, en `EjercicioEmpresa.provision_exceso_eur`/`.insolvencia_exceso_eur`); la
+        # dotación de provisión resta de `gastos_personal` u `otros_gastos_explot` según su
+        # categoría; la de insolvencia resta siempre de `otros_gastos_explot` (cuenta 490, nunca
+        # gasto de personal).
+        ajuste_otros_gastos_explot_total_provision_eur = (
+            ajuste_otros_gastos_explot_provision_eur + ajuste_otros_gastos_explot_insolvencia_eur
+        )
         if (
             ajuste_gastos_financieros_grupo89_eur != 0.0
             or ajuste_otros_ingresos_explot_grupo89_eur != 0.0
             or ajuste_gastos_personal_provision_eur != 0.0
-            or ajuste_otros_gastos_explot_provision_eur != 0.0
+            or ajuste_otros_gastos_explot_total_provision_eur != 0.0
             or ajuste_otros_ingresos_explot_provision_eur != 0.0
+            or ajuste_otros_ingresos_explot_insolvencia_eur != 0.0
         ):
             pyg_eur = dict(pyg_eur)
             ajuste_otros_ingresos_explot_total_eur = (
-                ajuste_otros_ingresos_explot_grupo89_eur + ajuste_otros_ingresos_explot_provision_eur
+                ajuste_otros_ingresos_explot_grupo89_eur
+                + ajuste_otros_ingresos_explot_provision_eur
+                + ajuste_otros_ingresos_explot_insolvencia_eur
             )
             pyg_eur["otros_ingresos_explot"] += ajuste_otros_ingresos_explot_total_eur
             pyg_eur["ingresos_explotacion"] += ajuste_otros_ingresos_explot_total_eur
             pyg_eur["margen_bruto"] += ajuste_otros_ingresos_explot_total_eur
-            pyg_eur["otros_gastos_explot"] += ajuste_otros_gastos_explot_provision_eur
-            valor_añadido_delta_eur = ajuste_otros_ingresos_explot_total_eur - ajuste_otros_gastos_explot_provision_eur
+            pyg_eur["otros_gastos_explot"] += ajuste_otros_gastos_explot_total_provision_eur
+            valor_añadido_delta_eur = (
+                ajuste_otros_ingresos_explot_total_eur - ajuste_otros_gastos_explot_total_provision_eur
+            )
             pyg_eur["valor_añadido"] += valor_añadido_delta_eur
             pyg_eur["gastos_personal"] += ajuste_gastos_personal_provision_eur
             baii_delta_eur = valor_añadido_delta_eur - ajuste_gastos_personal_provision_eur
@@ -2344,9 +2411,14 @@ def _evolucionar_un_año(
             - payout_dividendos_eur
             + delta_pn_grupo89_eur
         )
+        # Insolvencia de clientes (cuenta 490): resta de `realizable_eur` solo AQUÍ, para el
+        # balance final — nunca antes de `_deficit_y_deuda_corto` (arriba), que debe seguir
+        # viendo el `realizable_eur` bruto (ver docstring de motor.insolvencias y el comentario
+        # de más arriba, junto al sorteo de `paso_insolvencia`).
+        realizable_neto_insolvencia_eur = realizable_eur - paso_insolvencia.deduccion_realizable_eur
         balance, ajuste_cuadre_eur = _construir_balance(
             existencias_eur,
-            realizable_eur,
+            realizable_neto_insolvencia_eur,
             acreedores_comerciales_eur,
             disponible_tras_payout_eur,
             deudas_fin_corto_eur,
@@ -2624,6 +2696,14 @@ def _evolucionar_un_año(
         provision_dotacion_eur=paso_provision.dotacion_eur,
         provision_aplicacion_eur=paso_provision.aplicacion_eur,
         provision_exceso_eur=paso_provision.exceso_eur,
+        insolvencia_activa=parametros_insolvencia.activa,
+        insolvencia_importe_dotado_eur=insolvencia_importe_dotado_eur,
+        insolvencia_saldo_eur=paso_insolvencia.saldo_eur,
+        insolvencia_exceso_acumulado_eur=paso_insolvencia.exceso_acumulado_eur,
+        insolvencia_dotacion_eur=paso_insolvencia.dotacion_eur,
+        insolvencia_aplicacion_eur=paso_insolvencia.aplicacion_eur,
+        insolvencia_exceso_eur=paso_insolvencia.exceso_eur,
+        insolvencia_deduccion_realizable_eur=paso_insolvencia.deduccion_realizable_eur,
         deudas_fin_fraccion_total=anterior.deudas_fin_fraccion_total,
         deudas_fin_fraccion_largo=anterior.deudas_fin_fraccion_largo,
         deudas_fin_largo_desglose_eur=deudas_fin_largo_desglose_eur_año,
@@ -2695,6 +2775,7 @@ def generar_evolucion_combinada(
     arquetipos_intensidades: dict[str, str],
     catalogo: pd.DataFrame | None = None,
     arquetipos: dict[str, DefinicionArquetipo] | None = None,
+    dependencia_pocos_clientes_activo: bool = False,
 ) -> EvolucionArquetipo:
     """Genera 3 ejercicios combinando los arquetipos CUANTITATIVOS de `arquetipos_intensidades`
     ({arquetipo_id: intensidad} — una intensidad por arquetipo, sección 2.12), fusionando sus
@@ -2996,6 +3077,24 @@ def generar_evolucion_combinada(
         sector, segmento, semilla, categoria_de_sector(sector), tier_existencias_de_sector(sector)
     )
 
+    # --- Deterioro de valor de créditos por operaciones comerciales (cuenta 490, motor/
+    # insolvencias.py) — probabilidad de fondo INDEPENDIENTE de cualquier arquetipo activo (mismo
+    # criterio que provisiones), anclada a `ratios.cobro_dias` del propio sector/segmento. Boost
+    # de probabilidad/magnitud si el arquetipo 4 ("deterioro_ciclo_caja", `clase="cuantitativo"`,
+    # detectable directamente en `definiciones`) o el 7 ("dependencia_pocos_clientes",
+    # `clase="memoria_pura"`, sin efectos numéricos propios — no puede detectarse aquí, así que lo
+    # señala quien orquesta ambas clases, `motor.memoria.generar_caso_combinado`, vía el parámetro
+    # `dependencia_pocos_clientes_activo`) están activos. ---
+    deterioro_ciclo_caja_activo = "deterioro_ciclo_caja" in definiciones
+    parametros_insolvencia = sortear_insolvencia_baseline(
+        sector,
+        segmento,
+        semilla,
+        fila["ratios.cobro_dias.huber_9y"],
+        deterioro_ciclo_caja_activo,
+        dependencia_pocos_clientes_activo,
+    )
+
     anterior = ejercicios[AÑO_BASE]
     for año in (2024, 2025):
         fraccion = FRACCION_AÑO[año]
@@ -3035,7 +3134,10 @@ def generar_evolucion_combinada(
             parametros_grupo89,
             parametros_operacion_vinculada,
             parametros_provision,
+            parametros_insolvencia,
             payout_caso=payout_caso,
+            deterioro_ciclo_caja_activo=deterioro_ciclo_caja_activo,
+            dependencia_pocos_clientes_activo=dependencia_pocos_clientes_activo,
         )
         ejercicios[año] = ejercicio
         anterior = ejercicio

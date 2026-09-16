@@ -13,6 +13,7 @@ from motor.empresa_base import (
 )
 from motor.evolucion_arquetipo import (
     AÑO_BASE,
+    DIAS_AÑO,
     N_DESVIACIONES_TECHO_ENDEUDAMIENTO,
     PGC_VERSION,
     TECHO_ENDEUDAMIENTO_MAXIMO_ABSOLUTO,
@@ -131,24 +132,40 @@ def test_existencias_y_clientes_crecen_mas_que_las_ventas(catalogo, arquetipos, 
         # plausibilidad del sector (riesgo_endeudamiento=True), la contención amortigua el
         # exceso de circulante hasta, como mucho, el crecimiento proporcional a ventas — nunca
         # por debajo de él. Ver test_contencion_de_endeudamiento para la contención en sí.
+        #
+        # "Clientes" (realizable) se reconstruye BRUTO (sumando de vuelta `insolvencia_
+        # deduccion_realizable_eur`, ver motor/insolvencias.py) antes de comparar: el deterioro
+        # de insolvencia de clientes tiene probabilidad de fondo INDEPENDIENTE de cualquier
+        # arquetipo, así que puede reducir "realizable" pese a que este arquetipo lo empuje al
+        # alza — esta comprobación es sobre la huella DEL ARQUETIPO, no sobre el balance final ya
+        # neto de insolvencia.
+        realizable_bruto_2023 = ej[2023].balance_eur["realizable"] + ej[2023].insolvencia_deduccion_realizable_eur
+        realizable_bruto_2024 = ej[2024].balance_eur["realizable"] + ej[2024].insolvencia_deduccion_realizable_eur
+        realizable_bruto_2025 = ej[2025].balance_eur["realizable"] + ej[2025].insolvencia_deduccion_realizable_eur
+
         crecimiento_ventas_2024 = ej[2024].ventas / ej[2023].ventas - 1
         crecimiento_existencias_2024 = ej[2024].balance_eur["existencias"] / ej[2023].balance_eur["existencias"] - 1
-        crecimiento_clientes_2024 = ej[2024].balance_eur["realizable"] / ej[2023].balance_eur["realizable"] - 1
+        crecimiento_clientes_2024 = realizable_bruto_2024 / realizable_bruto_2023 - 1
         assert crecimiento_existencias_2024 >= crecimiento_ventas_2024 - 1e-9
         assert crecimiento_clientes_2024 >= crecimiento_ventas_2024 - 1e-9
 
         crecimiento_ventas_2025 = ej[2025].ventas / ej[2024].ventas - 1
         crecimiento_existencias_2025 = ej[2025].balance_eur["existencias"] / ej[2024].balance_eur["existencias"] - 1
-        crecimiento_clientes_2025 = ej[2025].balance_eur["realizable"] / ej[2024].balance_eur["realizable"] - 1
+        crecimiento_clientes_2025 = realizable_bruto_2025 / realizable_bruto_2024 - 1
         assert crecimiento_existencias_2025 >= crecimiento_ventas_2025 - 1e-9
         assert crecimiento_clientes_2025 >= crecimiento_ventas_2025 - 1e-9
 
-        # ... y por tanto la rotación de existencias no mejora y el plazo de cobro no se acorta,
-        # respecto al propio año anterior de la empresa (no solo respecto al sector).
+        # ... y por tanto la rotación de existencias no mejora, respecto al propio año anterior
+        # de la empresa (no solo respecto al sector). `cobro_dias` se reconstruye BRUTO (mismo
+        # motivo que "realizable" arriba: `EjercicioEmpresa.cobro_dias` se deriva de "realizable"
+        # YA neto de insolvencia, que el deterioro puede acortar pese a la huella del arquetipo).
         assert ej[2024].rotacion_existencias <= ej[2023].rotacion_existencias + 1e-9
         assert ej[2025].rotacion_existencias <= ej[2024].rotacion_existencias + 1e-9
-        assert ej[2024].cobro_dias >= ej[2023].cobro_dias - 1e-9
-        assert ej[2025].cobro_dias >= ej[2024].cobro_dias - 1e-9
+        cobro_dias_bruto_2023 = realizable_bruto_2023 / ej[2023].ventas * DIAS_AÑO
+        cobro_dias_bruto_2024 = realizable_bruto_2024 / ej[2024].ventas * DIAS_AÑO
+        cobro_dias_bruto_2025 = realizable_bruto_2025 / ej[2025].ventas * DIAS_AÑO
+        assert cobro_dias_bruto_2024 >= cobro_dias_bruto_2023 - 1e-9
+        assert cobro_dias_bruto_2025 >= cobro_dias_bruto_2024 - 1e-9
 
 
 @pytest.mark.parametrize("sector", SECTORES)

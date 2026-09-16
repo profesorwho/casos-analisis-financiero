@@ -490,8 +490,22 @@ def generar_caso_combinado(
             "ver docstring de la función"
         )
 
+    # "dependencia_pocos_clientes" (arquetipo 7) es `clase="memoria_pura"` — no evoluciona en
+    # `generar_evolucion_combinada`, pero SÍ debe subir la probabilidad/magnitud del deterioro de
+    # insolvencias de clientes (cuenta 490, motor/insolvencias.py) cuando está activo, igual que
+    # el arquetipo 4 ("deterioro_ciclo_caja", ese sí `cuantitativo` y detectado internamente). Es
+    # la única señal que este orquestador pasa a la evolución numérica sobre los arquetipos de
+    # memoria pura — ver docstring de `sortear_insolvencia_baseline`.
+    dependencia_pocos_clientes_activo = "dependencia_pocos_clientes" in ids_memoria_pura
     evolucion = generar_evolucion_combinada(
-        sector, segmento, ventas_objetivo_2023, semilla, ids_cuantitativos, catalogo=catalogo, arquetipos=arquetipos
+        sector,
+        segmento,
+        ventas_objetivo_2023,
+        semilla,
+        ids_cuantitativos,
+        catalogo=catalogo,
+        arquetipos=arquetipos,
+        dependencia_pocos_clientes_activo=dependencia_pocos_clientes_activo,
     )
 
     # Etiquetas ya "ocupadas" por las notas numéricas (10/16/18, si las hay, en 2024 y/o 2025):
