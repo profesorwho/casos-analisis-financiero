@@ -115,3 +115,75 @@ def test_reservas_no_absurdamente_negativas_en_barrido_amplio(catalogo, arquetip
                     if evolucion.ejercicios[año].reservas_eur < 0:
                         negativos += 1
     assert negativos / total < 0.05, f"{negativos}/{total} ejercicios con reservas negativas"
+
+
+# --------------------------------------------------------------------------------------------
+# Hallazgo de auditoría de trazabilidad (Ronda 1, Fase 4, ver motor/resumen_caso.py): el modo
+# típico/atípico de `activo_no_corriente`, las periodificaciones y `capital_social` se
+# descartaba con `_generar_partida(...) -> valor, _` — mismo patrón ya corregido para
+# existencias/deudores/acreedores/deudas financieras/ROE_caso, aplicado aquí a estos 3 sitios
+# ANTERIORES a los lotes de desglose de balance (decisiones #24-25).
+# --------------------------------------------------------------------------------------------
+
+
+def test_generar_perfil_activo_no_corriente_expone_el_modo_de_cada_componente(catalogo):
+    import numpy as np
+
+    from motor.empresa_base import generar_perfil_activo_no_corriente
+
+    perfil, modos = generar_perfil_activo_no_corriente(np.random.default_rng(1), "industria")
+    assert set(perfil) == set(modos)
+    assert set(modos.values()) <= {"tipico", "atipico"}
+
+    empresa = generar_empresa_base("24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=1, catalogo=catalogo)
+    assert {k for k in empresa.modos if k.startswith("activo_no_corriente.")} == {
+        f"activo_no_corriente.{componente}" for componente in empresa.activo_no_corriente_perfil_pct
+    }
+
+    vistos_atipico = 0
+    for semilla in range(30):
+        e = generar_empresa_base("24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=semilla, catalogo=catalogo)
+        vistos_atipico += sum(1 for k, v in e.modos.items() if k.startswith("activo_no_corriente.") and v == "atipico")
+    assert vistos_atipico > 0
+
+
+def test_generar_periodificaciones_pct_expone_el_modo_de_cada_una(catalogo):
+    import numpy as np
+
+    from motor.empresa_base import generar_periodificaciones_pct
+
+    activo, corto, largo, modo_activo, modo_corto, modo_largo = generar_periodificaciones_pct(
+        np.random.default_rng(1), "industria"
+    )
+    assert modo_activo in ("tipico", "atipico")
+    assert modo_corto in ("tipico", "atipico")
+    assert modo_largo in ("tipico", "atipico")
+
+    empresa = generar_empresa_base("24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=1, catalogo=catalogo)
+    assert set(empresa.modos) >= {"periodificacion_activo", "periodificacion_pasivo_corto", "periodificacion_pasivo_largo"}
+
+    vistos_atipico = 0
+    for semilla in range(30):
+        e = generar_empresa_base("24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=semilla, catalogo=catalogo)
+        vistos_atipico += sum(1 for k, v in e.modos.items() if k.startswith("periodificacion_") and v == "atipico")
+    assert vistos_atipico > 0
+
+
+def test_generar_capital_social_expone_su_modo(catalogo):
+    import numpy as np
+
+    from motor.empresa_base import _generar_capital_social
+
+    valor, modo = _generar_capital_social(np.random.default_rng(1), 1_000_000.0)
+    assert valor >= 0
+    assert modo in ("tipico", "atipico")
+
+    empresa = generar_empresa_base("24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=1, catalogo=catalogo)
+    assert empresa.modos.get("capital_social") in ("tipico", "atipico")
+
+    vistos_atipico = 0
+    for semilla in range(30):
+        e = generar_empresa_base("24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=semilla, catalogo=catalogo)
+        if e.modos.get("capital_social") == "atipico":
+            vistos_atipico += 1
+    assert vistos_atipico > 0

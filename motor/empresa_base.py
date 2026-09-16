@@ -518,32 +518,41 @@ DISPERSION_PERFIL_DEUDORES_ACREEDORES = 0.20
 SUELO_COMPONENTE_DEUDORES_ACREEDORES_PCT = 0.002
 
 
-def generar_perfil_deudores(rng: np.random.Generator) -> dict[str, float]:
+def generar_perfil_deudores(rng: np.random.Generator) -> tuple[dict[str, float], dict[str, str]]:
     """Las 7 fracciones oficiales de deudores comerciales para UN caso — perfil único (ver
     docstring arriba), mismo mecanismo que `generar_perfil_existencias` (ruido mixto,
-    renormalizado a 1.0)."""
+    renormalizado a 1.0). Devuelve también el modo típico/atípico de CADA componente (hallazgo de
+    auditoría de trazabilidad — antes se descartaba con `_`, igual que el resto de perfiles de
+    este bloque; expuesto ahora para que `EmpresaBase.modos` no pierda esta información, mismo
+    criterio que `_generar_balance_pct` ya aplicaba a las masas de nivel superior)."""
     brutos = {}
+    modos = {}
     for componente, centro in PERFIL_DEUDORES_BASE.items():
         suelo = SUELO_COMPONENTE_DEUDORES_ACREEDORES_PCT if centro > 0 else 0.0
-        valor, _ = _generar_partida(
+        valor, modo = _generar_partida(
             rng, centro, max(centro, 0.01) * DISPERSION_PERFIL_DEUDORES_ACREEDORES, suelo=suelo,
         )
         brutos[componente] = valor if centro > 0 else 0.0
-    return _renormalizar_a_total(brutos, 1.0)
+        modos[componente] = modo
+    return _renormalizar_a_total(brutos, 1.0), modos
 
 
-def generar_perfil_acreedores(rng: np.random.Generator, categoria: str) -> dict[str, float]:
+def generar_perfil_acreedores(rng: np.random.Generator, categoria: str) -> tuple[dict[str, float], dict[str, str]]:
     """Las 7 fracciones oficiales de acreedores comerciales para UN caso — perfil por categoría
-    de sector (ver docstring arriba), mismo mecanismo que `generar_perfil_existencias`."""
+    de sector (ver docstring arriba), mismo mecanismo que `generar_perfil_existencias`. Devuelve
+    también el modo típico/atípico de cada componente — ver docstring de `generar_perfil_
+    deudores`."""
     perfil_centro = PERFIL_ACREEDORES_POR_CATEGORIA[categoria]
     brutos = {}
+    modos = {}
     for componente, centro in perfil_centro.items():
         suelo = SUELO_COMPONENTE_DEUDORES_ACREEDORES_PCT if centro > 0 else 0.0
-        valor, _ = _generar_partida(
+        valor, modo = _generar_partida(
             rng, centro, max(centro, 0.01) * DISPERSION_PERFIL_DEUDORES_ACREEDORES, suelo=suelo,
         )
         brutos[componente] = valor if centro > 0 else 0.0
-    return _renormalizar_a_total(brutos, 1.0)
+        modos[componente] = modo
+    return _renormalizar_a_total(brutos, 1.0), modos
 
 
 # --------------------------------------------------------------------------------------------
@@ -603,26 +612,33 @@ SUELO_FRACCION_LARGO_DEUDAS_FIN = 0.10
 TECHO_FRACCION_LARGO_DEUDAS_FIN = 0.95
 
 
-def generar_perfil_deudas_fin(rng: np.random.Generator, categoria: str) -> tuple[dict[str, float], dict[str, float]]:
+def generar_perfil_deudas_fin(
+    rng: np.random.Generator, categoria: str
+) -> tuple[dict[str, float], dict[str, float], dict[str, str], dict[str, str]]:
     """Perfil fijo por caso para el desglose de deudas financieras — `fraccion_total` (peso de
     cada una de las 3 categorías con perfil propio sobre el total de deuda financiera CON coste,
     ver docstring arriba) y `fraccion_largo` (su propio reparto largo/corto, fijo, por tipo de
     instrumento). Ninguno de los dos se renormaliza a 1.0: "Entidades de crédito" absorbe lo que
     quede del total, y "Derivados" no participa de este perfil en absoluto (ver
-    `calcular_desglose_deudas_fin`)."""
+    `calcular_desglose_deudas_fin`). Devuelve también el modo típico/atípico de cada componente de
+    AMBOS repartos (`modos_total`/`modos_largo`) — ver docstring de `generar_perfil_deudores`."""
     perfil_centro = PERFIL_DEUDAS_FIN_POR_CATEGORIA[categoria]
     fraccion_total = {}
+    modos_total = {}
     for tipo, centro in perfil_centro.items():
-        valor, _ = _generar_partida(rng, centro, centro * DISPERSION_PERFIL_DEUDAS_FIN, suelo=SUELO_COMPONENTE_DEUDAS_FIN_PCT)
+        valor, modo = _generar_partida(rng, centro, centro * DISPERSION_PERFIL_DEUDAS_FIN, suelo=SUELO_COMPONENTE_DEUDAS_FIN_PCT)
         fraccion_total[tipo] = valor
+        modos_total[tipo] = modo
     fraccion_largo = {}
+    modos_largo = {}
     for tipo, centro in FRACCION_LARGO_POR_TIPO_DEUDA_FIN.items():
-        valor, _ = _generar_partida(
+        valor, modo = _generar_partida(
             rng, centro, centro * DISPERSION_FRACCION_LARGO_DEUDAS_FIN,
             suelo=SUELO_FRACCION_LARGO_DEUDAS_FIN, techo=TECHO_FRACCION_LARGO_DEUDAS_FIN,
         )
         fraccion_largo[tipo] = valor
-    return fraccion_total, fraccion_largo
+        modos_largo[tipo] = modo
+    return fraccion_total, fraccion_largo, modos_total, modos_largo
 
 
 def calcular_desglose_deudas_fin(
@@ -697,69 +713,86 @@ def _redondear_cifra_vistosa(valor: float) -> float:
     return round(valor / paso) * paso
 
 
-def _generar_capital_social(rng: np.random.Generator, patrimonio_neto_eur: float) -> float:
-    fraccion, _ = _generar_partida(
+def _generar_capital_social(rng: np.random.Generator, patrimonio_neto_eur: float) -> tuple[float, str]:
+    """Devuelve también el modo típico/atípico del sorteo (hallazgo de auditoría de trazabilidad,
+    Ronda 1 de la Fase 4 — completa la corrección ya aplicada a existencias/deudores/acreedores/
+    deudas financieras/`ROE_caso`: `_generar_capital_social`, `generar_perfil_activo_no_
+    corriente` y `generar_periodificaciones_pct` son ANTERIORES a los lotes de desglose de
+    balance (decisiones #24-25) pero comparten el mismo patrón "sorteo Huber/MAD descartando el
+    modo" — corregido aquí en origen, mismo criterio que el resto)."""
+    fraccion, modo = _generar_partida(
         rng,
         CAPITAL_SOCIAL_FRACCION_PN_CENTRO,
         CAPITAL_SOCIAL_FRACCION_PN_SPREAD,
         suelo=CAPITAL_SOCIAL_FRACCION_PN_SUELO,
         techo=CAPITAL_SOCIAL_FRACCION_PN_TECHO,
     )
-    return _redondear_cifra_vistosa(max(0.0, patrimonio_neto_eur) * fraccion)
+    return _redondear_cifra_vistosa(max(0.0, patrimonio_neto_eur) * fraccion), modo
 
 
-def generar_perfil_activo_no_corriente(rng: np.random.Generator, categoria: str) -> dict[str, float]:
+def generar_perfil_activo_no_corriente(rng: np.random.Generator, categoria: str) -> tuple[dict[str, float], dict[str, str]]:
     """Las 4 fracciones (material/intangible/inversiones_inmobiliarias/otros_financieros) para
     UN caso — sorteo único por empresa (no por año), con ruido alrededor del perfil central de
-    su categoría de sector, renormalizado para sumar exactamente 1.0."""
+    su categoría de sector, renormalizado para sumar exactamente 1.0. Devuelve también el modo
+    típico/atípico de cada componente — ver docstring de `_generar_capital_social` (mismo
+    hallazgo de auditoría) y de `generar_perfil_deudores` (mismo patrón de corrección)."""
     perfil_centro = PERFIL_ACTIVO_NO_CORRIENTE_POR_CATEGORIA[categoria]
     brutos = {}
+    modos = {}
     for componente, centro in perfil_centro.items():
-        valor, _ = _generar_partida(
+        valor, modo = _generar_partida(
             rng, centro, centro * DISPERSION_PERFIL_ACTIVO_NO_CORRIENTE,
             suelo=SUELO_COMPONENTE_ACTIVO_NO_CORRIENTE_PCT,
         )
         brutos[componente] = valor
-    return _renormalizar_a_total(brutos, 1.0)
+        modos[componente] = modo
+    return _renormalizar_a_total(brutos, 1.0), modos
 
 
-def generar_perfil_existencias(rng: np.random.Generator, sector_codigo: str) -> dict[str, float]:
+def generar_perfil_existencias(rng: np.random.Generator, sector_codigo: str) -> tuple[dict[str, float], dict[str, str]]:
     """Las 6 fracciones oficiales de existencias (comerciales/materias_primas/productos_curso/
     productos_terminados/subproductos_residuos/anticipos_proveedores) para UN caso — mismo
     mecanismo que `generar_perfil_activo_no_corriente` (sorteo único por empresa, ruido mixto
     alrededor del perfil central de su TIER de existencias, renormalizado a 1.0). Clasifica por
-    SECTOR, no por `categoria_de_sector` — ver `TIER_EXISTENCIAS_POR_SECTOR`."""
+    SECTOR, no por `categoria_de_sector` — ver `TIER_EXISTENCIAS_POR_SECTOR`. Devuelve también el
+    modo típico/atípico de cada componente — ver docstring de `generar_perfil_deudores`."""
     perfil_centro = PERFIL_EXISTENCIAS_POR_TIER[tier_existencias_de_sector(sector_codigo)]
     brutos = {}
+    modos = {}
     for componente, centro in perfil_centro.items():
-        valor, _ = _generar_partida(
+        valor, modo = _generar_partida(
             rng, centro, centro * DISPERSION_PERFIL_EXISTENCIAS,
             suelo=SUELO_COMPONENTE_EXISTENCIAS_PCT,
         )
         brutos[componente] = valor
-    return _renormalizar_a_total(brutos, 1.0)
+        modos[componente] = modo
+    return _renormalizar_a_total(brutos, 1.0), modos
 
 
-def generar_periodificaciones_pct(rng: np.random.Generator, categoria: str) -> tuple[float, float, float]:
+def generar_periodificaciones_pct(
+    rng: np.random.Generator, categoria: str
+) -> tuple[float, float, float, str, str, str]:
     """Fracciones de periodificación de activo (sobre `realizable`), pasivo a corto (sobre
     `otras_deudas_corto`) y pasivo a largo (sobre `otras_deudas_largo`) — 3 sorteos
     independientes (no son un reparto que deba sumar 1.0 entre sí: cada uno talla una porción de
-    una masa DISTINTA), mismo ruido mixto de siempre, sin renormalizar."""
+    una masa DISTINTA), mismo ruido mixto de siempre, sin renormalizar. Devuelve también el modo
+    típico/atípico de cada uno de los 3 — ver docstring de `_generar_capital_social` (mismo
+    hallazgo de auditoría de trazabilidad)."""
     centro_activo = PERIODIFICACION_ACTIVO_PCT_POR_CATEGORIA[categoria]
     centro_pasivo = PERIODIFICACION_PASIVO_PCT_POR_CATEGORIA[categoria]
-    activo_pct, _ = _generar_partida(
+    activo_pct, modo_activo = _generar_partida(
         rng, centro_activo, centro_activo * DISPERSION_PERIODIFICACION,
         suelo=SUELO_PERIODIFICACION_PCT, techo=TECHO_PERIODIFICACION_PCT,
     )
-    pasivo_corto_pct, _ = _generar_partida(
+    pasivo_corto_pct, modo_pasivo_corto = _generar_partida(
         rng, centro_pasivo, centro_pasivo * DISPERSION_PERIODIFICACION,
         suelo=SUELO_PERIODIFICACION_PCT, techo=TECHO_PERIODIFICACION_PCT,
     )
-    pasivo_largo_pct, _ = _generar_partida(
+    pasivo_largo_pct, modo_pasivo_largo = _generar_partida(
         rng, centro_pasivo, centro_pasivo * DISPERSION_PERIODIFICACION,
         suelo=SUELO_PERIODIFICACION_PCT, techo=TECHO_PERIODIFICACION_PCT,
     )
-    return activo_pct, pasivo_corto_pct, pasivo_largo_pct
+    return activo_pct, pasivo_corto_pct, pasivo_largo_pct, modo_activo, modo_pasivo_corto, modo_pasivo_largo
 
 
 class EmpresaBaseError(ValueError):
@@ -1155,7 +1188,7 @@ def generar_empresa_base(
     # antes `amortizaciones_pct` se sorteaba sin ninguna conexión con el inmovilizado real).
     categoria = categoria_de_sector(sector)
     rng_perfil = np.random.default_rng([semilla, zlib.crc32(f"{sector}|{segmento}|perfil_activo_no_corriente".encode("utf-8"))])
-    perfil_activo_no_corriente = generar_perfil_activo_no_corriente(rng_perfil, categoria)
+    perfil_activo_no_corriente, modos_activo_no_corriente = generar_perfil_activo_no_corriente(rng_perfil, categoria)
     activo_no_corriente_desglose_eur = {
         componente: fraccion * balance_eur["activo_no_corriente"]
         for componente, fraccion in perfil_activo_no_corriente.items()
@@ -1171,11 +1204,14 @@ def generar_empresa_base(
     rng_desglose_balance = np.random.default_rng(
         [semilla, zlib.crc32(f"{sector}|{segmento}|desglose_balance_lote1".encode("utf-8"))]
     )
-    perfil_existencias = generar_perfil_existencias(rng_desglose_balance, sector)
+    perfil_existencias, modos_existencias = generar_perfil_existencias(rng_desglose_balance, sector)
     existencias_desglose_eur = {
         componente: fraccion * balance_eur["existencias"] for componente, fraccion in perfil_existencias.items()
     }
-    periodificacion_activo_pct, periodificacion_pasivo_corto_pct, periodificacion_pasivo_largo_pct = (
+    (
+        periodificacion_activo_pct, periodificacion_pasivo_corto_pct, periodificacion_pasivo_largo_pct,
+        modo_periodificacion_activo, modo_periodificacion_pasivo_corto, modo_periodificacion_pasivo_largo,
+    ) = (
         generar_periodificaciones_pct(rng_desglose_balance, categoria)
     )
     periodificacion_activo_eur = periodificacion_activo_pct * balance_eur["realizable"]
@@ -1189,8 +1225,8 @@ def generar_empresa_base(
     rng_desglose_balance_lote2 = np.random.default_rng(
         [semilla, zlib.crc32(f"{sector}|{segmento}|desglose_balance_lote2".encode("utf-8"))]
     )
-    perfil_deudores = generar_perfil_deudores(rng_desglose_balance_lote2)
-    perfil_acreedores = generar_perfil_acreedores(rng_desglose_balance_lote2, categoria)
+    perfil_deudores, modos_deudores = generar_perfil_deudores(rng_desglose_balance_lote2)
+    perfil_acreedores, modos_acreedores = generar_perfil_acreedores(rng_desglose_balance_lote2, categoria)
     deudores_desglose_eur = {
         componente: fraccion * balance_eur["realizable"] for componente, fraccion in perfil_deudores.items()
     }
@@ -1206,7 +1242,9 @@ def generar_empresa_base(
     rng_desglose_balance_lote4 = np.random.default_rng(
         [semilla, zlib.crc32(f"{sector}|{segmento}|desglose_balance_lote4".encode("utf-8"))]
     )
-    deudas_fin_fraccion_total, deudas_fin_fraccion_largo = generar_perfil_deudas_fin(rng_desglose_balance_lote4, categoria)
+    deudas_fin_fraccion_total, deudas_fin_fraccion_largo, modos_deudas_fin_total, modos_deudas_fin_largo = (
+        generar_perfil_deudas_fin(rng_desglose_balance_lote4, categoria)
+    )
     deudas_fin_largo_desglose_eur, deudas_fin_corto_desglose_eur = calcular_desglose_deudas_fin(
         deudas_fin_fraccion_total, deudas_fin_fraccion_largo,
         balance_eur["deudas_fin_largo"], balance_eur["deudas_fin_corto"], derivados_pasivo_largo_eur=0.0,
@@ -1215,12 +1253,34 @@ def generar_empresa_base(
     parcial_pyg = _generar_pyg_hasta_baii(rng, fila, ventas_objetivo, _AÑO_BASE_AMORTIZACION, amortizaciones_eur=amortizacion_eur_2023)
     pyg_pct, pyg_eur = _completar_pyg_con_deuda(parcial_pyg, deuda_financiera_eur)
 
-    modos = {**modos_balance, "rotacion_activo": modo_rotacion, **parcial_pyg.modos}
+    # Hallazgo de auditoría de trazabilidad (sección 2.15/resumen de particularidades): los
+    # perfiles "sorteados una vez por caso, fijos desde 2023" de los lotes de desglose de balance
+    # (existencias, deudores/acreedores, deudas financieras) descartaban el modo típico/atípico de
+    # cada componente con `_generar_partida(...) -> valor, _`, a diferencia de las masas de nivel
+    # superior (`modos_balance`, diseño original) y de las primitivas de PyG (`parcial_pyg.modos`)
+    # — inconsistencia corregida en origen, mismo namespace de claves con prefijo por lote.
+    # `activo_no_corriente`/periodificaciones/capital_social (decisiones #24-25, ANTERIORES a los
+    # lotes) tenían el MISMO problema — corregido igual, ver docstring de `_generar_capital_social`.
+    modos = {
+        **modos_balance,
+        "rotacion_activo": modo_rotacion,
+        **parcial_pyg.modos,
+        **{f"activo_no_corriente.{componente}": modo for componente, modo in modos_activo_no_corriente.items()},
+        "periodificacion_activo": modo_periodificacion_activo,
+        "periodificacion_pasivo_corto": modo_periodificacion_pasivo_corto,
+        "periodificacion_pasivo_largo": modo_periodificacion_pasivo_largo,
+        **{f"existencias.{componente}": modo for componente, modo in modos_existencias.items()},
+        **{f"deudores.{componente}": modo for componente, modo in modos_deudores.items()},
+        **{f"acreedores.{componente}": modo for componente, modo in modos_acreedores.items()},
+        **{f"deudas_fin_fraccion_total.{tipo}": modo for tipo, modo in modos_deudas_fin_total.items()},
+        **{f"deudas_fin_fraccion_largo.{tipo}": modo for tipo, modo in modos_deudas_fin_largo.items()},
+    }
 
     # Desagregación de PN (ver docstrings de las constantes arriba) — sorteo AÑADIDO AL FINAL de
     # la secuencia de rng ya existente, después de todo lo demás: no desplaza ningún sorteo
     # anterior, así que no cambia ningún valor de balance/PyG previo a este punto.
-    capital_social_eur = _generar_capital_social(rng, balance_eur["patrimonio_neto"])
+    capital_social_eur, modo_capital_social = _generar_capital_social(rng, balance_eur["patrimonio_neto"])
+    modos["capital_social"] = modo_capital_social
     reservas_eur = balance_eur["patrimonio_neto"] - capital_social_eur - pyg_eur["resultado_ejercicio"]
 
     return EmpresaBase(

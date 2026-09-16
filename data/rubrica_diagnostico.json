@@ -1,0 +1,190 @@
+{
+  "version": 1,
+  "comentario": "Rúbrica de puntuación de la ficha de diagnóstico (sección 2.19 de la especificación) — estructura HECHO → CÁLCULO → HIPÓTESIS → EVIDENCIA NECESARIA → IMPACTO → PRIORIDAD → RECOMENDACIÓN (sección 2.10). Diseño GENÉRICO, aplicable a cualquier caso — no hay una rúbrica distinta por arquetipo: lo que conecta cada corrección con el arquetipo concreto del caso es la sección HIPÓTESIS (ver 'conexion_conclusion_esperada' más abajo), que remite a docs/guia_docente_arquetipos.md en vez de repetir 22 rúbricas casi idénticas. Contenido estructurado — no código de generación, no toca el motor de cálculo.",
+  "puntuacion_total": 100,
+  "secciones": [
+    {
+      "id": "hecho",
+      "nombre": "HECHO",
+      "orden": 1,
+      "puntos_maximos": 10,
+      "descripcion": "Identificación objetiva y verificable de lo que se observa en los estados financieros — sin interpretación todavía. Debe ser un dato o una comparación directa (p. ej. 'el disponible baja un 40% entre 2023 y 2025 mientras las ventas suben un 25%'), no una conclusión ni una opinión.",
+      "niveles": [
+        {
+          "nivel": "completo",
+          "fraccion_puntos": 1.0,
+          "descripcion": "Cita el/los dato(s) concretos (partida, año, magnitud o variación %) que sustentan la observación, sin mezclar todavía ningún juicio de valor ni causa probable."
+        },
+        {
+          "nivel": "parcial",
+          "fraccion_puntos": 0.5,
+          "descripcion": "Identifica la partida o fenómeno correcto pero de forma vaga (sin cifra, sin año, o solo 'algo ha bajado/subido') — o mezcla ya una interpretación con el hecho, sin separarlas."
+        },
+        {
+          "nivel": "insuficiente",
+          "fraccion_puntos": 0.0,
+          "descripcion": "No identifica el hecho relevante del caso, identifica un hecho irrelevante, o el dato citado no es correcto (revisar contra los estados financieros del caso)."
+        }
+      ]
+    },
+    {
+      "id": "calculo",
+      "nombre": "CÁLCULO",
+      "orden": 2,
+      "puntos_maximos": 15,
+      "descripcion": "Ratio(s) o magnitud(es) derivadas que cuantifican el hecho — es la sección más objetiva y verificable de toda la ficha (hay un número correcto), así que su peso relativo premia la precisión técnica, no la originalidad.",
+      "niveles": [
+        {
+          "nivel": "completo",
+          "fraccion_puntos": 1.0,
+          "descripcion": "El ratio/cálculo es el adecuado para el hecho señalado, está bien ejecutado (fórmula correcta, magnitudes del año correcto) y se contrasta contra al menos una referencia (año anterior de la propia empresa, o el dato sectorial del catálogo — sección 2.21)."
+        },
+        {
+          "nivel": "parcial",
+          "fraccion_puntos": 0.6,
+          "descripcion": "El ratio/cálculo es correcto en sí mismo pero no se contrasta contra ninguna referencia (queda como un número aislado, sin decir si es alto, bajo o normal), o se usa un ratio subóptimo para el hecho (dice algo relacionado pero no lo más directo)."
+        },
+        {
+          "nivel": "insuficiente",
+          "fraccion_puntos": 0.0,
+          "descripcion": "El cálculo tiene un error aritmético o de fórmula, usa el año o la magnitud incorrecta, o no hay ningún cálculo que sustente el hecho señalado."
+        }
+      ]
+    },
+    {
+      "id": "hipotesis",
+      "nombre": "HIPÓTESIS",
+      "orden": 3,
+      "puntos_maximos": 25,
+      "descripcion": "La explicación económica de fondo — qué está pasando realmente en la empresa y por qué. Es la sección de MAYOR peso (identifica la capacidad de diagnóstico real, no solo de cálculo) y la única que se conecta directamente con la 'Conclusión esperada' del arquetipo activo en el caso — ver 'conexion_conclusion_esperada' más abajo para el criterio exacto de esa conexión.",
+      "niveles": [
+        {
+          "nivel": "completo",
+          "fraccion_puntos": 1.0,
+          "descripcion": "La hipótesis converge, en su idea económica central, con la 'Conclusión esperada' del arquetipo activo (no se exige literalidad de redacción) — y, si el caso combina varios arquetipos (sección 2.12), la hipótesis los relaciona entre sí en vez de tratarlos como fenómenos independientes cuando de hecho interactúan (p. ej. más deuda → más gasto financiero → menos caja generada → más presión sobre NOF)."
+        },
+        {
+          "nivel": "parcial",
+          "fraccion_puntos": 0.5,
+          "descripcion": "La hipótesis apunta en la dirección correcta (identifica el síntoma real) pero se queda en una explicación superficial o incompleta — no llega a la causa de fondo que describe la 'Conclusión esperada', o (en un caso combinado) solo cubre uno de los arquetipos activos sin mencionar los demás."
+        },
+        {
+          "nivel": "insuficiente",
+          "fraccion_puntos": 0.0,
+          "descripcion": "La hipótesis contradice la 'Conclusión esperada' del arquetipo, describe un fenómeno distinto al que realmente ocurre en el caso, o repite el HECHO/CÁLCULO sin aportar ninguna explicación causal nueva. Incluye el error habitual documentado en la guía docente para ese arquetipo, si coincide (ver 'error_habitual_como_penalizacion' más abajo)."
+        }
+      ]
+    },
+    {
+      "id": "evidencia_necesaria",
+      "nombre": "EVIDENCIA NECESARIA",
+      "orden": 4,
+      "puntos_maximos": 10,
+      "descripcion": "Qué información ADICIONAL, no disponible en los estados generados, confirmaría o descartaría la hipótesis — mide la madurez de saber distinguir lo que el caso permite concluir con certeza de lo que solo permite sospechar.",
+      "niveles": [
+        {
+          "nivel": "completo",
+          "fraccion_puntos": 1.0,
+          "descripcion": "Propone evidencia concreta y pertinente (p. ej. 'desglose de clientes por antigüedad de saldo', 'detalle de la política de provisión de existencias', 'contrato del arrendamiento financiero') que de verdad reduciría la incertidumbre de la hipótesis planteada — no una petición genérica ('más información')."
+        },
+        {
+          "nivel": "parcial",
+          "fraccion_puntos": 0.5,
+          "descripcion": "Propone evidencia relacionada con el tema pero genérica o de relevancia dudosa para confirmar específicamente la hipótesis de este caso."
+        },
+        {
+          "nivel": "insuficiente",
+          "fraccion_puntos": 0.0,
+          "descripcion": "No propone ninguna evidencia adicional, o la trata como si ya estuviera disponible en el caso (confundiendo esta sección con CÁLCULO)."
+        }
+      ]
+    },
+    {
+      "id": "impacto",
+      "nombre": "IMPACTO",
+      "orden": 5,
+      "puntos_maximos": 15,
+      "descripcion": "Consecuencia económica/financiera de que la hipótesis sea cierta — para el negocio, para su solvencia, o para la fiabilidad de los propios estados financieros.",
+      "niveles": [
+        {
+          "nivel": "completo",
+          "fraccion_puntos": 1.0,
+          "descripcion": "Cuantifica o acota razonablemente la magnitud del impacto (no solo 'es malo'), y distingue si afecta a la liquidez, a la solvencia, a la rentabilidad o a la fiabilidad del propio balance/PyG — la dimensión correcta según el arquetipo."
+        },
+        {
+          "nivel": "parcial",
+          "fraccion_puntos": 0.5,
+          "descripcion": "Identifica que hay un impacto negativo/positivo pero sin cuantificarlo ni acotar su magnitud, o identifica una dimensión de impacto plausible pero no la más directa para este arquetipo."
+        },
+        {
+          "nivel": "insuficiente",
+          "fraccion_puntos": 0.0,
+          "descripcion": "No hay valoración de impacto, o el impacto descrito no se deriva lógicamente de la hipótesis planteada."
+        }
+      ]
+    },
+    {
+      "id": "prioridad",
+      "nombre": "PRIORIDAD",
+      "orden": 6,
+      "puntos_maximos": 10,
+      "descripcion": "Urgencia relativa de este hallazgo frente a otros posibles del mismo caso — obliga a jerarquizar, no a tratar todos los hallazgos como igual de graves.",
+      "niveles": [
+        {
+          "nivel": "completo",
+          "fraccion_puntos": 1.0,
+          "descripcion": "Asigna una prioridad razonada (alta/media/baja, o escala equivalente) con un criterio explícito de por qué (p. ej. 'alta, porque compromete la capacidad de pago a corto plazo' frente a 'baja, porque es una reclasificación contable sin flujo de caja real')."
+        },
+        {
+          "nivel": "parcial",
+          "fraccion_puntos": 0.5,
+          "descripcion": "Asigna una prioridad pero sin justificar el criterio, o el criterio no es coherente con el IMPACTO ya descrito en la sección anterior."
+        },
+        {
+          "nivel": "insuficiente",
+          "fraccion_puntos": 0.0,
+          "descripcion": "No asigna ninguna prioridad, o la prioridad es manifiestamente incoherente con la gravedad real del hallazgo (p. ej. 'baja' para un riesgo de insolvencia inminente)."
+        }
+      ]
+    },
+    {
+      "id": "recomendacion",
+      "nombre": "RECOMENDACIÓN",
+      "orden": 7,
+      "puntos_maximos": 15,
+      "descripcion": "Acción concreta que se derivaría del diagnóstico — cierra el ciclo HECHO→...→RECOMENDACIÓN con algo accionable, no una repetición del diagnóstico en modo imperativo.",
+      "niveles": [
+        {
+          "nivel": "completo",
+          "fraccion_puntos": 1.0,
+          "descripcion": "La recomendación es específica del caso (no genérica tipo 'mejorar la gestión'), es coherente con la hipótesis y la prioridad ya asignadas, y distingue entre una acción de corto plazo (contener el síntoma) y una de fondo (corregir la causa), cuando ambas aplican."
+        },
+        {
+          "nivel": "parcial",
+          "fraccion_puntos": 0.5,
+          "descripcion": "La recomendación es coherente con el diagnóstico pero genérica o poco accionable ('vigilar la evolución', 'analizar con más detalle') sin concretar qué acción tomar."
+        },
+        {
+          "nivel": "insuficiente",
+          "fraccion_puntos": 0.0,
+          "descripcion": "No hay recomendación, o la recomendación no se deriva de la hipótesis/impacto/prioridad ya planteados en las secciones anteriores."
+        }
+      ]
+    }
+  ],
+  "conexion_conclusion_esperada": {
+    "fuente": "docs/guia_docente_arquetipos.md",
+    "campo_origen": "Conclusión esperada",
+    "clave_de_busqueda": "arquetipo activo del caso (arquetipo_id o número, sección 2.24) — en un caso combinado (sección 2.12), hay una 'Conclusión esperada' por cada arquetipo cuantitativo activo, y la sección HIPÓTESIS debe cubrir la combinación, no solo una de ellas (ver criterio 'completo' de la sección hipotesis arriba)",
+    "criterio": "La sección HIPÓTESIS del alumno se evalúa por CONVERGENCIA de fondo con la 'Conclusión esperada' del arquetipo (o arquetipos) activo del caso, nunca por coincidencia literal de redacción — el corrector (formador, o en el futuro un asistente automático) resuelve el arquetipo del caso a partir de sus metadatos de trazabilidad (sección 2.15: campo `arquetipo`/`intensidad` de `EvolucionArquetipo`, ver motor/evolucion_arquetipo.py) y contrasta la hipótesis del alumno contra ESA ficha concreta, no contra las 22 en conjunto."
+  },
+  "error_habitual_como_penalizacion": {
+    "campo_origen": "Error habitual a evitar",
+    "criterio": "Si la HIPÓTESIS del alumno reproduce literalmente el 'Error habitual a evitar' documentado en la ficha del arquetipo activo (p. ej. confundir resultado con caja en el arquetipo 2), se puntúa como 'insuficiente' en HIPÓTESIS con independencia de que el resto de la sección esté bien redactado — es precisamente el error que la ficha docente identifica como el que hay que erradicar, no un matiz menor."
+  },
+  "notas_de_aplicacion": [
+    "Un caso puede exigir más de una ficha de diagnóstico completa (una por cada 'particularidad' relevante detectada — ver motor/resumen_caso.py, sección 2.9/ficha de solución) — la puntuación de cada ficha se calcula de forma independiente con esta misma rúbrica; la nota final del ejercicio es una decisión pedagógica del formador (media, suma con tope, ponderación por prioridad de la propia ficha...), fuera del alcance de este documento.",
+    "Los `fraccion_puntos` se multiplican por `puntos_maximos` de la sección para obtener la puntuación de esa sección; la suma de las 7 secciones en su nivel 'completo' da exactamente `puntuacion_total` (100).",
+    "Diseño deliberadamente sin niveles intermedios adicionales (p. ej. 0,75): 3 niveles por sección (completo/parcial/insuficiente) mantienen la corrección rápida y consistente entre correctores distintos — más granularidad introduce subjetividad sin mejorar la fiabilidad de la nota."
+  ]
+}

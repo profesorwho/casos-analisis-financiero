@@ -22,6 +22,7 @@ from motor.memoria import (
     SUELO_NOCIONAL_COBERTURA_EUR,
     _NOTAS_COMODIN,
     _OPERACIONES_VINCULADAS,
+    generar_caso_combinado,
     generar_nota_activo_mantenido_venta,
     generar_nota_coberturas,
     generar_nota_dependencia_clientes,
@@ -282,3 +283,46 @@ def test_despachador_lanza_key_error_para_id_desconocido(catalogo, arquetipos):
     ejercicio = _ejercicio(catalogo, arquetipos, "24.1", "fuerte", 0)
     with pytest.raises(KeyError):
         generar_nota_memoria_pura("no_existe", "24.1", "grandes_medianas", "fuerte", 0, ejercicio)
+
+
+# --------------------------------------------------------------------------------------------
+# Trazabilidad (sección 2.15) — hallazgo de auditoría (Ronda 1, Fase 4, ver motor/resumen_
+# caso.py): `EvolucionArquetipo.arquetipo`/`.intensidad` solo reflejaban los arquetipos
+# `cuantitativo` — un caso combinado con algún arquetipo `memoria_pura` activo (7/19/22) dejaba
+# esos 2 campos incompletos como registro de "qué arquetipos están activos en el caso".
+# --------------------------------------------------------------------------------------------
+
+
+def test_arquetipo_e_intensidad_incluyen_los_arquetipos_de_memoria_pura(catalogo, arquetipos):
+    caso = generar_caso_combinado(
+        "24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, 5,
+        {"aumento_clientes": "fuerte", "dependencia_pocos_clientes": "moderado"},
+        catalogo=catalogo, arquetipos=arquetipos,
+    )
+    assert caso.arquetipo == "aumento_clientes+dependencia_pocos_clientes"
+    assert caso.intensidad == "aumento_clientes:fuerte+dependencia_pocos_clientes:moderado"
+
+
+def test_arquetipo_e_intensidad_sin_memoria_pura_no_cambian(catalogo, arquetipos):
+    # Ningún arquetipo de memoria pura activo: los campos deben coincidir EXACTO con lo que ya
+    # devolvía generar_evolucion_combinada antes de esta corrección (0 casos existentes cambian).
+    caso = generar_caso_combinado(
+        "24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, 5,
+        {"aumento_clientes": "fuerte"}, catalogo=catalogo, arquetipos=arquetipos,
+    )
+    assert caso.arquetipo == "aumento_clientes"
+    assert caso.intensidad == "fuerte"
+
+
+def test_arquetipo_e_intensidad_con_tres_arquetipos_incluido_uno_de_memoria_pura(catalogo, arquetipos):
+    caso = generar_caso_combinado(
+        "24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, 5,
+        {"aumento_clientes": "fuerte", "mejora_margen": "leve", "informacion_relevante_memoria": "moderado"},
+        catalogo=catalogo, arquetipos=arquetipos,
+    )
+    ids_ordenados = sorted(["aumento_clientes", "mejora_margen", "informacion_relevante_memoria"])
+    assert caso.arquetipo == "+".join(ids_ordenados)
+    partes_intensidad = dict(par.split(":", 1) for par in caso.intensidad.split("+"))
+    assert partes_intensidad == {
+        "aumento_clientes": "fuerte", "mejora_margen": "leve", "informacion_relevante_memoria": "moderado",
+    }

@@ -186,3 +186,31 @@ def test_cada_sector_de_categoria_sector_tiene_tier_de_existencias_asignado():
     # TIER_EXISTENCIAS_POR_SECTOR se define por sector, no por categoría — confirma que cubre
     # exactamente los mismos 27 sectores que CATEGORIA_SECTOR, ni de más ni de menos.
     assert set(TIER_EXISTENCIAS_POR_SECTOR) == set(CATEGORIA_SECTOR)
+
+
+def test_generar_perfil_existencias_expone_el_modo_de_cada_componente(catalogo):
+    """Hallazgo de auditoría de trazabilidad (Ronda 1, Fase 4): el modo típico/atípico de cada
+    sub-partida de existencias se descartaba con `_generar_partida(...) -> valor, _`, a
+    diferencia de las masas de nivel superior (diseño original, `_generar_balance_pct`) — ver
+    motor/resumen_caso.py. Corregido: `generar_perfil_existencias` ahora también devuelve el
+    modo, y `generar_empresa_base` lo pliega en `EmpresaBase.modos` con prefijo `existencias.`."""
+    import numpy as np
+
+    from motor.empresa_base import generar_perfil_existencias
+
+    perfil, modos = generar_perfil_existencias(np.random.default_rng(1), "24.1")
+    assert set(perfil) == set(modos)
+    assert set(modos.values()) <= {"tipico", "atipico"}
+
+    empresa = generar_empresa_base("24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=1, catalogo=catalogo)
+    claves_existencias = {k for k in empresa.modos if k.startswith("existencias.")}
+    assert claves_existencias == {f"existencias.{componente}" for componente in empresa.existencias_perfil_pct}
+
+    # Verificación empírica (no solo la forma del dato): en un barrido amplio, ALGÚN componente
+    # de ALGÚN caso sale atípico — si nunca ocurriera, el modo estaría expuesto pero siempre
+    # "tipico" por algún error de fontanería (p. ej. semilla mal propagada al perfil).
+    vistos_atipico = 0
+    for semilla in range(30):
+        e = generar_empresa_base("24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=semilla, catalogo=catalogo)
+        vistos_atipico += sum(1 for k, v in e.modos.items() if k.startswith("existencias.") and v == "atipico")
+    assert vistos_atipico > 0

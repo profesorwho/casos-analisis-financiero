@@ -447,3 +447,23 @@ def test_mismo_sector_y_semilla_comparte_crecimiento_pleno_objetivo_entre_intens
                 for intensidad in ("leve", "moderado", "fuerte")
             }
             assert len(valores) == 1, f"sector {sector}, semilla {semilla}: crecimiento_pleno_objetivo varía con la intensidad"
+
+
+def test_roe_caso_expone_su_modo_tipico_atipico(catalogo, arquetipos):
+    # Hallazgo de auditoría de trazabilidad (Ronda 1, Fase 4, ver motor/resumen_caso.py):
+    # ROE_caso (payout de dividendos, #79-#80) sortea con el mismo mecanismo Huber/MAD que
+    # `rotacion_activo`, pero descartaba su modo con `_generar_partida(...) -> valor, _` — a
+    # diferencia de `rotacion_activo`, que ya lo exponía. Corregido: se pliega en
+    # `ejercicios[2023].modos["caso.roe"]`, mismo "cajón" que `rotacion_activo` (rasgo
+    # estructural sorteado una vez por caso, no por año).
+    vistos_atipico = 0
+    for semilla in range(20):
+        evolucion = generar_evolucion_arquetipo(
+            "24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=semilla, intensidad="fuerte",
+            arquetipo_id="exceso_stock", catalogo=catalogo, arquetipos=arquetipos,
+        )
+        modo = evolucion.ejercicios[2023].modos.get("caso.roe")
+        assert modo in ("tipico", "atipico"), f"semilla {semilla}: caso.roe ausente o inválido ({modo!r})"
+        if modo == "atipico":
+            vistos_atipico += 1
+    assert vistos_atipico > 0, "ningún caso.roe atípico en 20 semillas — ampliar el barrido"

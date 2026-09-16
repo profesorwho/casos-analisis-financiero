@@ -431,3 +431,41 @@ def test_combo_e_sigue_cuadrando_con_el_derivado_reubicado(catalogo, arquetipos)
             ecpn = generar_ecpn(caso.ejercicios[año - 1], caso.ejercicios[año], obligatorio=True)
             assert efe.cuadra and ecpn.cuadra, f"semilla={semilla} año={año}"
     assert comprobados > 0, "ninguna semilla combinó Combo E con un swap distinto de cero — ampliar el barrido"
+
+
+# --------------------------------------------------------------------------------------------
+# Hallazgo de auditoría de trazabilidad (Ronda 1, Fase 4, ver motor/resumen_caso.py): el modo
+# típico/atípico de cada componente del perfil de deudas financieras se descartaba con
+# `_generar_partida(...) -> valor, _`, a diferencia de las masas de nivel superior (diseño
+# original). Corregido.
+# --------------------------------------------------------------------------------------------
+
+
+def test_generar_perfil_deudas_fin_expone_el_modo_de_cada_componente(catalogo):
+    import numpy as np
+
+    from motor.empresa_base import generar_perfil_deudas_fin
+
+    fraccion_total, fraccion_largo, modos_total, modos_largo = generar_perfil_deudas_fin(
+        np.random.default_rng(1), "industria"
+    )
+    assert set(fraccion_total) == set(modos_total)
+    assert set(fraccion_largo) == set(modos_largo)
+    assert set(modos_total.values()) <= {"tipico", "atipico"}
+    assert set(modos_largo.values()) <= {"tipico", "atipico"}
+
+    empresa = generar_empresa_base("24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=1, catalogo=catalogo)
+    assert {k for k in empresa.modos if k.startswith("deudas_fin_fraccion_total.")} == {
+        f"deudas_fin_fraccion_total.{tipo}" for tipo in empresa.deudas_fin_fraccion_total
+    }
+    assert {k for k in empresa.modos if k.startswith("deudas_fin_fraccion_largo.")} == {
+        f"deudas_fin_fraccion_largo.{tipo}" for tipo in empresa.deudas_fin_fraccion_largo
+    }
+
+    vistos_atipico = 0
+    for semilla in range(30):
+        e = generar_empresa_base("24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=semilla, catalogo=catalogo)
+        vistos_atipico += sum(
+            1 for k, v in e.modos.items() if k.startswith("deudas_fin_fraccion") and v == "atipico"
+        )
+    assert vistos_atipico > 0

@@ -29,6 +29,9 @@ Especificación funcional completa: `docs/especificaciones_proyecto_casos_balanc
 | `ecpn.py` | Estado de Cambios en el Patrimonio Neto — Documento B ("Estado total de cambios en el patrimonio neto") Y Documento A ("Estado de ingresos y gastos reconocidos", EIGR, ya NO aparcado desde el encargo de coberturas/subvenciones — ver sección "Coberturas y subvenciones" abajo) del modelo NORMAL del PGC. Capa de cálculo pura sobre `EjercicioEmpresa`. | `generar_ecpn(anterior, actual, obligatorio: bool) -> EstadoCambiosPatrimonioNeto` (Documento B, con propiedad `.cuadra`); `generar_eigr(actual, obligatorio: bool) -> EstadoIngresosGastosReconocidos` (Documento A — fotografía de UN ejercicio, no de dos) | Igual que `efe.py` — ninguno de generación. |
 | `provisiones.py` | Provisiones a largo/corto plazo (subgrupo 14 del PGC + 4994/4999) — tercer lote de desglose de balance, probabilidad de fondo INDEPENDIENTE de cualquier arquetipo (mismo patrón que la subvención de fondo). Ver sección "Provisiones a largo/corto plazo" abajo para el diseño completo. **No confundir con el arquetipo 22** (contingencia, puramente textual, sin tocar balance — sin cambios en este lote). | `sortear_provision_baseline(sector, segmento, semilla, categoria_sector, tier_existencias_sector) -> ParametrosProvision` (sorteo único por caso: activa/categoría/naturaleza PyG/año de dotación/plazo); `sortear_importe_provision_eur(...)`; `evolucionar_provision(parametros, importe_dotado_eur, saldo_anterior_eur, año) -> PasoProvision` (paso anual, llamado desde `_evolucionar_un_año`) | `evolucion_arquetipo.py` (balance/PyG, todos los años) — `efe.py` NO necesita ningún cambio (ver sección abajo, la dotación/exceso se reconcilia con las líneas A.3.e/f ya existentes). |
 | `insolvencias.py` | Deterioro de valor de créditos por operaciones comerciales (cuenta 490 del PGC) — DETERIORO DE ACTIVO (resta de "Clientes"/`realizable`, no añade pasivo — a diferencia de `provisiones.py`). Probabilidad de fondo INDEPENDIENTE de cualquier arquetipo, anclada a `ratios.cobro_dias`, con boost si el arquetipo 4 o el 7 están activos. Ver sección "Deterioro de valor de créditos por operaciones comerciales" abajo para el diseño completo. | `factor_riesgo_cobro_dias(cobro_dias_huber) -> float`; `probabilidad_insolvencia(cobro_dias_huber, deterioro_ciclo_caja_activo, dependencia_clientes_activo) -> float`; `sortear_insolvencia_baseline(sector, segmento, semilla, cobro_dias_huber, deterioro_ciclo_caja_activo, dependencia_clientes_activo) -> ParametrosInsolvencia` (sorteo único por caso); `sortear_importe_insolvencia_eur(...)`; `evolucionar_insolvencia(parametros, importe_dotado_eur, saldo_anterior_eur, exceso_acumulado_anterior_eur, año) -> PasoInsolvencia` (paso anual, llamado desde `_evolucionar_un_año`) | `evolucion_arquetipo.py` (balance/PyG, todos los años; resta de `realizable_eur` SOLO dentro de `_evaluar`, nunca antes de `_deficit_y_deuda_corto`) y `memoria.py` (`generar_caso_combinado` detecta el arquetipo 7 y lo pasa como booleano) — `efe.py` NO necesita ningún cambio (ver sección abajo, `a3b_deudores` ya existente la reconcilia). |
+| `resumen_caso.py` | Resumen consolidado de particularidades de un caso YA generado (sección 2.15/2.9) — capa de AGREGACIÓN pura, NO genera ni corrige ningún dato. Ver sección "Resumen consolidado de particularidades del caso" abajo. | `resumen_particularidades_caso(evolucion: EvolucionArquetipo) -> ResumenParticularidadesCaso` | Nada de generación — solo lee `EvolucionArquetipo`/`EjercicioEmpresa` ya generados. |
+| `rubrica_diagnostico.py` | Carga y valida `data/rubrica_diagnostico.json` (sección 2.19) como dataclasses tipadas — mismo patrón que `motor.arquetipos`, sin lógica de generación ni de cálculo. | `cargar_rubrica_diagnostico(ruta=...) -> RubricaDiagnostico` | Nada del motor — contenido estructurado puro. |
+| `similitud_casos.py` | Función de comparación entre dos casos ya generados (sección 2.20, pieza PARCIAL — sin aplicarla todavía sobre ningún repositorio, que es Fase 5). Ver sección "Función de similitud entre casos" abajo. | `similitud_entre_casos(caso_a, caso_b, catalogo=None) -> SimilitudCasos` | Nada de generación — capa de cálculo pura sobre dos `EvolucionArquetipo` ya generados + el catálogo (para normalizar el perfil numérico). |
 
 ## Mecanismos reutilizables ya construidos (en `evolucion_arquetipo.py`, salvo que se indique)
 
@@ -878,6 +881,148 @@ arquetipo concreto activo quedaba comprobado. Ver decisiones #70-73.
   estructural de #18— a 3,2%, ya dentro de rango, sin tocar la escala). Ninguno se acerca a
   saturar en "fuerte". No se tocó ninguna constante de intensidad. Ver
   `docs/decisiones_plausibilidad.md` #85.
+
+## Trazabilidad, resumen de particularidades, rúbrica de diagnóstico y similitud entre casos — Fase 4, Ronda 1 (`motor/resumen_caso.py`, `motor/rubrica_diagnostico.py`, `motor/similitud_casos.py`)
+
+Primera ronda de piezas de la Fase 4 que NO tocan la generación de casos ni el manejo de
+semillas — auditoría, contenido estructurado y una función de comparación. La Ronda 2 (nombres
+ficticios + variantes de examen, secciones 2.16/2.17) queda para más adelante.
+
+### Auditoría de trazabilidad (sección 2.15) — Parte A: los 5 campos exigidos
+
+Confirmados presentes y poblados en cualquier caso (`EvolucionArquetipo.arquetipo`/`.intensidad`/
+`.semilla`/`.catalogo_version`/`.pgc_version`) — con UN hallazgo real, corregido:
+`arquetipo`/`.intensidad` solo reflejaban los arquetipos `clase="cuantitativo"` (así los calcula
+`generar_evolucion_combinada`, que no conoce la clase `memoria_pura` en absoluto) — un caso
+combinado con algún arquetipo de memoria pura activo (7/19/22) dejaba esos 2 campos
+INCOMPLETOS como registro de "qué arquetipos están activos en el caso" (p. ej. un caso con 6+7
+solo mostraba "aumento_clientes", perdiendo el 7). **Corregido en `motor.memoria.generar_caso_
+combinado`** (el único punto que conoce ambas clases a la vez): recalcula ambos campos sobre el
+diccionario COMPLETO de arquetipos activos cuando hay alguno de memoria pura, con el MISMO
+formato ya establecido para combinaciones ("id1+id2", "id1:intensidad1+id2:intensidad2", orden
+alfabético de id). Si no hay ningún arquetipo de memoria pura activo, los campos quedan
+EXACTAMENTE igual que antes (0 casos ya existentes cambian, verificado en la regresión completa).
+
+### Auditoría del modo típico/atípico — Parte B, hallazgo real (no solo ausencia de agregación)
+
+Pedido explícitamente: comprobar si el modo típico/atípico por partida se mantuvo expuesto de
+forma consistente en TODOS los mecanismos añadidos después del diseño original (existencias,
+deudores/acreedores, provisiones, deudas financieras, insolvencias, payout). **Resultado: SÍ
+faltaba en varios sitios — corregido en origen (no es un rediseño, es exponer un dato ya
+calculado internamente en cada sorteo).**
+
+- **Con el problema, corregido — 8 sitios en total**: los perfiles de los lotes de desglose de
+  balance (`generar_perfil_existencias`/`generar_perfil_deudores`/`generar_perfil_acreedores`/
+  `generar_perfil_deudas_fin`, todos en `motor/empresa_base.py`) descartaban el modo de cada
+  componente con `_generar_partida(...) -> valor, _` — a diferencia de las masas de nivel
+  superior (diseño original, `_generar_balance_pct`) y de las primitivas de PyG, que sí lo
+  exponían en `modos` desde siempre. Ahora las 4 funciones devuelven también el modo por
+  componente, plegado en `EmpresaBase.modos` con prefijo por lote (`existencias.<componente>`,
+  `deudores.<componente>`, `acreedores.<componente>`, `deudas_fin_fraccion_total.<tipo>`,
+  `deudas_fin_fraccion_largo.<tipo>`). `ROE_caso` (payout de dividendos, #79-80) descartaba su
+  modo pese a sortear con el mismo mecanismo Huber/MAD que `rotacion_activo` (que sí lo
+  exponía) — corregido, expuesto en `ejercicios[AÑO_BASE].modos["caso.roe"]`, mismo "cajón" que
+  `rotacion_activo` (rasgos de caso sorteados una vez, no por año). **Encontrados de paso y
+  corregidos también** (mismo patrón exacto, pero ANTERIORES a los "lotes" — decisiones #24-25,
+  antes del primer lote de desglose de balance, pedido explícitamente completar tras el hallazgo
+  inicial): `generar_perfil_activo_no_corriente` (prefijo `activo_no_corriente.<componente>`),
+  `generar_periodificaciones_pct` (claves planas `periodificacion_activo`/`..._pasivo_corto`/
+  `..._pasivo_largo` — 3 escalares, no un dict de componentes) y `_generar_capital_social` (clave
+  plana `capital_social`) — las 3 en `motor/empresa_base.py`, mismo namespace de `EmpresaBase.
+  modos` que el resto.
+- **Sin el problema, verificado y documentado por qué NO aplica** — provisiones, insolvencias y
+  la subvención de fondo (`motor/provisiones.py`, `motor/insolvencias.py`,
+  `motor/coberturas_subvenciones.py`) sortean con `rng.uniform`/`rng.choice` DIRECTOS, sin pasar
+  nunca por `_generar_partida` — no hay ancla de catálogo Huber/MAD detrás de esos importes (ver
+  sus propios docstrings, "sin dato de catálogo que lo ancle"), así que el concepto "modo
+  típico/atípico" no existe para ellos, no es una ausencia que corregir.
+- **Verificado empíricamente, no solo por la forma del dato**: barridos de 30 semillas por cada
+  corrección confirman que SÍ aparecen atípicos reales (no quedó expuesto pero siempre en
+  `"tipico"` por algún fallo de fontanería de la semilla) — ver los tests dedicados en
+  `tests/test_desglose_existencias_periodificaciones.py`, `tests/test_desglose_deudores_
+  acreedores_grupo.py`, `tests/test_desglose_deudas_financieras.py`, `tests/test_evolucion_
+  arquetipo.py::test_roe_caso_expone_su_modo_tipico_atipico`, `tests/test_desagregacion_pn_y_
+  activo.py` (los 3 sitios encontrados de paso) — y que `motor/resumen_caso.py` los recoge
+  correctamente con `año=None` (`tests/test_resumen_caso.py::test_atipicos_de_activo_no_
+  corriente_periodificaciones_y_capital_social_llegan_al_resumen`).
+
+### Resumen consolidado de particularidades del caso (`motor/resumen_caso.py`)
+
+Objeto único por caso (`resumen_particularidades_caso(evolucion) -> ResumenParticularidadesCaso`)
+que consolida TODO lo de arriba en un solo sitio, para que el formador no tenga que saber dónde
+busca cada dato por separado — capa de AGREGACIÓN pura, no rediseña nada de lo ya construido.
+
+- **Atípicos** (`ItemModoAtipico`, tupla `(partida, año)`) — solo las entradas `modo=="atipico"`
+  de `EjercicioEmpresa.modos` de los 3 años, NUNCA las forzadas por arquetipo (`"arquetipo"`) ni
+  las derivadas (`"derivado"`, amortización): esas ya son visibles a través del propio arquetipo
+  activo o del cálculo derivado, listarlas aquí sería ruido. `año=None` para los rasgos "fijos
+  desde 2023" (masas de balance de nivel superior, los perfiles de los 4 lotes, `rotacion_
+  activo`, `caso.roe`) — etiquetarlos con un año concreto sugeriría un fenómeno de ESE año,
+  cuando describen a la empresa entera; `año=<el año>` solo para las primitivas de PyG (`pyg.*`,
+  prefijo usado para distinguir ambos casos), que SÍ se vuelven a sortear cada ejercicio.
+- **Señales de riesgo** (`SeñalRiesgoCaso`) — únicamente los 2 tipos "padre" auditados
+  explícitamente (`riesgo_endeudamiento`, `riesgo_plausibilidad_pyg`): `contencion_al_limite`/
+  `pyg_contencion_al_limite` NUNCA aparecen sin su señal padre (verificado en el propio código de
+  `_evolucionar_un_año`/`_evaluar_plausibilidad_caso`, no asumido) — se representan como contexto
+  (`detalle`) de la señal padre, no como señales independientes.
+- **Plausibilidad, notas de memoria, movimiento anual** — expuestos tal cual (`PlausibilidadCaso`
+  sin reprocesar; `notas_memoria` combina `EjercicioEmpresa.notas_memoria` por año +
+  `EvolucionArquetipo.notas_memoria_pura` case-level, ordenadas por año y número; movimiento de
+  provisión/insolvencia SOLO si el caso realmente tiene el mecanismo activo, filas 2024+2025 —
+  nunca 2023, nunca dotada ahí; bienes totalmente amortizados filtrados a "nuevos ese año", no
+  repetidos año tras año pese a que `bienes_totalmente_amortizados_en` es acumulativo).
+- **Base de datos para la futura ficha de solución del formador** (sección 2.9, NO construida en
+  este encargo): esa ficha necesitará exactamente esta consolidación — este módulo es la capa
+  que la alimentará cuando se construya, documentado explícitamente en su propio docstring.
+
+### Rúbrica de corrección del diagnóstico (sección 2.19, `data/rubrica_diagnostico.json` + `motor/rubrica_diagnostico.py`)
+
+Contenido estructurado — NO código de generación, no toca el motor de cálculo. Puntúa la ficha de
+diagnóstico ya existente (HECHO → CÁLCULO → HIPÓTESIS → EVIDENCIA NECESARIA → IMPACTO →
+PRIORIDAD → RECOMENDACIÓN, sección 2.10), diseño GENÉRICO (una única rúbrica, no 22 — la
+conexión con el arquetipo concreto de cada caso vive en la sección HIPÓTESIS, que remite a
+`docs/guia_docente_arquetipos.md` en vez de duplicar su contenido).
+
+- **100 puntos, 7 secciones, 3 niveles cada una** (completo/parcial/insuficiente — sin más
+  granularidad deliberadamente, para mantener la corrección rápida y consistente entre
+  correctores). Peso por sección: HECHO 10, CÁLCULO 15, HIPÓTESIS 25 (la de MAYOR peso — la que
+  de verdad mide capacidad de diagnóstico, no solo cálculo), EVIDENCIA NECESARIA 10, IMPACTO 15,
+  PRIORIDAD 10, RECOMENDACIÓN 15.
+- **Conexión con la "Conclusión esperada"** (campo ya presente en `guia_docente_arquetipos.md`
+  para cada uno de los 22 arquetipos): la sección HIPÓTESIS se evalúa por CONVERGENCIA de fondo
+  con la Conclusión esperada del arquetipo (o arquetipos, en un caso combinado) activo del caso —
+  nunca por coincidencia literal de redacción. El campo `conexion_conclusion_esperada` del JSON
+  documenta el criterio exacto; `error_habitual_como_penalizacion` conecta además con el campo
+  "Error habitual a evitar" de la misma guía (reproducirlo penaliza HIPÓTESIS a "insuficiente").
+- **`motor/rubrica_diagnostico.py`** solo carga y valida (mismo patrón que `motor.arquetipos`):
+  comprueba que están las 7 secciones exactas, en orden 1-7, sin duplicados, y que la suma de
+  `puntos_maximos` cuadra EXACTO con `puntuacion_total` — un error de diseño de la rúbrica que
+  debe detectarse al cargarla, no descubrirse corrigiendo exámenes.
+
+### Función de similitud entre casos (sección 2.20, pieza PARCIAL, `motor/similitud_casos.py`)
+
+Solo la función de comparación — **NO se aplica sobre ningún repositorio** (el repositorio de
+casos es Fase 5, no existe todavía); queda lista para cuando exista.
+
+- **4 dimensiones comparadas** (pedidas explícitamente: sector+combo de arquetipos+intensidad+
+  perfil numérico resultante): (1) sector/segmento, categórico (1.0 ambos coinciden, 0.5 solo
+  sector, 0.0 ninguno); (2) combinación de arquetipos activos, índice de Jaccard sobre el
+  conjunto de ids (AMBAS clases, gracias a la corrección de trazabilidad de arriba); (3)
+  intensidad, SOLO sobre los arquetipos en común (si no comparten ninguno, no es comparable,
+  0.0) — distancia normalizada leve/moderado/fuerte; (4) perfil numérico, los 23 `ratios.
+  RATIOS_PLAUSIBILIDAD_SEÑALIZABLES` del año 2025, normalizados como desviaciones respecto al
+  Huber del sector de CADA caso (`(valor−huber)/mad`) — válido incluso entre sectores DISTINTOS
+  (dos casos "igual de atípicos para su sector" salen numéricamente parecidos), mapeado a
+  similitud con `1/(1+distancia_cuadrática_media)`.
+- **Ponderación documentada**: sector/segmento 15%, arquetipos 30%, intensidad 15%, numérico 40%
+  — el perfil numérico pesa más porque es, en última instancia, lo que de verdad importaría para
+  el problema real de la sección 2.20 (copia entre alumnos con cifras casi idénticas); la
+  combinación de arquetipos pesa el doble que sector/intensidad por separado por ser la señal más
+  "de diseño" de que dos casos representan la MISMA situación didáctica.
+- **Verificado con ejemplos concretos** (no solo unitarios aislados): mismo caso consigo mismo →
+  1.0 exacto; mismo sector/arquetipo/intensidad, distinta semilla → puntuación alta pero
+  `similitud_numerica<1.0` (las cifras SÍ difieren entre semillas, correcto); sector/arquetipo
+  distintos → puntuación baja; función simétrica (`similitud(a,b) == similitud(b,a)`).
 
 ## Otros documentos de este índice
 

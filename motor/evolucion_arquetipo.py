@@ -2903,8 +2903,16 @@ def generar_evolucion_combinada(
     # criterio que el aviso de fiabilidad muestral del sector 30.3 en `coste_deuda`).
     huber_roe = fila["ratios.roe.huber_9y"]
     mad_roe = fila["ratios.roe.huber_scale_mad"]
-    roe_caso, _ = _generar_partida(rng_tendencia, huber_roe, mad_roe)
+    roe_caso, modo_roe_caso = _generar_partida(rng_tendencia, huber_roe, mad_roe)
     payout_caso = 0.0 if roe_caso <= 0 else min(max(1 - crecimiento_pleno_objetivo / roe_caso, 0.0), TECHO_PAYOUT_DIVIDENDOS)
+    # Hallazgo de auditoría de trazabilidad: el modo típico/atípico de ROE_caso (rasgo
+    # estructural del caso, sorteado una vez — mismo criterio que `rotacion_activo`) se
+    # descartaba con `_`. Se expone en `modos["caso.roe"]` del año base — mismo "cajón" donde ya
+    # vive `rotacion_activo` (otro rasgo de caso sorteado una vez, no por año) — para que
+    # `resumen_particularidades_caso` (motor/resumen_caso.py) no tenga que buscarlo aparte.
+    ejercicios[AÑO_BASE] = replace(
+        ejercicios[AÑO_BASE], modos={**ejercicios[AÑO_BASE].modos, "caso.roe": modo_roe_caso}
+    )
 
     # Año único del suceso puntual (arquetipo 12, "resultado extraordinario"): sorteado 50/50
     # entre 2024 y 2025 con rng_tendencia — mismo generador ya independiente por sector+segmento,

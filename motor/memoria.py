@@ -567,4 +567,22 @@ def generar_caso_combinado(
 
     notas_memoria_pura.sort(key=lambda n: n.numero)
 
-    return dataclasses.replace(evolucion, notas_memoria_pura=tuple(notas_memoria_pura))
+    # Trazabilidad (sección 2.15) — hallazgo de auditoría: `evolucion.arquetipo`/`.intensidad`
+    # solo reflejan `ids_cuantitativos` (así los calcula `generar_evolucion_combinada`, que no
+    # conoce la clase `memoria_pura` en absoluto) — para un caso combinado con algún arquetipo de
+    # memoria pura activo (7/19/22), esos 2 campos quedarían INCOMPLETOS como registro de "qué
+    # arquetipos están activos en el caso". Se recalculan aquí, con el MISMO formato ya
+    # establecido para combinaciones ("id1+id2", "id1:intensidad1+id2:intensidad2", orden
+    # alfabético de id — igual criterio que `generar_evolucion_combinada`), pero sobre el
+    # diccionario COMPLETO `arquetipos_intensidades` (ambas clases). Si no hay ningún arquetipo de
+    # memoria pura activo, los campos quedan EXACTAMENTE igual que ya los devolvía
+    # `generar_evolucion_combinada` (ningún caso ya existente cambia).
+    if ids_memoria_pura:
+        arquetipo_str = "+".join(sorted(arquetipos_intensidades))
+        intensidad_str = "+".join(f"{aid}:{arquetipos_intensidades[aid]}" for aid in sorted(arquetipos_intensidades))
+    else:
+        arquetipo_str, intensidad_str = evolucion.arquetipo, evolucion.intensidad
+
+    return dataclasses.replace(
+        evolucion, notas_memoria_pura=tuple(notas_memoria_pura), arquetipo=arquetipo_str, intensidad=intensidad_str
+    )

@@ -371,3 +371,40 @@ def test_magnitud_referencia_cubre_los_5_tipos():
 def test_componente_desglose_cubre_exactamente_los_3_tipos_comerciales_varios():
     esperados = {"facturacion_servicios_grupo", "arrendamiento_socio", "asistencia_tecnica_matriz"}
     assert set(COMPONENTE_DESGLOSE_POR_TIPO) == esperados
+
+
+# --------------------------------------------------------------------------------------------
+# Hallazgo de auditoría de trazabilidad (Ronda 1, Fase 4, ver motor/resumen_caso.py): el modo
+# típico/atípico de cada sub-partida de deudores/acreedores se descartaba con `_generar_partida(
+# ...) -> valor, _`, a diferencia de las masas de nivel superior (diseño original). Corregido.
+# --------------------------------------------------------------------------------------------
+
+
+def test_generar_perfil_deudores_y_acreedores_exponen_el_modo_de_cada_componente(catalogo):
+    import numpy as np
+
+    from motor.empresa_base import generar_perfil_acreedores, generar_perfil_deudores
+
+    perfil_deudores, modos_deudores = generar_perfil_deudores(np.random.default_rng(1))
+    assert set(perfil_deudores) == set(modos_deudores)
+    assert set(modos_deudores.values()) <= {"tipico", "atipico"}
+
+    perfil_acreedores, modos_acreedores = generar_perfil_acreedores(np.random.default_rng(1), "industria")
+    assert set(perfil_acreedores) == set(modos_acreedores)
+    assert set(modos_acreedores.values()) <= {"tipico", "atipico"}
+
+    empresa = generar_empresa_base("24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=1, catalogo=catalogo)
+    assert {k for k in empresa.modos if k.startswith("deudores.")} == {
+        f"deudores.{componente}" for componente in empresa.deudores_perfil_pct
+    }
+    assert {k for k in empresa.modos if k.startswith("acreedores.")} == {
+        f"acreedores.{componente}" for componente in empresa.acreedores_perfil_pct
+    }
+
+    vistos_atipico = 0
+    for semilla in range(30):
+        e = generar_empresa_base("24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=semilla, catalogo=catalogo)
+        vistos_atipico += sum(
+            1 for k, v in e.modos.items() if k.startswith(("deudores.", "acreedores.")) and v == "atipico"
+        )
+    assert vistos_atipico > 0
