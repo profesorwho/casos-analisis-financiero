@@ -531,7 +531,7 @@ from motor.insolvencias import (
     sortear_insolvencia_baseline,
 )
 from motor.empresa_base import _completar_pyg_con_deuda, _generar_pyg_hasta_baii  # reutiliza la cascada de PyG
-from motor.ruido import _generar_partida
+from motor.ruido import _generar_partida, activar_modo_generacion, desactivar_modo_generacion
 
 AÑOS = (2023, 2024, 2025)
 AÑO_BASE = 2023
@@ -1333,6 +1333,7 @@ class EvolucionArquetipo:
     # activos en el caso, si los hay — no van por año (no son de un ejercicio concreto), las genera y
     # resuelve motor.memoria.generar_caso_combinado, no este módulo (que no depende de motor.memoria).
     plausibilidad: PlausibilidadCaso | None = None  # pasada final de plausibilidad (sección 2.13) — ver ese bloque arriba
+    modo_generacion: str = "aleatorio"  # "tipico"|"atipico"|"aleatorio" — sección 2.15/2.16, ver motor.ruido
 
 
 def _endeudamiento(balance_eur: dict[str, float]) -> float:
@@ -2776,6 +2777,7 @@ def generar_evolucion_combinada(
     catalogo: pd.DataFrame | None = None,
     arquetipos: dict[str, DefinicionArquetipo] | None = None,
     dependencia_pocos_clientes_activo: bool = False,
+    modo_generacion: str = "aleatorio",
 ) -> EvolucionArquetipo:
     """Genera 3 ejercicios combinando los arquetipos CUANTITATIVOS de `arquetipos_intensidades`
     ({arquetipo_id: intensidad} — una intensidad por arquetipo, sección 2.12), fusionando sus
@@ -2786,7 +2788,38 @@ def generar_evolucion_combinada(
 
     Solo acepta arquetipos de `clase="cuantitativo"` — los de `clase="memoria_pura"` (7, 19, 20,
     21, 22) no tienen nada que evolucionar aquí, ver `motor.memoria` y `generar_caso_combinado`,
-    que sí orquesta ambas clases juntas."""
+    que sí orquesta ambas clases juntas.
+
+    `modo_generacion` ("tipico"/"atipico"/"aleatorio", por defecto — Fase 4 Ronda 2 punto 2):
+    fuerza la rama típica/atípica (y, en los mecanismos transversales binarios — provisión/
+    insolvencia/subvención de fondo — la rama activa/inactiva) para TODO el caso, los 3 años,
+    sin tocar ningún helper interno — ver docstring de `motor.ruido`. Las "variantes de examen"
+    (sección 2.16) son, simplemente, llamar a esta función varias veces con `modo_generacion=
+    "tipico"` y semillas distintas — no hay un mecanismo aparte."""
+    _token_modo_generacion = activar_modo_generacion(modo_generacion)
+    try:
+        return _generar_evolucion_combinada_interno(
+            sector, segmento, ventas_objetivo_2023, semilla, arquetipos_intensidades,
+            catalogo, arquetipos, dependencia_pocos_clientes_activo, modo_generacion,
+        )
+    finally:
+        desactivar_modo_generacion(_token_modo_generacion)
+
+
+def _generar_evolucion_combinada_interno(
+    sector: str,
+    segmento: str,
+    ventas_objetivo_2023: float,
+    semilla: int,
+    arquetipos_intensidades: dict[str, str],
+    catalogo: pd.DataFrame | None,
+    arquetipos: dict[str, DefinicionArquetipo] | None,
+    dependencia_pocos_clientes_activo: bool,
+    modo_generacion: str,
+) -> EvolucionArquetipo:
+    """Cuerpo real de `generar_evolucion_combinada` — aislado en su propia función para que el
+    `try/finally` de activación de `modo_generacion` no tenga que reindentar el resto del cuerpo
+    (~380 líneas). No debe llamarse directamente."""
     if not arquetipos_intensidades:
         raise EvolucionArquetipoError("No se ha indicado ningún arquetipo")
     for arquetipo_id, intensidad in arquetipos_intensidades.items():
@@ -2814,6 +2847,10 @@ def generar_evolucion_combinada(
 
     fila = resolver_fila_sector(catalogo, sector, segmento)
 
+    # NO se pasa `modo_generacion` aquí a propósito: `generar_empresa_base` ya hereda el modo
+    # activado justo arriba, por defecto `None` — ver su docstring para el porqué (un valor por
+    # defecto concreto habría hecho que el año base volviera siempre a "aleatorio", bug real
+    # detectado y corregido antes de comitear, ver motor/empresa_base.py).
     empresa_2023 = generar_empresa_base(sector, segmento, ventas_objetivo_2023, semilla, catalogo=catalogo)
     ejercicios: dict[int, EjercicioEmpresa] = {AÑO_BASE: _ejercicio_desde_empresa_base(empresa_2023)}
 
@@ -3183,6 +3220,7 @@ def generar_evolucion_combinada(
         ejercicios=ejercicios,
         catalogo_version=catalogo.attrs.get("catalogo_version", "desconocida"),
         plausibilidad=plausibilidad,
+        modo_generacion=modo_generacion,
     )
 
 
@@ -3195,14 +3233,16 @@ def generar_evolucion_arquetipo(
     arquetipo_id: str,
     catalogo: pd.DataFrame | None = None,
     arquetipos: dict[str, DefinicionArquetipo] | None = None,
+    modo_generacion: str = "aleatorio",
 ) -> EvolucionArquetipo:
     """Genera 3 ejercicios (2023 base, 2024 y 2025 con `arquetipo_id` aplicado de forma
     progresiva: 60% de la intensidad en 2024, 100% en 2025), encadenados entre sí.
 
     `arquetipo_id` es una clave de `data/arquetipos.json` (ver `motor.arquetipos`). Envoltorio
     de `generar_evolucion_combinada` con un único arquetipo — ver docstring de esa función y la
-    sección "Combinación de arquetipos" del docstring del módulo."""
+    sección "Combinación de arquetipos" del docstring del módulo. `modo_generacion` se reenvía
+    tal cual — ver docstring de `generar_evolucion_combinada` (Fase 4 Ronda 2 punto 2)."""
     return generar_evolucion_combinada(
         sector, segmento, ventas_objetivo_2023, semilla, {arquetipo_id: intensidad},
-        catalogo=catalogo, arquetipos=arquetipos,
+        catalogo=catalogo, arquetipos=arquetipos, modo_generacion=modo_generacion,
     )

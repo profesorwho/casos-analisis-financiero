@@ -127,12 +127,15 @@ class BienAmortizadoCasoAño:
 
 @dataclass(frozen=True)
 class ResumenParticularidadesCaso:
-    """Objeto único por caso — ver docstring del módulo. Los 5 primeros campos (además de
-    `semilla`) son los 5 exigidos por la sección 2.15 (trazabilidad): `arquetipo`/`intensidad` ya
-    vienen del propio `EvolucionArquetipo`, que desde la corrección de esta misma auditoría
-    incluye TAMBIÉN los arquetipos de `clase="memoria_pura"` cuando el caso se generó con
-    `motor.memoria.generar_caso_combinado` (antes, un caso combinado con algún arquetipo de
-    memoria pura activo dejaba esos 2 campos incompletos — ver `motor/memoria.py`)."""
+    """Objeto único por caso — ver docstring del módulo. Los primeros campos son los exigidos por
+    la sección 2.15 (trazabilidad): `arquetipo`/`intensidad` ya vienen del propio
+    `EvolucionArquetipo`, que desde la corrección de esta misma auditoría incluye TAMBIÉN los
+    arquetipos de `clase="memoria_pura"` cuando el caso se generó con `motor.memoria.generar_
+    caso_combinado` (antes, un caso combinado con algún arquetipo de memoria pura activo dejaba
+    esos 2 campos incompletos — ver `motor/memoria.py`). `modo_generacion` (Fase 4 Ronda 2 punto
+    2, ver `motor.ruido`) es un parámetro más que afecta al resultado del caso, así que se
+    reporta con el mismo criterio que el resto — nunca "1.0"/valor mágico, siempre el modo
+    realmente usado (por defecto "aleatorio", el comportamiento de siempre)."""
 
     sector_codigo: str
     sector_nombre: str
@@ -150,6 +153,7 @@ class ResumenParticularidadesCaso:
     movimiento_provision: tuple[MovimientoProvisionAño, ...]
     movimiento_insolvencia: tuple[MovimientoInsolvenciaAño, ...]
     bienes_totalmente_amortizados: tuple[BienAmortizadoCasoAño, ...]
+    modo_generacion: str = "aleatorio"  # mismo valor por defecto que EvolucionArquetipo.modo_generacion
 
     @property
     def tiene_particularidades(self) -> bool:
@@ -264,6 +268,7 @@ def resumen_particularidades_caso(evolucion: EvolucionArquetipo) -> ResumenParti
         semilla=evolucion.semilla,
         catalogo_version=evolucion.catalogo_version,
         pgc_version=evolucion.pgc_version,
+        modo_generacion=evolucion.modo_generacion,
         atipicos=tuple(atipicos),
         señales_riesgo=tuple(señales_riesgo),
         plausibilidad=evolucion.plausibilidad,

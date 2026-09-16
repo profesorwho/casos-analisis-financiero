@@ -39,11 +39,16 @@ from motor.catalogo import cargar_y_validar_catalogo
 from motor.ruido import (  # noqa: F401
     DESVIACIONES_ATIPICO,
     DESVIACIONES_TIPICO,
+    MODOS_GENERACION_VALIDOS,
     PROB_ATIPICO,
+    ModoGeneracionInvalidoError,
     _generar_partida,
     _generar_partida_con_memoria,
     _normal_truncada,
     _renormalizar_a_total,
+    activar_modo_generacion,
+    desactivar_modo_generacion,
+    modo_generacion_activo,
 )
 
 SEGMENTOS_VALIDOS = frozenset({"grandes_medianas", "pequeñas"})
@@ -1130,13 +1135,25 @@ def generar_empresa_base(
     ventas_objetivo: float,
     semilla: int,
     catalogo: pd.DataFrame | None = None,
+    modo_generacion: str | None = None,
 ) -> EmpresaBase:
     """Genera el balance y la PyG base (un ejercicio, sin arquetipos) de una empresa ficticia.
 
     `sector` es el código entre paréntesis del catálogo (p. ej. "24.1", "4941"). `segmento` es
     "grandes_medianas" o "pequeñas". El resultado es reproducible: misma semilla+sector+segmento,
     mismo caso (ver docstring del módulo sobre por qué la semilla del RNG mezcla sector+segmento,
-    no solo `semilla`)."""
+    no solo `semilla`).
+
+    `modo_generacion` ("tipico"/"atipico"/"aleatorio" — sección 2.16/2.17, Fase 4 Ronda 2 punto
+    2): fuerza la rama típica/atípica de TODOS los sorteos de esta función (masas de balance,
+    PyG, los 4 lotes de desglose, `rotacion_activo`...) sin tocar ningún helper interno — ver
+    docstring de `motor.ruido` para el diseño completo (`contextvars`, un único punto de
+    control). Por defecto `None` (NO "aleatorio") a propósito: si esta función se llama anidada
+    dentro de `generar_evolucion_combinada` (que ya activó su propio modo para todo el caso),
+    `None` significa "hereda el modo ya activo, no lo sobrescribas" — con un valor concreto por
+    defecto, el año base habría vuelto siempre a "aleatorio" pese al modo pedido para el resto
+    del caso (bug real detectado y corregido antes de comitear). Llamada en solitario (sin
+    ningún modo ya activo), `None` se comporta como "aleatorio" (el ambiente por defecto)."""
     if segmento not in SEGMENTOS_VALIDOS:
         raise EmpresaBaseError(f"Segmento '{segmento}' no válido. Debe ser uno de: {sorted(SEGMENTOS_VALIDOS)}")
     if ventas_objetivo <= 0:
@@ -1144,6 +1161,23 @@ def generar_empresa_base(
 
     if catalogo is None:
         catalogo = cargar_y_validar_catalogo()
+
+    if modo_generacion is None:
+        return _generar_empresa_base_interno(sector, segmento, ventas_objetivo, semilla, catalogo)
+    _token_modo_generacion = activar_modo_generacion(modo_generacion)
+    try:
+        return _generar_empresa_base_interno(sector, segmento, ventas_objetivo, semilla, catalogo)
+    finally:
+        desactivar_modo_generacion(_token_modo_generacion)
+
+
+def _generar_empresa_base_interno(
+    sector: str, segmento: str, ventas_objetivo: float, semilla: int, catalogo: pd.DataFrame
+) -> EmpresaBase:
+    """Cuerpo real de `generar_empresa_base`, aislado en su propia función para que el `try/
+    finally` de activación de `modo_generacion` no tenga que reindentar el resto del cuerpo
+    (~130 líneas) — mismo resultado, diff mínimo. No debe llamarse directamente (usa `generar_
+    empresa_base`, que ya ha validado los parámetros y activado el modo)."""
 
     fila = resolver_fila_sector(catalogo, sector, segmento)
     sector_nombre = fila["sector"]

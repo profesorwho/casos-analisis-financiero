@@ -73,6 +73,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from motor.ruido import _resolver_binario_por_modo
+
 # --- Anclaje a cobro_dias (ver docstring del módulo) ---
 UMBRAL_COBRO_DIAS_INSOLVENCIA = 60.0
 TECHO_COBRO_DIAS_INSOLVENCIA = 150.0
@@ -143,10 +145,14 @@ def sortear_insolvencia_baseline(
     dependencia_clientes_activo: bool,
 ) -> ParametrosInsolvencia:
     """Sorteo ÚNICO por caso, probabilidad anclada a `cobro_dias_huber` + boost de arquetipo 4/7
-    — ver docstring del módulo."""
+    — ver docstring del módulo. Acoplado a `modo_generacion` (Fase 4 Ronda 2 punto 2, ver motor.
+    ruido) vía `_resolver_binario_por_modo`, que aquí es imprescindible en su forma auto-
+    adaptativa: `probabilidad` puede superar 0,5 con los boosts de arquetipo 4/7 apilados (hasta
+    `TECHO_PROBABILIDAD_INSOLVENCIA_ABSOLUTO=0,60`) — ver docstring de `motor.ruido` para el
+    hallazgo completo."""
     rng = np.random.default_rng([semilla, _entropia_insolvencia(sector, segmento, "_baseline")])
     probabilidad = probabilidad_insolvencia(cobro_dias_huber, deterioro_ciclo_caja_activo, dependencia_clientes_activo)
-    activa = rng.random() < probabilidad
+    activa = _resolver_binario_por_modo(rng, probabilidad)
     if not activa:
         # Consume los mismos draws que la rama activa (mismo cuidado ya aplicado en provisiones)
         # para que la posición de cualquier sorteo posterior no dependa de si salió activa.

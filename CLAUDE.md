@@ -17,7 +17,7 @@ Especificación funcional completa: `docs/especificaciones_proyecto_casos_balanc
 | Archivo | Responsabilidad | Función(es) pública(s) | Toca |
 |---|---|---|---|
 | `catalogo.py` | Carga y valida el catálogo de ratios sectoriales (CSV, 27 sectores × 2 segmentos, `huber_9y`/`huber_scale_mad` por ratio). | `cargar_y_validar_catalogo(ruta=...) -> DataFrame`; `version_catalogo(ruta=...) -> str` (hash usado como `catalogo_version`, sección 2.15). | Base de todo — sin arquetipos. |
-| `ruido.py` | Mecanismo de ruido mixto típico/atípico (85%/15%, normal truncada) — extraído de `empresa_base.py` a su propio módulo para que `amortizacion.py` pueda reutilizarlo sin crear una importación circular. Sin dependencias de otros módulos del motor. | `_generar_partida(rng, huber_9y, huber_scale_mad, suelo=None, techo=None) -> (float, str)`; `_normal_truncada`; `_renormalizar_a_total` | Nada de generación — `empresa_base.py` los reexporta (`from motor.ruido import ...`), así que el resto del código sigue importándolos como `motor.empresa_base.<nombre>` sin cambios. |
+| `ruido.py` | Mecanismo de ruido mixto típico/atípico (85%/15%, normal truncada) — extraído de `empresa_base.py` a su propio módulo para que `amortizacion.py` pueda reutilizarlo sin crear una importación circular. Sin dependencias de otros módulos del motor. Desde la Fase 4 Ronda 2 punto 2, también aloja el ÚNICO punto de control del selector `modo_generacion` — ver sección "Selector de modo de generación" abajo. | `_generar_partida(rng, huber_9y, huber_scale_mad, suelo=None, techo=None) -> (float, str)`; `_normal_truncada`; `_renormalizar_a_total`; `activar_modo_generacion(modo) -> Token`/`desactivar_modo_generacion(token)`/`modo_generacion_activo(modo)` (gestor de contexto) | Nada de generación — `empresa_base.py` los reexporta (`from motor.ruido import ...`), así que el resto del código sigue importándolos como `motor.empresa_base.<nombre>` sin cambios. `motor.provisiones`/`motor.insolvencias`/`motor.coberturas_subvenciones` importan `_resolver_binario_por_modo` directamente para acoplar sus propias decisiones binarias — ver esa sección. |
 | `empresa_base.py` | Genera balance + PyG de **una** empresa, **un** ejercicio, a partir del catálogo + ruido típico/atípico. Sin arquetipos, sin serie temporal. `tipo_interes` (para `gastos_financieros`) ya NO sale de `ratios.coste_deuda` del catálogo — ver "Tipo de interés de mercado" abajo. | `generar_empresa_base(sector, segmento, ventas_objetivo, semilla, catalogo=None) -> EmpresaBase`; `resolver_fila_sector(catalogo, sector_codigo, segmento) -> pd.Series`; `categoria_de_sector(sector_codigo) -> str` | Año base 2023 de **cualquier** caso, con o sin arquetipo. Desde el arreglo de raíz de la amortización, importa `motor.amortizacion` para derivar `pyg_eur["amortizaciones"]` — ver "Amortización derivada" abajo. |
 | `amortizacion.py` | Deriva el gasto de amortización de la PyG a partir de una colección REAL de activos (sub-lotes con vida fiscal, fecha de compra sorteada, posible "ya totalmente amortizado") — sustituye el antiguo sorteo independiente de `amortizaciones_pct`. Ver sección "Amortización derivada" abajo para el diseño completo. | `generar_coleccion_y_perfiles_base(sector, segmento, semilla, categoria, activo_no_corriente_desglose_eur) -> (coleccion, perfil_material, perfil_intangible)`; `generar_cohortes_capex(...)`/`generar_cohortes_adquisicion(...)` (cohortes nuevas de los arquetipos 17/18); `amortizacion_eur_del_año(coleccion, año) -> float`; `bienes_totalmente_amortizados_en(coleccion, año) -> tuple[BienTotalmenteAmortizado,...]` | `empresa_base.py` (año base) y `evolucion_arquetipo.py` (2024/2025, cohortes nuevas de capex/adquisición) — consume el desglose de `activo_no_corriente` ya generado, no genera balance por sí mismo. |
 | `arquetipos.py` | Carga y valida `data/arquetipos.json` como dataclasses tipadas. **Sin lógica de generación.** | `cargar_arquetipos(ruta=...) -> dict[str, DefinicionArquetipo]` | Tipos de efecto: `EfectoMasaCirculante`, `EfectoPygPrimitiva`, `EfectoApalancamiento`, `EfectoTesoreria`, `EfectoReclasificacionDeuda`, `EfectoEventoPuntual`, `EfectoCapex`, `EfectoAdquisicion`, `EfectoCobertura`, `EfectoOperacionVinculada`. |
@@ -1059,6 +1059,71 @@ aparte, con los mismos 3 parámetros que identifican "la empresa" en el resto de
   fondo. Verificado con un test dedicado que comprueba que el módulo no importa `_generar_
   partida` como nombre utilizable, no solo declarado en el docstring. `motor/resumen_caso.py` no
   necesita ningún cambio para esta pieza.
+
+## Selector de modo de generación — sección 2.16/2.17, Fase 4 Ronda 2 punto 2 (`motor/ruido.py`)
+
+`modo_generacion` ("tipico"/"atipico"/"aleatorio", por defecto — parámetro disponible en
+CUALQUIER generación de caso, no solo para exámenes): fuerza siempre la rama del 85%/del 15% de
+`_generar_partida`/`_generar_partida_con_memoria`, en vez de dejarlo al sorteo. Las "variantes de
+examen" (sección 2.16) son, literalmente, llamar a `generar_evolucion_combinada`/`generar_caso_
+combinado` varias veces con `modo_generacion="tipico"` y semillas distintas — no hay ningún
+módulo ni mecanismo aparte para ellas.
+
+- **Un único punto de control, confirmado con grep sobre todo `motor/`, no asumido**:
+  `PROB_ATIPICO` se usa en exactamente 2 líneas de todo el paquete, ambas dentro de `motor/
+  ruido.py`. Los 8+ sitios auditados en la Ronda 1 pasan, sin excepción, por una de las dos — un
+  cambio ahí basta para cubrirlos todos.
+- **`contextvars`, no threading explícito por parámetro** — decisión deliberada para no tener
+  que añadir `modo_generacion` a los ~9 helpers de `empresa_base.py` ni a `_evolucionar_un_año`
+  (el tipo de cambio de alto riesgo que ya causó el sesgo de RNG compartido, hace varias
+  sesiones). `activar_modo_generacion(modo)`/`desactivar_modo_generacion(token)` (o el gestor de
+  contexto `modo_generacion_activo`) se llaman SOLO en los puntos de entrada públicos
+  (`generar_empresa_base`, `generar_evolucion_combinada`/`generar_evolucion_arquetipo`, `motor.
+  memoria.generar_caso_combinado`) — cero cambios de firma en ningún helper interno, el modo se
+  hereda de forma transparente hasta el año base.
+- **Bug real detectado y corregido antes de comitear, no solo un riesgo teórico**: en una
+  versión intermedia, `generar_empresa_base` tenía `modo_generacion: str = "aleatorio"` como
+  valor por defecto — como `generar_evolucion_combinada` no se lo pasaba explícito al generar el
+  año base, éste SIEMPRE volvía a "aleatorio" pese al modo pedido para el resto del caso.
+  Corregido con un sentinel `modo_generacion: str | None = None` ("`None` = hereda el modo ya
+  activo, no lo sobrescribas"; llamada en solitario sin ningún modo activo, `None` se comporta
+  como "aleatorio"). Fijado con un test de regresión dedicado (`tests/test_modo_generacion.py::
+  test_año_base_hereda_el_modo_de_generar_evolucion_combinada_sin_pasarlo_explicito`).
+- **El RNG se consume SIEMPRE, cambie o no el modo** (`_resolver_binario_por_modo` calcula el
+  sorteo real ANTES de mirar el modo) — mismo patrón defensivo ya validado en provisiones/
+  insolvencias, para que la posición de la secuencia de `rng` no dependa del modo.
+- **Decisiones binarias transversales acopladas** (provisión, insolvencia, subvención de
+  fondo — `motor.provisiones`/`motor.insolvencias`/`motor.coberturas_subvenciones`, todas vía el
+  mismo `_resolver_binario_por_modo`): "tipico" = nunca activa ninguna, "atipico" = siempre
+  activa las tres a la vez si las tres están en juego (verificado sin descuadre de EFE).
+  **Polaridad AUTO-ADAPTATIVA, hallazgo real durante la implementación** (no solo un riesgo
+  documentado de antemano): provisión (25%) y subvención de fondo (2%-20%) son siempre <50%,
+  pero `motor.insolvencias.probabilidad_insolvencia` puede llegar a 60% con los boosts de
+  arquetipo 4+7 apilados — ahí "activa" sería la rama MAYORITARIA, no la minoritaria.
+  `_resolver_binario_por_modo` compara `probabilidad_base` contra 0,5 en cada llamada y fuerza
+  la rama mayoritaria/minoritaria REAL, no un booleano fijo — "tipico"/"atipico" significan
+  siempre "caso común"/"caso raro", sea cual sea la probabilidad de fondo del mecanismo.
+- **Trazabilidad** (sección 2.15): `EvolucionArquetipo.modo_generacion`/`ResumenParticularidadesCaso.
+  modo_generacion` (por defecto "aleatorio" — 0 casos existentes cambian).
+- **Verificación cuantificada de dispersión, típico vs. aleatorio, pedida explícitamente antes
+  de cerrar la Fase 4** — Combo B (sección 2.26, score 1,00, "crecimiento_destruccion_caja"+
+  "mejora_margen") y Combo C (score 1,20, 3 arquetipos), N=50 semillas por modo, midiendo nº de
+  señales de `PlausibilidadCaso` (sección 2.13) por variante: media de señales **tipico 4,58 <
+  aleatorio 4,92 < atipico 6,92** (Combo B); mismo orden en Combo C (4,20 < 4,36). El efecto es
+  real y monótono en la dirección esperada, pero MODESTO entre tipico/aleatorio (no dramático) —
+  diagnóstico, no solo el dato: una parte sustancial de las señales de un combo con varios
+  arquetipos viene del EFECTO PROPIO Y DELIBERADO de cada arquetipo (diseñado para ser notable,
+  ajeno a `modo_generacion` por diseño — no debería reducirse solo por pedir ruido "típico" en
+  las primitivas NO forzadas), y otra parte viene del componente ESTRUCTURAL de deriva del PN
+  (#73-85: retención del 100% del resultado, banda creciente con los años) que `modo_generacion`
+  tampoco toca — solo actúa sobre el RUIDO de muestreo de las primitivas no forzadas y las 3
+  decisiones binarias transversales, que es una fracción real pero no dominante del total. El
+  salto tipico→atipico (4,58→6,92, +51%) sí es marcado, confirmando que el mecanismo en sí
+  funciona con fuerza en la dirección "atípico" — la asimetría de magnitud entre ambos lados es
+  coherente con que "aleatorio" ya está mucho más cerca de "tipico" (85% de probabilidad) que de
+  "atipico" (15%) en el comportamiento de fondo. Test de regresión con N=25 (`tests/test_modo_
+  generacion.py::test_dispersion_de_señales_es_mas_estrecha_bajo_tipico_que_bajo_aleatorio`);
+  barrido N=50 completo como script ad hoc, mismo criterio que `stress_plausibilidad.py`.
 
 ## Otros documentos de este índice
 

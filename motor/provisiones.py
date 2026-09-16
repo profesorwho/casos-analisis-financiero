@@ -71,6 +71,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from motor.ruido import _resolver_binario_por_modo
+
 CATEGORIAS_PROVISION = ("140", "141", "142", "143", "145", "146", "4994", "4999")
 
 NATURALEZA_PYG_POR_CATEGORIA: dict[str, str] = {
@@ -165,9 +167,12 @@ class ParametrosProvision:
 def sortear_provision_baseline(
     sector: str, segmento: str, semilla: int, categoria_sector: str, tier_existencias_sector: str
 ) -> ParametrosProvision:
-    """Sorteo ÚNICO por caso, independiente de cualquier arquetipo — ver docstring del módulo."""
+    """Sorteo ÚNICO por caso, independiente de cualquier arquetipo — ver docstring del módulo.
+    Acoplado a `modo_generacion` (Fase 4 Ronda 2 punto 2, ver motor.ruido): `PROBABILIDAD_
+    PROVISION=0,25` es la rama minoritaria, polaridad verificada — "tipico" nunca activa,
+    "atipico" siempre activa."""
     rng = np.random.default_rng([semilla, _entropia_provision(sector, segmento, "_baseline")])
-    activa = rng.random() < PROBABILIDAD_PROVISION
+    activa = _resolver_binario_por_modo(rng, PROBABILIDAD_PROVISION)
     if not activa:
         # Aun sin activarse, se consumen los mismos draws que la rama activa (permutation +
         # 2 floats) para que la posición de CUALQUIER sorteo posterior en el motor que reutilice

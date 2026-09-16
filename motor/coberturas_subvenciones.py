@@ -44,7 +44,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from motor.amortizacion import SubLoteActivo, generar_cohortes_capex
-from motor.ruido import _generar_partida
+from motor.ruido import _generar_partida, _resolver_binario_por_modo
 
 AÑO_BASE = 2023
 
@@ -231,7 +231,10 @@ def sortear_subvencion_baseline(sector: str, segmento: str, semilla: int, catego
     17)."""
     rng = np.random.default_rng([semilla, _entropia_subvencion(sector, segmento, "_baseline")])
     propension = PROPENSION_SUBVENCION_BASELINE_POR_CATEGORIA[categoria]
-    activa = rng.random() < propension
+    # Acoplado a `modo_generacion` (Fase 4 Ronda 2 punto 2, ver motor.ruido): las 9 propensiones
+    # de esta tabla van de 2% a 20% — SIEMPRE la rama minoritaria, polaridad verificada (no
+    # asumida) antes de reutilizar `_resolver_binario_por_modo` aquí.
+    activa = _resolver_binario_por_modo(rng, propension)
     año_concesion = 2024 if rng.integers(2) == 0 else 2025
     return activa, año_concesion
 

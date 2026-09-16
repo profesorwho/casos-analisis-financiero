@@ -456,6 +456,7 @@ def generar_caso_combinado(
     arquetipos_intensidades: dict[str, str],
     catalogo=None,
     arquetipos=None,
+    modo_generacion: str = "aleatorio",
 ):
     """Punto de entrada general para un caso con uno o varios arquetipos activos, de cualquier
     clase — orquesta `motor.evolucion_arquetipo.generar_evolucion_combinada` para los
@@ -468,6 +469,13 @@ def generar_caso_combinado(
     numérico, usar `generar_nota_memoria_pura` directamente sobre una `EjercicioEmpresa` ya
     generada (p. ej. con cualquier arquetipo cuantitativo "neutro", como hace
     `tests/test_memoria.py`).
+
+    `modo_generacion` ("tipico"/"atipico"/"aleatorio" — Fase 4 Ronda 2 punto 2) se reenvía tal
+    cual a `generar_evolucion_combinada` — ver su docstring y la de `motor.ruido`. Las notas de
+    memoria pura (7/19/22) NO se ven afectadas: sortean plantillas con `rng.choice`, sin pasar
+    por el mecanismo típico/atípico en ningún punto (mismo caso que las decisiones binarias de
+    provisión/insolvencia/subvención, que SÍ están acopladas — la diferencia es que estas notas
+    no tienen ninguna huella numérica que un modo "atípico" pudiera exagerar).
 
     Devuelve el `EvolucionArquetipo` de los arquetipos cuantitativos, con `notas_memoria_pura`
     ya poblado con las notas de los arquetipos de memoria pura (vacío si no hay ninguno activo)."""
@@ -506,6 +514,7 @@ def generar_caso_combinado(
         catalogo=catalogo,
         arquetipos=arquetipos,
         dependencia_pocos_clientes_activo=dependencia_pocos_clientes_activo,
+        modo_generacion=modo_generacion,
     )
 
     # Etiquetas ya "ocupadas" por las notas numéricas (10/16/18, si las hay, en 2024 y/o 2025):
