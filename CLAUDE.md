@@ -32,6 +32,7 @@ Especificación funcional completa: `docs/especificaciones_proyecto_casos_balanc
 | `resumen_caso.py` | Resumen consolidado de particularidades de un caso YA generado (sección 2.15/2.9) — capa de AGREGACIÓN pura, NO genera ni corrige ningún dato. Ver sección "Resumen consolidado de particularidades del caso" abajo. | `resumen_particularidades_caso(evolucion: EvolucionArquetipo) -> ResumenParticularidadesCaso` | Nada de generación — solo lee `EvolucionArquetipo`/`EjercicioEmpresa` ya generados. |
 | `rubrica_diagnostico.py` | Carga y valida `data/rubrica_diagnostico.json` (sección 2.19) como dataclasses tipadas — mismo patrón que `motor.arquetipos`, sin lógica de generación ni de cálculo. | `cargar_rubrica_diagnostico(ruta=...) -> RubricaDiagnostico` | Nada del motor — contenido estructurado puro. |
 | `similitud_casos.py` | Función de comparación entre dos casos ya generados (sección 2.20, pieza PARCIAL — sin aplicarla todavía sobre ningún repositorio, que es Fase 5). Ver sección "Función de similitud entre casos" abajo. | `similitud_entre_casos(caso_a, caso_b, catalogo=None) -> SimilitudCasos` | Nada de generación — capa de cálculo pura sobre dos `EvolucionArquetipo` ya generados + el catálogo (para normalizar el perfil numérico). |
+| `nombres_ficticios.py` | Generador de nombres ficticios de empresa (sección 2.17, Ronda 2 de la Fase 4) — nombre + forma jurídica + breve descripción de actividad, sin parecido con empresas españolas reales. Capa INDEPENDIENTE, no se cuelga de `EmpresaBase`/`EjercicioEmpresa`. Ver sección "Nombres ficticios de empresa" abajo. | `generar_nombre_ficticio(sector, segmento, semilla) -> NombreFicticio` | Nada de generación — ni balance, ni PyG, ni `EvolucionArquetipo`. RNG propio e independiente (entropía `"nombre_ficticio"`), mismo patrón de hash estable que el resto del motor. |
 
 ## Mecanismos reutilizables ya construidos (en `evolucion_arquetipo.py`, salvo que se indique)
 
@@ -1023,6 +1024,41 @@ casos es Fase 5, no existe todavía); queda lista para cuando exista.
   1.0 exacto; mismo sector/arquetipo/intensidad, distinta semilla → puntuación alta pero
   `similitud_numerica<1.0` (las cifras SÍ difieren entre semillas, correcto); sector/arquetipo
   distintos → puntuación baja; función simétrica (`similitud(a,b) == similitud(b,a)`).
+
+## Nombres ficticios de empresa — sección 2.17, Fase 4, Ronda 2, punto 1 (`motor/nombres_ficticios.py`)
+
+Nombre + forma jurídica + breve descripción de actividad, por caso. Capa INDEPENDIENTE del resto
+del motor (no genera balance/PyG, no se cuelga de `EmpresaBase`/`EjercicioEmpresa`) — se invoca
+aparte, con los mismos 3 parámetros que identifican "la empresa" en el resto del motor.
+
+- **Por sector+segmento+semilla, NUNCA por arquetipo/combo** — mismo criterio ya establecido en
+  todo el proyecto ("misma semilla+sector+segmento, misma empresa, sea cual sea el arquetipo o la
+  combinación que se le aplique encima"): el nombre identifica a LA EMPRESA, no la historia
+  concreta que se cuenta sobre ella. Verificado (no solo por diseño): la firma de la función ni
+  siquiera acepta arquetipo/intensidad.
+- **Sin parecido con empresas españolas reales**: término genérico de actividad DEL SECTOR real
+  del caso (nunca marca, nunca apellido/nombre propio — mayor riesgo de coincidencia real ahí que
+  con vocabulario descriptivo) + calificador geográfico genérico, gramaticalmente INVARIANTE
+  (ríos/cordilleras españolas de uso extendido en denominaciones sociales reales — "del Duero",
+  "del Cantábrico" — patrón de nomenclatura estándar, no la copia de ninguna empresa concreta) +
+  forma jurídica. Vocabulario propio por cada uno de los **27 sectores** (no por las 9 categorías
+  de `CATEGORIA_SECTOR`, insuficientemente específicas para esto — Siderurgia y Aeroespacial son
+  ambos "industria" pero necesitan vocabulario de actividad completamente distinto). Verificado
+  que sectores de actividad muy distinta no comparten vocabulario.
+- **Forma jurídica coherente con el tamaño** (`PROBABILIDAD_SA_POR_SEGMENTO`, HIPÓTESIS DE
+  DISEÑO razonada — el catálogo ACCID no distingue forma jurídica en absoluto): S.A. con
+  probabilidad baja en "pequeñas" (10%) y más alta pero SIN llegar a mayoritaria en "grandes_
+  medianas" (45% — la S.L. sigue siendo la forma jurídica más común en España en cualquier
+  tamaño). Verificado empíricamente, no solo por construcción: tasa observada de S.A. en barrido
+  amplio dentro de ±8 puntos de la probabilidad de diseño, y estrictamente mayor en "grandes_
+  medianas" que en "pequeñas".
+- **Modo típico/atípico — verificado explícitamente que NO aplica** (pedido explícitamente, mismo
+  estándar que la Ronda 1 aplicó a cada pieza nueva): todos los sorteos son discretos (`rng.
+  choice`/`rng.random()`), ninguno pasa por `_generar_partida` (el único mecanismo con un
+  concepto real de "típico"/"atípico") — mismo caso que provisiones/insolvencias/subvención de
+  fondo. Verificado con un test dedicado que comprueba que el módulo no importa `_generar_
+  partida` como nombre utilizable, no solo declarado en el docstring. `motor/resumen_caso.py` no
+  necesita ningún cambio para esta pieza.
 
 ## Otros documentos de este índice
 
