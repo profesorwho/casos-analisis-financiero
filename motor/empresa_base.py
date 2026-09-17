@@ -1774,14 +1774,20 @@ def _generar_empresa_base_interno(
     # Segundo lote de desglose de balance (deudores/acreedores comerciales) — RNG PROPIO E
     # INDEPENDIENTE, mismo criterio que el resto de perfiles de este bloque. Perfil BASE
     # (arquetipo-agnóstico): `motor.evolucion_arquetipo.generar_evolucion_combinada` lo
-    # sobrescribe en el año base si el arquetipo 20 está activo, ver ese módulo.
+    # sobrescribe en el año base si el arquetipo 20 está activo, ver ese módulo. El residuo de
+    # `realizable` excluye `periodificacion_activo_eur` (primer lote, calculada arriba) — mismo
+    # criterio que el residuo de "otras deudas" (quinto lote, ver `calcular_desglose_otras_deudas`)
+    # para no re-etiquetar el mismo euro bajo dos epígrafes oficiales distintos. `acreedores_
+    # comerciales` no tiene ninguna partida de activo que excluir, así que su base sigue siendo el
+    # agregado bruto sin cambios.
     rng_desglose_balance_lote2 = np.random.default_rng(
         [semilla, zlib.crc32(f"{sector}|{segmento}|desglose_balance_lote2".encode("utf-8"))]
     )
     perfil_deudores, modos_deudores = generar_perfil_deudores(rng_desglose_balance_lote2)
     perfil_acreedores, modos_acreedores = generar_perfil_acreedores(rng_desglose_balance_lote2, categoria)
+    realizable_residual_eur = balance_eur["realizable"] - periodificacion_activo_eur
     deudores_desglose_eur = {
-        componente: fraccion * balance_eur["realizable"] for componente, fraccion in perfil_deudores.items()
+        componente: fraccion * realizable_residual_eur for componente, fraccion in perfil_deudores.items()
     }
     acreedores_desglose_eur = {
         componente: fraccion * balance_eur["acreedores_comerciales"] for componente, fraccion in perfil_acreedores.items()

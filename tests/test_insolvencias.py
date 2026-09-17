@@ -443,7 +443,9 @@ def test_identidad_balance_pyg_resultado_ejercicio_con_insolvencia_activa(catalo
 def test_suma_exacta_con_clientes_deudores(catalogo, arquetipos):
     """Pedido explícitamente: la suma del desglose de deudores (incluida "Clientes") tiene que
     coincidir EXACTO con `balance_eur["realizable"]` YA neto de insolvencia — no asumido por
-    construcción del desglose (perfil % fijo aplicado al agregado de ESTE año), comprobado."""
+    construcción del desglose (perfil % fijo aplicado al agregado de ESTE año), comprobado. El
+    residuo excluye además `periodificacion_activo_eur` (primer lote, ver decisiones_
+    plausibilidad.md #91) — mismo criterio que el resto de este lote."""
     comprobados = 0
     for codigo in _sectores(catalogo):
         for semilla in range(10):
@@ -455,7 +457,8 @@ def test_suma_exacta_con_clientes_deudores(catalogo, arquetipos):
                 continue
             for ejercicio in evolucion.ejercicios.values():
                 suma_desglose = sum(ejercicio.deudores_desglose_eur.values())
-                assert suma_desglose == pytest.approx(ejercicio.balance_eur["realizable"], abs=0.01), (
+                realizable_residual_eur = ejercicio.balance_eur["realizable"] - ejercicio.periodificacion_activo_eur
+                assert suma_desglose == pytest.approx(realizable_residual_eur, abs=0.01), (
                     f"{codigo} semilla={semilla} año={ejercicio.año}"
                 )
                 # "Clientes" sigue siendo la sub-partida dominante (perfil ~88%, ver segundo

@@ -2685,9 +2685,15 @@ def _evolucionar_un_año(
     # Desglose del TOTAL de deudores/acreedores comerciales de ESTE año — mismo criterio que
     # existencias: perfil (%) constante (ya fijado "desde 2023", incluida cualquier sub-partida
     # de grupo/varios forzada por el arquetipo 20 en el año base), aplicado al agregado YA
-    # cuadrado de este año.
+    # cuadrado de este año. El residuo de `realizable` excluye `periodificacion_activo_eur`
+    # (primer lote): perfil fijo desde 2023 (`anterior.periodificacion_activo_pct`), aplicado sobre
+    # el balance YA final de ESTE año (mismo criterio que el residuo de "otras deudas", ver más
+    # abajo) — para no re-etiquetar el mismo euro bajo dos epígrafes oficiales distintos.
+    # `acreedores_comerciales` no tiene ninguna partida de activo que excluir, sigue sin cambios.
+    periodificacion_activo_año_eur = anterior.periodificacion_activo_pct * balance_eur["realizable"]
+    realizable_residual_año_eur = balance_eur["realizable"] - periodificacion_activo_año_eur
     deudores_desglose_eur_año = {
-        componente: fraccion * balance_eur["realizable"] for componente, fraccion in anterior.deudores_perfil_pct.items()
+        componente: fraccion * realizable_residual_año_eur for componente, fraccion in anterior.deudores_perfil_pct.items()
     }
     acreedores_desglose_eur_año = {
         componente: fraccion * balance_eur["acreedores_comerciales"]

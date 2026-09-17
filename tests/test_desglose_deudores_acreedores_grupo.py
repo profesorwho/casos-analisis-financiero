@@ -2,7 +2,9 @@
 comerciales y otras cuentas a cobrar / Acreedores comerciales y otras cuentas a pagar (7
 sub-partidas oficiales cada uno, carve-out de `realizable`/`acreedores_comerciales` — mismo
 patrón "perfil fijo, desglose recalculado cada año" que el lote 1, ver
-test_desglose_existencias_periodificaciones.py) y las dos masas nuevas que el arquetipo 20
+test_desglose_existencias_periodificaciones.py). El residuo de `realizable` excluye
+`periodificacion_activo_eur` (primer lote) — `acreedores_comerciales` no tiene ninguna partida de
+activo que excluir, sigue sin cambios — y las dos masas nuevas que el arquetipo 20
 ("Operaciones vinculadas") puede activar cuando selecciona una de sus 2 operaciones FINANCIERAS:
 "Inversiones en empresas del grupo y asociadas a l/p" (préstamo a matriz) y "Deudas con empresas
 del grupo y asociadas a l/p" (financiación recibida de grupo) — ver motor/evolucion_arquetipo.py,
@@ -69,12 +71,17 @@ COMPONENTES_ACREEDORES = tuple(next(iter(PERFIL_ACREEDORES_POR_CATEGORIA.values(
 
 
 def test_deudores_acreedores_desglose_suma_100_por_ciento_en_empresa_base(catalogo):
+    """La base de `deudores_desglose_eur` excluye `periodificacion_activo_eur` (primer lote,
+    perfil fijo desde 2023, puede tener saldo no nulo ya en el año base) — mismo criterio que el
+    residuo de "otras deudas" (quinto lote). `acreedores_comerciales` no tiene ninguna partida de
+    activo que excluir, sigue sumando exacto contra el agregado bruto."""
     for codigo in _sectores(catalogo):
         for semilla in range(3):
             empresa = generar_empresa_base(codigo, "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=semilla, catalogo=catalogo)
             assert sum(empresa.deudores_perfil_pct.values()) == pytest.approx(1.0, abs=1e-9)
             assert sum(empresa.acreedores_perfil_pct.values()) == pytest.approx(1.0, abs=1e-9)
-            assert sum(empresa.deudores_desglose_eur.values()) == pytest.approx(empresa.balance_eur["realizable"], abs=0.01)
+            realizable_residual_eur = empresa.balance_eur["realizable"] - empresa.periodificacion_activo_eur
+            assert sum(empresa.deudores_desglose_eur.values()) == pytest.approx(realizable_residual_eur, abs=0.01)
             assert sum(empresa.acreedores_desglose_eur.values()) == pytest.approx(
                 empresa.balance_eur["acreedores_comerciales"], abs=0.01
             )
@@ -100,8 +107,9 @@ def test_deudores_acreedores_desglose_suma_100_por_ciento_en_evolucion_con_exces
             for ejercicio in evolucion.ejercicios.values():
                 assert ejercicio.deudores_perfil_pct == perfil_deudores_2023
                 assert ejercicio.acreedores_perfil_pct == perfil_acreedores_2023
+                realizable_residual_eur = ejercicio.balance_eur["realizable"] - ejercicio.periodificacion_activo_eur
                 assert sum(ejercicio.deudores_desglose_eur.values()) == pytest.approx(
-                    ejercicio.balance_eur["realizable"], abs=0.01
+                    realizable_residual_eur, abs=0.01
                 )
                 assert sum(ejercicio.acreedores_desglose_eur.values()) == pytest.approx(
                     ejercicio.balance_eur["acreedores_comerciales"], abs=0.01
