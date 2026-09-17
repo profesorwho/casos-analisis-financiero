@@ -513,6 +513,9 @@ from motor.empresa_base import (
     EmpresaBase,
     EmpresaBaseError,
     calcular_desglose_deudas_fin,
+    calcular_desglose_gastos_personal,
+    calcular_desglose_ingresos_financieros,
+    calcular_desglose_otros_gastos_explot,
     categoria_de_sector,
     generar_empresa_base,
     resolver_fila_sector,
@@ -1276,6 +1279,40 @@ class EjercicioEmpresa:
     deudas_fin_largo_desglose_eur: dict[str, float] = field(default_factory=dict)
     deudas_fin_corto_desglose_eur: dict[str, float] = field(default_factory=dict)
 
+    # --- Desglose de PyG en líneas oficiales del PGC (encargo 1/2 de este lote, ver
+    # motor/empresa_base.py) — perfiles (%) fijos desde 2023 para cifra_negocios/consumos_
+    # explotacion/otros_gastos_explot, desglose (€) recalculado cada año sobre el agregado ya
+    # generado de ese año. gastos_personal/ingresos_financieros son fórmula derivada (sin perfil
+    # propio ni ruido) — ver calcular_desglose_gastos_personal/calcular_desglose_ingresos_
+    # financieros en motor.empresa_base. ---
+    pyg_cifra_negocios_perfil_pct: dict[str, float] = field(default_factory=dict)
+    pyg_cifra_negocios_desglose_eur: dict[str, float] = field(default_factory=dict)
+    pyg_consumos_explotacion_perfil_pct: dict[str, float] = field(default_factory=dict)
+    pyg_consumos_explotacion_desglose_eur: dict[str, float] = field(default_factory=dict)
+    pyg_otros_gastos_explot_perfil_pct: dict[str, float] = field(default_factory=dict)
+    pyg_otros_gastos_explot_desglose_eur: dict[str, float] = field(default_factory=dict)
+    pyg_gastos_personal_desglose_eur: dict[str, float] = field(default_factory=dict)
+    pyg_ingresos_financieros_desglose_eur: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def pyg_linea_13_otros_resultados_eur(self) -> float:
+        """Línea oficial "13. Otros resultados" del modelo PGC (dentro del resultado de
+        explotación) — el PGC 2007 no tiene categoría "extraordinarios". Alias de `pyg_eur[
+        "resultado_extraordinario"]`, ya sumado dentro de `baii` en `_generar_pyg_hasta_baii`
+        (motor.empresa_base): no hay ningún cambio numérico, solo de nomenclatura/ubicación
+        oficial — la partida interna `resultado_extraordinario` sigue existiendo sin cambios
+        para el análisis y los arquetipos (12, "evento puntual") que la usan."""
+        return self.pyg_eur["resultado_extraordinario"]
+
+    @property
+    def pyg_linea_10_excesos_provisiones_eur(self) -> float:
+        """Línea oficial "10. Excesos de provisiones" del modelo PGC — suma de las reversiones de
+        ESTE año de provisiones (subgrupo 14, `motor.provisiones`) e insolvencias de clientes
+        (cuenta 490, `motor.insolvencias`), ya incluidas dentro de `pyg_eur["otros_ingresos_
+        explot"]` (ver `_evaluar` en este módulo): expuesta aparte solo como referencia a la
+        línea oficial, sin ningún importe nuevo ni sorteo adicional."""
+        return self.provision_exceso_eur + self.insolvencia_exceso_eur
+
     @property
     def periodificacion_activo_eur(self) -> float:
         return self.periodificacion_activo_pct * self.balance_eur["realizable"]
@@ -1383,6 +1420,14 @@ def _ejercicio_desde_empresa_base(empresa: EmpresaBase) -> EjercicioEmpresa:
         deudas_fin_fraccion_largo=dict(empresa.deudas_fin_fraccion_largo),
         deudas_fin_largo_desglose_eur=dict(empresa.deudas_fin_largo_desglose_eur),
         deudas_fin_corto_desglose_eur=dict(empresa.deudas_fin_corto_desglose_eur),
+        pyg_cifra_negocios_perfil_pct=dict(empresa.pyg_cifra_negocios_perfil_pct),
+        pyg_cifra_negocios_desglose_eur=dict(empresa.pyg_cifra_negocios_desglose_eur),
+        pyg_consumos_explotacion_perfil_pct=dict(empresa.pyg_consumos_explotacion_perfil_pct),
+        pyg_consumos_explotacion_desglose_eur=dict(empresa.pyg_consumos_explotacion_desglose_eur),
+        pyg_otros_gastos_explot_perfil_pct=dict(empresa.pyg_otros_gastos_explot_perfil_pct),
+        pyg_otros_gastos_explot_desglose_eur=dict(empresa.pyg_otros_gastos_explot_desglose_eur),
+        pyg_gastos_personal_desglose_eur=dict(empresa.pyg_gastos_personal_desglose_eur),
+        pyg_ingresos_financieros_desglose_eur=dict(empresa.pyg_ingresos_financieros_desglose_eur),
         # Cobertura/subvención: en el año base (2023) todo el estado parte de cero — Δr no
         # existe todavía (no hay "año anterior" dentro de la serie) y la subvención nunca se
         # concede en 2023 (año_concesion siempre 2024 o 2025, ver
@@ -2598,6 +2643,36 @@ def _evolucionar_un_año(
         deudas_fin_largo_con_coste_año_eur, balance_eur["deudas_fin_corto"], derivados_pasivo_largo_eur,
     )
 
+    # Desglose de PyG en líneas oficiales del PGC (encargo 1/2 de este lote) — perfiles (%)
+    # constantes ya fijados "desde 2023" para cifra_negocios/consumos_explotacion/otros_gastos_
+    # explot, aplicados al agregado YA final de este año (`pyg_eur`, después de cualquier ajuste
+    # de arquetipo/grupo89/provisión/insolvencia — mismo criterio que existencias/deudores).
+    # "Pérdidas por operaciones comerciales" y "Provisiones" (gastos_personal) enlazan la
+    # dotación de ESTE año de insolvencias/provisiones, nunca un sorteo nuevo. "De empresas del
+    # grupo" (ingresos_financieros) enlaza `inversion_grupo_largo_eur` de ESTE año (0.0 salvo que
+    # el arquetipo 20 haya activado esa operación concreta).
+    categoria_pyg_oficial = categoria_de_sector(sector)
+    pyg_cifra_negocios_desglose_eur_año = {
+        componente: fraccion * pyg_eur["cifra_negocios"]
+        for componente, fraccion in anterior.pyg_cifra_negocios_perfil_pct.items()
+    }
+    pyg_consumos_explotacion_desglose_eur_año = {
+        componente: fraccion * pyg_eur["consumos_explotacion"]
+        for componente, fraccion in anterior.pyg_consumos_explotacion_perfil_pct.items()
+    }
+    pyg_otros_gastos_explot_desglose_eur_año = calcular_desglose_otros_gastos_explot(
+        anterior.pyg_otros_gastos_explot_perfil_pct, pyg_eur["otros_gastos_explot"], paso_insolvencia.dotacion_eur,
+    )
+    provision_dotacion_gastos_personal_eur = (
+        paso_provision.dotacion_eur if parametros_provision.naturaleza_pyg == "gastos_personal" else 0.0
+    )
+    pyg_gastos_personal_desglose_eur_año = calcular_desglose_gastos_personal(
+        año, categoria_pyg_oficial, pyg_eur["gastos_personal"], provision_dotacion_gastos_personal_eur,
+    )
+    pyg_ingresos_financieros_desglose_eur_año = calcular_desglose_ingresos_financieros(
+        pyg_eur["ingresos_financieros"], inversion_grupo_largo_eur, parcial_pyg.tipo_interes,
+    )
+
     return EjercicioEmpresa(
         año=año,
         ventas=ventas,
@@ -2705,6 +2780,14 @@ def _evolucionar_un_año(
         insolvencia_aplicacion_eur=paso_insolvencia.aplicacion_eur,
         insolvencia_exceso_eur=paso_insolvencia.exceso_eur,
         insolvencia_deduccion_realizable_eur=paso_insolvencia.deduccion_realizable_eur,
+        pyg_cifra_negocios_perfil_pct=anterior.pyg_cifra_negocios_perfil_pct,
+        pyg_cifra_negocios_desglose_eur=pyg_cifra_negocios_desglose_eur_año,
+        pyg_consumos_explotacion_perfil_pct=anterior.pyg_consumos_explotacion_perfil_pct,
+        pyg_consumos_explotacion_desglose_eur=pyg_consumos_explotacion_desglose_eur_año,
+        pyg_otros_gastos_explot_perfil_pct=anterior.pyg_otros_gastos_explot_perfil_pct,
+        pyg_otros_gastos_explot_desglose_eur=pyg_otros_gastos_explot_desglose_eur_año,
+        pyg_gastos_personal_desglose_eur=pyg_gastos_personal_desglose_eur_año,
+        pyg_ingresos_financieros_desglose_eur=pyg_ingresos_financieros_desglose_eur_año,
         deudas_fin_fraccion_total=anterior.deudas_fin_fraccion_total,
         deudas_fin_fraccion_largo=anterior.deudas_fin_fraccion_largo,
         deudas_fin_largo_desglose_eur=deudas_fin_largo_desglose_eur_año,

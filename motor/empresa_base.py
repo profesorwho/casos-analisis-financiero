@@ -705,6 +705,215 @@ def categoria_de_sector(sector_codigo: str) -> str:
     return CATEGORIA_SECTOR[sector_codigo]
 
 
+# --------------------------------------------------------------------------------------------
+# Desglose de PyG en líneas oficiales del PGC (Ronda 1 del encargo de desglose de PyG) — se
+# AÑADE ENCIMA de los agregados de `PRIMITIVAS_PYG` (que siguen existiendo sin cambios para el
+# análisis interno): cada bloque de abajo reparte un agregado YA generado en sus sub-partidas
+# oficiales, sin sortear el agregado dos veces. HIPÓTESIS DE DISEÑO salvo donde se indica un
+# anclaje externo (gastos_personal → cargas sociales). Perfil por CATEGORÍA de sector (las
+# mismas 9 de CATEGORIA_SECTOR), mismo mecanismo de ruido mixto/renormalizado a 1.0 que
+# `generar_perfil_existencias`, con RNG PROPIO E INDEPENDIENTE (no desplaza ningún sorteo ya
+# existente).
+#
+# 1) Cifra de negocios -> a) Ventas / b) Prestación de servicios. Sin dato ACCID que lo
+#    respalde: industria/comercio_hosteleria/construccion venden mayoritariamente bienes
+#    físicos (ventas dominante); servicios_profesionales/servicios_tic son prestación de
+#    servicios casi pura; el resto (servicios_industriales, transporte_logistica,
+#    administracion_educacion_sanidad, inmobiliario) se trata como mixto, sin dominancia clara.
+PERFIL_CIFRA_NEGOCIOS_POR_CATEGORIA: dict[str, dict[str, float]] = {
+    "industria": {"ventas": 0.90, "servicios": 0.10},
+    "comercio_hosteleria": {"ventas": 0.92, "servicios": 0.08},
+    "construccion": {"ventas": 0.75, "servicios": 0.25},
+    "servicios_profesionales": {"ventas": 0.05, "servicios": 0.95},
+    "servicios_tic": {"ventas": 0.10, "servicios": 0.90},
+    "servicios_industriales": {"ventas": 0.45, "servicios": 0.55},
+    "transporte_logistica": {"ventas": 0.35, "servicios": 0.65},
+    "administracion_educacion_sanidad": {"ventas": 0.15, "servicios": 0.85},
+    "inmobiliario": {"ventas": 0.55, "servicios": 0.45},
+}
+
+# 2) Consumos de explotación -> a) Mercaderías / b) Materias primas y otros aprovisionamientos /
+#    c) Trabajos realizados por otras empresas / d) Deterioro de mercaderías, materias primas y
+#    otros aprovisionamientos. Comercio/hostelería reventa mercadería (a dominante); industria
+#    consume materia prima propia (b dominante); construcción/servicios subcontratan una parte
+#    grande de su "coste de ventas" (c dominante en construcción y en los 2 sectores de
+#    servicios, donde apenas hay materia prima real que consumir).
+PERFIL_CONSUMOS_EXPLOTACION_POR_CATEGORIA: dict[str, dict[str, float]] = {
+    "industria": {"materias_primas": 0.75, "mercaderias": 0.05, "trabajos_otras_empresas": 0.15, "deterioro": 0.05},
+    "comercio_hosteleria": {"mercaderias": 0.80, "materias_primas": 0.10, "trabajos_otras_empresas": 0.05, "deterioro": 0.05},
+    "construccion": {"trabajos_otras_empresas": 0.50, "materias_primas": 0.35, "mercaderias": 0.05, "deterioro": 0.10},
+    "servicios_profesionales": {"trabajos_otras_empresas": 0.70, "mercaderias": 0.10, "materias_primas": 0.10, "deterioro": 0.10},
+    "servicios_tic": {"trabajos_otras_empresas": 0.65, "mercaderias": 0.15, "materias_primas": 0.05, "deterioro": 0.15},
+    "servicios_industriales": {"trabajos_otras_empresas": 0.45, "materias_primas": 0.30, "mercaderias": 0.10, "deterioro": 0.15},
+    "transporte_logistica": {"materias_primas": 0.55, "trabajos_otras_empresas": 0.30, "mercaderias": 0.10, "deterioro": 0.05},
+    "administracion_educacion_sanidad": {"trabajos_otras_empresas": 0.40, "materias_primas": 0.35, "mercaderias": 0.10, "deterioro": 0.15},
+    "inmobiliario": {"trabajos_otras_empresas": 0.55, "materias_primas": 0.15, "mercaderias": 0.10, "deterioro": 0.20},
+}
+
+# 3) Otros gastos de explotación -> a) Servicios exteriores / b) Tributos / c) Pérdidas,
+#    deterioro y variación de provisiones por operaciones comerciales / d) Otros gastos de
+#    gestión corriente / e) Gases de efecto invernadero. Solo a)/b)/d) llevan perfil propio (3
+#    componentes, suman 1.0): c) es la dotación YA sorteada de `motor.insolvencias` (cuenta 490,
+#    nunca un sorteo nuevo — ver `calcular_desglose_otros_gastos_explot`); e) siempre 0.0, sin
+#    mecanismo que lo alimente (fuera de alcance documentado, igual criterio que
+#    `b_resto_fuera_de_alcance` del Documento A del ECPN). Servicios exteriores domina en todos
+#    los sectores (alquileres, suministros, profesionales independientes); inmobiliario lleva
+#    más peso en tributos (IBI).
+PERFIL_OTROS_GASTOS_EXPLOT_POR_CATEGORIA: dict[str, dict[str, float]] = {
+    "industria": {"servicios_exteriores": 0.75, "tributos": 0.10, "otros_gestion_corriente": 0.15},
+    "servicios_industriales": {"servicios_exteriores": 0.80, "tributos": 0.08, "otros_gestion_corriente": 0.12},
+    "servicios_profesionales": {"servicios_exteriores": 0.85, "tributos": 0.05, "otros_gestion_corriente": 0.10},
+    "servicios_tic": {"servicios_exteriores": 0.85, "tributos": 0.05, "otros_gestion_corriente": 0.10},
+    "transporte_logistica": {"servicios_exteriores": 0.78, "tributos": 0.09, "otros_gestion_corriente": 0.13},
+    "comercio_hosteleria": {"servicios_exteriores": 0.75, "tributos": 0.10, "otros_gestion_corriente": 0.15},
+    "construccion": {"servicios_exteriores": 0.72, "tributos": 0.12, "otros_gestion_corriente": 0.16},
+    "administracion_educacion_sanidad": {"servicios_exteriores": 0.80, "tributos": 0.07, "otros_gestion_corriente": 0.13},
+    "inmobiliario": {"servicios_exteriores": 0.70, "tributos": 0.15, "otros_gestion_corriente": 0.15},
+}
+
+DISPERSION_PERFIL_PYG_OFICIAL = 0.20
+SUELO_COMPONENTE_PYG_OFICIAL_PCT = 0.005
+
+# 4) Gastos de personal -> a) Sueldos y salarios / b) Cargas sociales / c) Provisiones. b) está
+# ANCLADO EXTERNAMENTE (no es una hipótesis de diseño): tipos de cotización empresarial vigentes
+# para 2023-2025, verificados contra el BOE (Orden anual de cotización a la Seguridad Social).
+# Verificado explícitamente para este encargo (septiembre de 2026, no de memoria) que la Orden
+# PJC/178/2025 (la vigente cuando se redactó el encargo) sigue siendo la aplicable a estos 3
+# años: existe una Orden más reciente, PJC/297/2026 (BOE 31/03/2026), pero rige el ejercicio
+# 2026, fuera del rango que genera este motor (siempre 2023-2025) — no cambia nada de lo de
+# abajo. Contingencias comunes (23,60pp empresa), desempleo régimen general indefinido (5,50pp
+# empresa), FOGASA (0,20pp) y formación profesional (0,60pp empresa) se mantuvieron PLANOS los 3
+# años (sin cambio legal en el periodo, confirmado contra la propia Orden 2026, que "mantiene los
+# tipos del ejercicio anterior" en estos 4 conceptos) — total plano 29,90pp. El MEI (Mecanismo de
+# Equidad Intergeneracional, Ley 21/2021) SÍ escala cada año de su implantación progresiva:
+# 0,50pp (2023), 0,58pp (2024), 0,67pp (2025) de cuota empresarial — verificado externamente
+# (evolución 0,60/0,70/0,80pp total, ~5/6 a cargo de la empresa cada año). La prima de accidentes
+# de trabajo, en cambio, SÍ es una hipótesis de diseño (varía por actividad real de cada empresa,
+# no por sector agregado con precisión suficiente para anclarla): se usa el orden de magnitud de
+# la Tarifa de primas (RD 2930/1979) — construcción/industria/transporte con activo material y
+# riesgo físico más alto, oficina (servicios profesionales/TIC) en el mínimo legal.
+TASA_CARGAS_SOCIALES_BASE_PP = 0.2990  # 23,60 (CC) + 5,50 (desempleo indefinido) + 0,20 (FOGASA) + 0,60 (FP), empresa
+MEI_EMPRESARIAL_PP_POR_AÑO: dict[int, float] = {2023: 0.0050, 2024: 0.0058, 2025: 0.0067}
+PRIMA_ACCIDENTES_TRABAJO_POR_CATEGORIA: dict[str, float] = {
+    "construccion": 0.0650,
+    "industria": 0.0400,
+    "transporte_logistica": 0.0350,
+    "servicios_industriales": 0.0300,
+    "comercio_hosteleria": 0.0250,
+    "inmobiliario": 0.0200,
+    "administracion_educacion_sanidad": 0.0180,
+    "servicios_profesionales": 0.0150,
+    "servicios_tic": 0.0150,
+}
+
+
+def generar_perfil_cifra_negocios(rng: np.random.Generator, categoria: str) -> tuple[dict[str, float], dict[str, str]]:
+    """Las 2 fracciones oficiales de cifra de negocios (ventas/servicios) para UN caso — sorteo
+    único por empresa (no por año), mismo mecanismo que `generar_perfil_activo_no_corriente`.
+    Devuelve también el modo típico/atípico de cada componente."""
+    perfil_centro = PERFIL_CIFRA_NEGOCIOS_POR_CATEGORIA[categoria]
+    brutos, modos = {}, {}
+    for componente, centro in perfil_centro.items():
+        valor, modo = _generar_partida(rng, centro, centro * DISPERSION_PERFIL_PYG_OFICIAL, suelo=SUELO_COMPONENTE_PYG_OFICIAL_PCT)
+        brutos[componente] = valor
+        modos[componente] = modo
+    return _renormalizar_a_total(brutos, 1.0), modos
+
+
+def generar_perfil_consumos_explotacion(rng: np.random.Generator, categoria: str) -> tuple[dict[str, float], dict[str, str]]:
+    """Las 4 fracciones oficiales de consumos de explotación para UN caso — mismo mecanismo que
+    `generar_perfil_cifra_negocios`."""
+    perfil_centro = PERFIL_CONSUMOS_EXPLOTACION_POR_CATEGORIA[categoria]
+    brutos, modos = {}, {}
+    for componente, centro in perfil_centro.items():
+        valor, modo = _generar_partida(rng, centro, centro * DISPERSION_PERFIL_PYG_OFICIAL, suelo=SUELO_COMPONENTE_PYG_OFICIAL_PCT)
+        brutos[componente] = valor
+        modos[componente] = modo
+    return _renormalizar_a_total(brutos, 1.0), modos
+
+
+def generar_perfil_otros_gastos_explot(rng: np.random.Generator, categoria: str) -> tuple[dict[str, float], dict[str, str]]:
+    """Las 3 fracciones CON perfil propio de "Otros gastos de explotación" (servicios exteriores/
+    tributos/otros gastos de gestión corriente) para UN caso — mismo mecanismo que
+    `generar_perfil_cifra_negocios`. "Pérdidas por operaciones comerciales" (enlazada a
+    `motor.insolvencias`) y "Gases de efecto invernadero" (siempre 0) NO forman parte de este
+    perfil — ver `calcular_desglose_otros_gastos_explot`."""
+    perfil_centro = PERFIL_OTROS_GASTOS_EXPLOT_POR_CATEGORIA[categoria]
+    brutos, modos = {}, {}
+    for componente, centro in perfil_centro.items():
+        valor, modo = _generar_partida(rng, centro, centro * DISPERSION_PERFIL_PYG_OFICIAL, suelo=SUELO_COMPONENTE_PYG_OFICIAL_PCT)
+        brutos[componente] = valor
+        modos[componente] = modo
+    return _renormalizar_a_total(brutos, 1.0), modos
+
+
+def calcular_desglose_otros_gastos_explot(
+    perfil_abd: dict[str, float], otros_gastos_explot_eur: float, perdidas_deterioro_comercial_eur: float
+) -> dict[str, float]:
+    """Las 5 sub-partidas oficiales de "Otros gastos de explotación" de ESTE año. `perfil_abd`
+    (servicios exteriores/tributos/otros gastos de gestión corriente, suma 1.0) se aplica sobre
+    el RESTO del agregado tras restar `perdidas_deterioro_comercial_eur` (la dotación de
+    insolvencia de ESTE año, `motor.insolvencias.PasoInsolvencia.dotacion_eur` — nunca un sorteo
+    nuevo), nunca sobre el agregado completo, para que las 5 sub-partidas sumen EXACTO al
+    agregado. Tope defensivo: si la dotación de insolvencia superara el propio agregado (no
+    observado en el barrido, pero posible en un sector con `otros_gastos_explot` marginal), se
+    trunca a él en vez de dejar a)/b)/d) en negativo — `otros_gastos_explot_eur` en sí nunca es
+    negativo (suelo de `PRIMITIVAS_PYG_NO_NEGATIVAS`)."""
+    perdidas_eur = max(0.0, min(perdidas_deterioro_comercial_eur, otros_gastos_explot_eur))
+    resto_eur = otros_gastos_explot_eur - perdidas_eur
+    desglose = {componente: fraccion * resto_eur for componente, fraccion in perfil_abd.items()}
+    desglose["perdidas_deterioro_operaciones_comerciales"] = perdidas_eur
+    desglose["gases_efecto_invernadero"] = 0.0
+    return desglose
+
+
+def tasa_cargas_sociales_pct(año: int, categoria: str) -> float:
+    """Tipo de cotización empresarial total (contingencias comunes + desempleo + FOGASA + FP +
+    MEI + accidentes de trabajo) — ver docstring de las constantes arriba para el anclaje
+    externo (BOE) y la hipótesis de diseño (prima de accidentes por categoría)."""
+    return TASA_CARGAS_SOCIALES_BASE_PP + MEI_EMPRESARIAL_PP_POR_AÑO[año] + PRIMA_ACCIDENTES_TRABAJO_POR_CATEGORIA[categoria]
+
+
+def calcular_desglose_gastos_personal(
+    año: int, categoria: str, gastos_personal_eur: float, provision_dotacion_gastos_personal_eur: float
+) -> dict[str, float]:
+    """Las 3 sub-partidas oficiales de "Gastos de personal" de ESTE año: c) "Provisiones" es la
+    dotación YA sorteada de `motor.provisiones` cuando su naturaleza es "gastos_personal" (nunca
+    un sorteo nuevo, 0.0 en el año base y en cualquier año sin esa provisión activa). a)/b) se
+    derivan del RESTO (`gastos_personal_eur - provisiones`) mediante `tasa_cargas_sociales_pct`:
+    b = resto x tasa/(1+tasa), a = resto - b — puramente derivado (sin ruido propio, a diferencia
+    de los perfiles a/b/d de consumos_explotacion/otros_gastos_explot: b) es un tipo legal, no una
+    hipótesis de diseño). Mismo tope defensivo que `calcular_desglose_otros_gastos_explot`."""
+    provisiones_eur = max(0.0, min(provision_dotacion_gastos_personal_eur, gastos_personal_eur))
+    resto_eur = gastos_personal_eur - provisiones_eur
+    tasa = tasa_cargas_sociales_pct(año, categoria)
+    cargas_sociales_eur = resto_eur * tasa / (1 + tasa)
+    sueldos_salarios_eur = resto_eur - cargas_sociales_eur
+    return {
+        "sueldos_salarios": sueldos_salarios_eur,
+        "cargas_sociales": cargas_sociales_eur,
+        "provisiones": provisiones_eur,
+    }
+
+
+def calcular_desglose_ingresos_financieros(
+    ingresos_financieros_eur: float, inversion_grupo_largo_eur: float, tipo_interes: float
+) -> dict[str, float]:
+    """Las 2 sub-partidas oficiales de "Ingresos financieros" de ESTE año: a) "De empresas del
+    grupo y asociadas" se deriva de `inversion_grupo_largo_eur` (arquetipo 20, operación
+    "préstamo a matriz") x el tipo de interés YA calculado del caso — sin sorteo nuevo, 0.0 si el
+    arquetipo 20 no ha activado esa operación concreta (`inversion_grupo_largo_eur=0.0`). Topado
+    al agregado ya sorteado (`min`, nunca negativo): el agregado de `ingresos_financieros` y el
+    préstamo intragrupo son magnitudes independientes por diseño (ninguna informa a la otra en
+    ningún otro punto del motor) — en el caso raro en que la fórmula supere el agregado, se trata
+    como si TODO el ingreso financiero del año viniera del grupo, en vez de dejar b) "De terceros"
+    en negativo."""
+    bruto_grupo_eur = max(0.0, inversion_grupo_largo_eur) * tipo_interes
+    empresas_grupo_eur = max(0.0, min(bruto_grupo_eur, ingresos_financieros_eur))
+    terceros_eur = ingresos_financieros_eur - empresas_grupo_eur
+    return {"empresas_grupo": empresas_grupo_eur, "terceros": terceros_eur}
+
+
 def _redondear_cifra_vistosa(valor: float) -> float:
     """Redondea a una cifra de aspecto realista para capital social (los importes reales suelen
     ser números redondos: 60.000€, 3.000.000€, no 2.847.193,17€) — redondeo a 2 cifras
@@ -866,6 +1075,19 @@ class EmpresaBase:
     deudas_fin_fraccion_largo: dict[str, float] = field(default_factory=dict)
     deudas_fin_largo_desglose_eur: dict[str, float] = field(default_factory=dict)
     deudas_fin_corto_desglose_eur: dict[str, float] = field(default_factory=dict)
+    # Desglose de PyG en líneas oficiales del PGC (encargo 1/2 de este lote) — perfiles (%) fijos
+    # desde 2023 para cifra_negocios/consumos_explotacion/otros_gastos_explot (arquetipo-
+    # agnósticos), desglose (€) recalculado cada año sobre el agregado ya generado de ese año.
+    # gastos_personal/ingresos_financieros NO llevan perfil propio (fórmula derivada, sin ruido:
+    # ver calcular_desglose_gastos_personal/calcular_desglose_ingresos_financieros).
+    pyg_cifra_negocios_perfil_pct: dict[str, float] = field(default_factory=dict)
+    pyg_cifra_negocios_desglose_eur: dict[str, float] = field(default_factory=dict)
+    pyg_consumos_explotacion_perfil_pct: dict[str, float] = field(default_factory=dict)
+    pyg_consumos_explotacion_desglose_eur: dict[str, float] = field(default_factory=dict)
+    pyg_otros_gastos_explot_perfil_pct: dict[str, float] = field(default_factory=dict)
+    pyg_otros_gastos_explot_desglose_eur: dict[str, float] = field(default_factory=dict)
+    pyg_gastos_personal_desglose_eur: dict[str, float] = field(default_factory=dict)
+    pyg_ingresos_financieros_desglose_eur: dict[str, float] = field(default_factory=dict)
 
 
 def _mapa_codigo_sector(catalogo: pd.DataFrame) -> dict[str, str]:
@@ -1287,6 +1509,33 @@ def _generar_empresa_base_interno(
     parcial_pyg = _generar_pyg_hasta_baii(rng, fila, ventas_objetivo, _AÑO_BASE_AMORTIZACION, amortizaciones_eur=amortizacion_eur_2023)
     pyg_pct, pyg_eur = _completar_pyg_con_deuda(parcial_pyg, deuda_financiera_eur)
 
+    # Desglose de PyG en líneas oficiales del PGC — RNG PROPIO E INDEPENDIENTE, mismo criterio
+    # que el resto de perfiles de este bloque: no desplaza ningún sorteo ya existente. En el año
+    # base ni provisiones ni insolvencia se dotan nunca (año_dotacion siempre 2024/2025) ni el
+    # arquetipo 20 está activo (los arquetipos solo actúan desde 2024) — el "resto" de otros_
+    # gastos_explot/gastos_personal es el agregado completo, y a) de ingresos_financieros es 0.
+    rng_desglose_pyg_oficial = np.random.default_rng(
+        [semilla, zlib.crc32(f"{sector}|{segmento}|desglose_pyg_oficial".encode("utf-8"))]
+    )
+    perfil_cifra_negocios, modos_cifra_negocios = generar_perfil_cifra_negocios(rng_desglose_pyg_oficial, categoria)
+    perfil_consumos_explotacion, modos_consumos_explotacion = generar_perfil_consumos_explotacion(rng_desglose_pyg_oficial, categoria)
+    perfil_otros_gastos_explot, modos_otros_gastos_explot = generar_perfil_otros_gastos_explot(rng_desglose_pyg_oficial, categoria)
+    pyg_cifra_negocios_desglose_eur = {
+        componente: fraccion * pyg_eur["cifra_negocios"] for componente, fraccion in perfil_cifra_negocios.items()
+    }
+    pyg_consumos_explotacion_desglose_eur = {
+        componente: fraccion * pyg_eur["consumos_explotacion"] for componente, fraccion in perfil_consumos_explotacion.items()
+    }
+    pyg_otros_gastos_explot_desglose_eur = calcular_desglose_otros_gastos_explot(
+        perfil_otros_gastos_explot, pyg_eur["otros_gastos_explot"], 0.0
+    )
+    pyg_gastos_personal_desglose_eur = calcular_desglose_gastos_personal(
+        _AÑO_BASE_AMORTIZACION, categoria, pyg_eur["gastos_personal"], 0.0
+    )
+    pyg_ingresos_financieros_desglose_eur = calcular_desglose_ingresos_financieros(
+        pyg_eur["ingresos_financieros"], 0.0, parcial_pyg.tipo_interes
+    )
+
     # Hallazgo de auditoría de trazabilidad (sección 2.15/resumen de particularidades): los
     # perfiles "sorteados una vez por caso, fijos desde 2023" de los lotes de desglose de balance
     # (existencias, deudores/acreedores, deudas financieras) descartaban el modo típico/atípico de
@@ -1308,6 +1557,11 @@ def _generar_empresa_base_interno(
         **{f"acreedores.{componente}": modo for componente, modo in modos_acreedores.items()},
         **{f"deudas_fin_fraccion_total.{tipo}": modo for tipo, modo in modos_deudas_fin_total.items()},
         **{f"deudas_fin_fraccion_largo.{tipo}": modo for tipo, modo in modos_deudas_fin_largo.items()},
+        **{f"pyg_cifra_negocios.{c}": m for c, m in modos_cifra_negocios.items()},
+        **{f"pyg_consumos_explotacion.{c}": m for c, m in modos_consumos_explotacion.items()},
+        **{f"pyg_otros_gastos_explot.{c}": m for c, m in modos_otros_gastos_explot.items()},
+        "pyg_gastos_personal": "derivado",
+        "pyg_ingresos_financieros": "derivado",
     }
 
     # Desagregación de PN (ver docstrings de las constantes arriba) — sorteo AÑADIDO AL FINAL de
@@ -1355,4 +1609,12 @@ def _generar_empresa_base_interno(
         deudas_fin_fraccion_largo=deudas_fin_fraccion_largo,
         deudas_fin_largo_desglose_eur=deudas_fin_largo_desglose_eur,
         deudas_fin_corto_desglose_eur=deudas_fin_corto_desglose_eur,
+        pyg_cifra_negocios_perfil_pct=perfil_cifra_negocios,
+        pyg_cifra_negocios_desglose_eur=pyg_cifra_negocios_desglose_eur,
+        pyg_consumos_explotacion_perfil_pct=perfil_consumos_explotacion,
+        pyg_consumos_explotacion_desglose_eur=pyg_consumos_explotacion_desglose_eur,
+        pyg_otros_gastos_explot_perfil_pct=perfil_otros_gastos_explot,
+        pyg_otros_gastos_explot_desglose_eur=pyg_otros_gastos_explot_desglose_eur,
+        pyg_gastos_personal_desglose_eur=pyg_gastos_personal_desglose_eur,
+        pyg_ingresos_financieros_desglose_eur=pyg_ingresos_financieros_desglose_eur,
     )

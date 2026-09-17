@@ -32,18 +32,31 @@ Documento B comparten EXACTAMENTE el mismo flag `obligatorio` (el que ya calcula
 
 Modelo oficial de filas verificado (misma metodología PGC 2007 que el EFE): saldo inicial del
 ejercicio, total de ingresos y gastos reconocidos, operaciones con socios o propietarios, otras
-variaciones del patrimonio neto, saldo final del ejercicio — aplicado aquí sobre las 5 columnas
-de PN que el motor desagrega (Capital, Reservas y resultados de ejercicios anteriores, Ajustes
+variaciones del patrimonio neto, saldo final del ejercicio — aplicado aquí sobre las 6 columnas
+de PN que el motor desagrega (Capital, Reservas, Resultados de ejercicios anteriores, Ajustes
 por cambios de valor, Subvenciones/donaciones/legados, Resultado del ejercicio) más el TOTAL, en
 vez de las ~12 columnas completas del modelo oficial (prima de emisión, acciones propias, etc. —
-sin mecanismo que las alimente en este motor, ver decisiones_plausibilidad.md).
+sin mecanismo que las alimente en este motor, ver decisiones_plausibilidad.md). "Reservas" y
+"Resultados de ejercicios anteriores" son columnas SEPARADAS del modelo oficial (antes de este
+encargo se presentaban fusionadas en una sola, ver más abajo) — la desagregación de PN del motor
+(`EjercicioEmpresa.reservas_eur`) no distingue reservas "puras" de resultados de años previos
+más allá del último ejercicio cerrado, así que la separación aplica únicamente a ESE último
+resultado (ver "Reclasificación" abajo); cualquier resultado más antiguo ya quedó incorporado a
+`reservas_eur` en su propio ejercicio de cierre y no se puede desagregar retroactivamente.
 
 **Reclasificación del resultado del ejercicio anterior**: al iniciar el ejercicio t, el
-resultado del ejercicio (t-1) dejó de ser "del ejercicio" — se reclasifica a reservas. Esto ya
-es consistente por construcción con cómo se deriva `EjercicioEmpresa.reservas_eur` (ver
-`empresa_base.py`): reservas(t) = reservas(t-1) + resultado_ejercicio(t-1) -
-apalancamiento_extra_eur(t) — verificado algebraicamente y confirmado por la reconciliación
-exhaustiva (ver validación).
+resultado del ejercicio (t-1) dejó de ser "del ejercicio" — pasa a la columna "Resultados de
+ejercicios anteriores" en el saldo de apertura (antes de este encargo se sumaba directamente a
+"Reservas", fusionando ambas columnas en una — ver más abajo). Dentro del propio ejercicio t, esa
+columna se reclasifica de nuevo a "Reservas" vía la fila "Otras variaciones" (antes siempre 0.0,
+ahora el único movimiento que alimenta esa fila) — por construcción, "Resultados de ejercicios
+anteriores" SIEMPRE cierra el ejercicio en 0.0 (todo lo que entra por el saldo de apertura sale
+por "Otras variaciones" ese mismo año), y el saldo final de "Reservas" no cambia ni un céntimo
+respecto a la versión anterior de este módulo (sigue siendo consistente por construcción con
+cómo se deriva `EjercicioEmpresa.reservas_eur`, ver `empresa_base.py`: reservas(t) = reservas(t-1)
++ resultado_ejercicio(t-1) - apalancamiento_extra_eur(t) - verificado algebraicamente y
+confirmado por la reconciliación exhaustiva, ver validación) — la separación es puramente de
+PRESENTACIÓN (qué fila/columna aloja el importe en qué momento del año), no cambia ningún total.
 
 **Operaciones con socios**: el único mecanismo del motor que mueve PN sin pasar por el resultado
 del ejercicio (ni por las reservas de grupo89) es el arquetipo 9/14 (apalancamiento) — la deuda
@@ -73,13 +86,21 @@ TOLERANCIA_CUADRE_EUR = 0.01
 class FilaECPN:
     capital: float
     reservas: float
+    resultados_ejercicios_anteriores: float
     ajustes_cambio_valor: float
     subvenciones: float
     resultado_ejercicio: float
 
     @property
     def total(self) -> float:
-        return self.capital + self.reservas + self.ajustes_cambio_valor + self.subvenciones + self.resultado_ejercicio
+        return (
+            self.capital
+            + self.reservas
+            + self.resultados_ejercicios_anteriores
+            + self.ajustes_cambio_valor
+            + self.subvenciones
+            + self.resultado_ejercicio
+        )
 
 
 @dataclass(frozen=True)
@@ -174,7 +195,8 @@ def generar_ecpn(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligator
     los dos documentos más de lo necesario (cada uno es autónomo, como en el PGC real)."""
     saldo_inicio = FilaECPN(
         capital=anterior.capital_social_eur,
-        reservas=anterior.reservas_eur + anterior.pyg_eur["resultado_ejercicio"],  # reclasificación
+        reservas=anterior.reservas_eur,  # pura — ya NO incluye el resultado del año anterior, ver docstring
+        resultados_ejercicios_anteriores=anterior.pyg_eur["resultado_ejercicio"],  # reclasificación, columna propia
         ajustes_cambio_valor=anterior.ajustes_cambio_valor_pn_eur,
         subvenciones=anterior.subvenciones_pn_eur,
         resultado_ejercicio=0.0,
@@ -182,6 +204,7 @@ def generar_ecpn(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligator
     total_ingresos_gastos = FilaECPN(
         capital=0.0,
         reservas=0.0,
+        resultados_ejercicios_anteriores=0.0,
         ajustes_cambio_valor=actual.ajustes_cambio_valor_pn_eur - anterior.ajustes_cambio_valor_pn_eur,
         subvenciones=actual.subvenciones_pn_eur - anterior.subvenciones_pn_eur,
         resultado_ejercicio=actual.pyg_eur["resultado_ejercicio"],
@@ -189,15 +212,30 @@ def generar_ecpn(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligator
     operaciones_con_socios = FilaECPN(
         capital=0.0,
         reservas=-(actual.apalancamiento_extra_eur + actual.payout_dividendos_eur),
+        resultados_ejercicios_anteriores=0.0,
         ajustes_cambio_valor=0.0,
         subvenciones=0.0,
         resultado_ejercicio=0.0,
     )
-    otras_variaciones = FilaECPN(capital=0.0, reservas=0.0, ajustes_cambio_valor=0.0, subvenciones=0.0, resultado_ejercicio=0.0)
+    # Única fila que mueve "Resultados de ejercicios anteriores" — reclasifica dentro del propio
+    # ejercicio t el importe que entró por el saldo de apertura hacia "Reservas" (ver docstring):
+    # por construcción, esta columna siempre cierra el año en 0.0, y "Reservas" recupera
+    # exactamente el mismo saldo final que tenía antes de separar ambas columnas.
+    otras_variaciones = FilaECPN(
+        capital=0.0,
+        reservas=saldo_inicio.resultados_ejercicios_anteriores,
+        resultados_ejercicios_anteriores=-saldo_inicio.resultados_ejercicios_anteriores,
+        ajustes_cambio_valor=0.0,
+        subvenciones=0.0,
+        resultado_ejercicio=0.0,
+    )
 
     saldo_final = FilaECPN(
         capital=saldo_inicio.capital + operaciones_con_socios.capital + otras_variaciones.capital,
         reservas=saldo_inicio.reservas + operaciones_con_socios.reservas + otras_variaciones.reservas,
+        resultados_ejercicios_anteriores=(
+            saldo_inicio.resultados_ejercicios_anteriores + otras_variaciones.resultados_ejercicios_anteriores
+        ),
         ajustes_cambio_valor=saldo_inicio.ajustes_cambio_valor + total_ingresos_gastos.ajustes_cambio_valor,
         subvenciones=saldo_inicio.subvenciones + total_ingresos_gastos.subvenciones,
         resultado_ejercicio=total_ingresos_gastos.resultado_ejercicio,
