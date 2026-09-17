@@ -2726,16 +2726,26 @@ def _evolucionar_un_año(
     # de deudas financieras, DESPUÉS de la contención de endeudamiento, sobre el balance YA final
     # de este año. El residuo de cada plazo excluye provisiones (tercer lote)/deudas con el grupo
     # (arquetipo 20)/pasivos por impuesto diferido (grupo 8/9) — ya sumados sobre `otras_deudas_
-    # largo_eur`/`..._corto_eur` más arriba en esta función, antes de `_construir_balance` — para
-    # no re-etiquetar el mismo euro bajo dos epígrafes oficiales distintos (ver motor.empresa_
-    # base.calcular_desglose_otras_deudas). El residuo de corto se defiende con `max(0.0, ...)`:
-    # a diferencia de largo, el plug de cuadre de `_construir_balance` SÍ puede tocar `otras_
-    # deudas_corto` (nunca `otras_deudas_largo`). `aapp_pendiente` se sortea FRESCO cada año (no
-    # forma parte del perfil fijo desde 2023, ver docstring de `sortear_aapp_pendiente_corto_pct`)
-    # con el boost real de arquetipo 4/7 de ESTE año — a diferencia del año base, donde ambos son
-    # siempre False.
-    otras_deudas_largo_residual_año_eur = balance_eur["otras_deudas_largo"] - pasivos_por_impuesto_diferido_eur - deuda_grupo_largo_eur - provision_saldo_largo_eur
-    otras_deudas_corto_residual_año_eur = max(0.0, balance_eur["otras_deudas_corto"] - provision_saldo_corto_eur)
+    # largo_eur`/`..._corto_eur` más arriba en esta función, antes de `_construir_balance` — Y
+    # periodificaciones de pasivo (primer lote): perfil fijo desde 2023 (`anterior.periodificacion_
+    # pasivo_largo_pct`/`..._corto_pct`), aplicado sobre el balance YA final de ESTE año (mismo
+    # criterio que los otros 3 mecanismos, todos recalculados fresco cada año, nunca leídos de
+    # `anterior` directamente) — para no re-etiquetar el mismo euro bajo dos epígrafes oficiales
+    # distintos (ver motor.empresa_base.calcular_desglose_otras_deudas). El residuo de corto se
+    # defiende con `max(0.0, ...)`: a diferencia de largo, el plug de cuadre de `_construir_balance`
+    # SÍ puede tocar `otras_deudas_corto` (nunca `otras_deudas_largo`). `aapp_pendiente` se sortea
+    # FRESCO cada año (no forma parte del perfil fijo desde 2023, ver docstring de `sortear_aapp_
+    # pendiente_corto_pct`) con el boost real de arquetipo 4/7 de ESTE año — a diferencia del año
+    # base, donde ambos son siempre False.
+    periodificacion_pasivo_largo_año_eur = anterior.periodificacion_pasivo_largo_pct * balance_eur["otras_deudas_largo"]
+    periodificacion_pasivo_corto_año_eur = anterior.periodificacion_pasivo_corto_pct * balance_eur["otras_deudas_corto"]
+    otras_deudas_largo_residual_año_eur = (
+        balance_eur["otras_deudas_largo"] - pasivos_por_impuesto_diferido_eur - deuda_grupo_largo_eur
+        - provision_saldo_largo_eur - periodificacion_pasivo_largo_año_eur
+    )
+    otras_deudas_corto_residual_año_eur = max(
+        0.0, balance_eur["otras_deudas_corto"] - provision_saldo_corto_eur - periodificacion_pasivo_corto_año_eur
+    )
     aapp_pendiente_corto_pct_año, _modo_aapp_pendiente_año = sortear_aapp_pendiente_corto_pct(
         sector, segmento, semilla,
         deterioro_ciclo_caja_activo=deterioro_ciclo_caja_activo,

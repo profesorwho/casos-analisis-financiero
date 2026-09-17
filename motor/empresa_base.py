@@ -936,7 +936,8 @@ def calcular_desglose_otras_deudas(
 ) -> tuple[dict[str, float], dict[str, float]]:
     """Ensambla las 4 sub-partidas de cada plazo del quinto lote sobre el residuo YA excluidas
     provisiones (tercer lote)/deudas con el grupo (arquetipo 20)/pasivos por impuesto diferido
-    (grupo 8/9) — ver docstring del módulo. `otras_deudas_corto_residual_eur` se defiende con
+    (grupo 8/9)/periodificaciones de pasivo (primer lote) — ver docstring del módulo.
+    `otras_deudas_corto_residual_eur` se defiende con
     `max(0.0, ...)` en la llamada (no aquí) frente al caso extremo, no observado en el barrido, en
     que el plug de cuadre (que SÍ puede tocar `otras_deudas_corto`, a diferencia de largo) dejara
     el residuo por debajo de 0.
@@ -1805,8 +1806,10 @@ def _generar_empresa_base_interno(
     # Quinto lote de desglose de balance ("Otras deudas" largo/corto plazo) — RNG PROPIO E
     # INDEPENDIENTE, mismo criterio que el resto de perfiles de este bloque. Sin provisiones,
     # deudas con el grupo ni pasivos por impuesto diferido en el año base (ninguno de esos 3
-    # mecanismos actúa antes de 2024) — el residuo de cada plazo es, por tanto, el propio agregado
-    # `otras_deudas_largo`/`otras_deudas_corto` del catálogo, sin nada que excluir todavía. Sin
+    # mecanismos actúa antes de 2024) — pero las periodificaciones de pasivo (primer lote, `periodi
+    # ficacion_pasivo_largo_eur`/`..._corto_eur` calculadas arriba) SÍ pueden tener saldo no nulo ya
+    # en el año base (perfil fijo desde 2023), así que se excluyen del residuo igual que en años
+    # posteriores — para no re-etiquetar el mismo euro bajo dos epígrafes oficiales distintos. Sin
     # reclasificación tampoco (no hay "año anterior" en el año base), mismo criterio que
     # "Derivados" en el cuarto lote. `aapp_pendiente` usa boost=False/False: los arquetipos 4/7
     # nunca actúan en el año base.
@@ -1822,7 +1825,8 @@ def _generar_empresa_base_interno(
     )
     otras_deudas_largo_desglose_eur, otras_deudas_corto_desglose_eur = calcular_desglose_otras_deudas(
         otras_deudas_largo_perfil_pct, otras_deudas_corto_resto_perfil_pct, aapp_pendiente_corto_pct,
-        balance_eur["otras_deudas_largo"], max(0.0, balance_eur["otras_deudas_corto"]),
+        balance_eur["otras_deudas_largo"] - periodificacion_pasivo_largo_eur,
+        max(0.0, balance_eur["otras_deudas_corto"] - periodificacion_pasivo_corto_eur),
         acreedores_inmovilizado_largo_anterior_eur=0.0,
     )
 

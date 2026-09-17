@@ -3,7 +3,8 @@ carve-out de `otras_deudas_largo`/`otras_deudas_corto` (ver motor/empresa_base.p
 `calcular_desglose_otras_deudas`).
 
 Cubre lo pedido explícitamente: residuo excluye provisiones (tercer lote)/deudas con el grupo
-(arquetipo 20)/pasivos por impuesto diferido (grupo 8/9) sin re-etiquetar el mismo euro dos veces;
+(arquetipo 20)/pasivos por impuesto diferido (grupo 8/9)/periodificaciones de pasivo (primer lote)
+sin re-etiquetar el mismo euro dos veces;
 `deudas_socios` con probabilidad de fondo baja y SIN boost de ningún arquetipo; `aapp_pendiente`
 con probabilidad/magnitud ancladas al boost de arquetipo 4 ("deterioro_ciclo_caja")/7
 ("dependencia_pocos_clientes"), mismo mecanismo que `motor/insolvencias.py`; reclasificación anual
@@ -31,7 +32,7 @@ from motor.empresa_base import (
     sortear_deudas_socios_baseline,
 )
 from motor.coberturas_subvenciones import pasivo_por_impuesto_diferido_eur
-from motor.evolucion_arquetipo import generar_evolucion_arquetipo
+from motor.evolucion_arquetipo import AÑO_BASE, generar_evolucion_arquetipo
 from motor.memoria import generar_caso_combinado
 
 VENTAS_OBJETIVO_2023 = 15_000_000.0
@@ -73,20 +74,42 @@ def _pasivos_por_impuesto_diferido_eur(ejercicio) -> float:
 
 
 def _otras_deudas_largo_target_eur(ejercicio) -> float:
-    """El residuo que el quinto lote SÍ desglosa — agregado menos las 3 piezas ya identificadas
-    con su propio epígrafe oficial (provisiones/deudas del grupo/pasivos por impuesto diferido,
-    ver docstring del módulo). `sum(otras_deudas_largo_desglose_eur.values())` debe cuadrar EXACTO
-    contra esto, no contra el agregado bruto (que las incluye)."""
+    """El residuo que el quinto lote SÍ desglosa — agregado menos las 4 piezas ya identificadas
+    con su propio epígrafe oficial (provisiones/deudas del grupo/pasivos por impuesto diferido/
+    periodificaciones de pasivo del primer lote, ver docstring del módulo).
+    `sum(otras_deudas_largo_desglose_eur.values())` debe cuadrar EXACTO contra esto, no contra el
+    agregado bruto (que las incluye).
+
+    Caso especial año base + `financiacion_recibida_grupo`: para esa operación vinculada,
+    `deuda_grupo_largo_eur` de 2023 se SUMA a `balance_eur["otras_deudas_largo"]` DESPUÉS de que
+    `generar_empresa_base` ya congelara el desglose (ver evolucion_arquetipo.py, bloque
+    `elif parametros_operacion_vinculada.tipo_operacion == "financiacion_recibida_grupo"`) — el
+    desglose del año base nunca se recalcula tras ese parche. Por tanto, la periodificación que el
+    desglose realmente excluyó se calculó sobre el balance PRE-parche (`balance - deuda_grupo`),
+    no sobre el balance final expuesto en `ejercicio.balance_eur`. Se reproduce aquí ese balance
+    pre-parche solo para el año base con `deuda_grupo_largo_eur > 0`; en cualquier otro caso
+    (incluida toda la evolución 2024/2025, donde `deuda_grupo` SÍ se suma antes de calcular la
+    periodificación de ese año, en el mismo bloque) el balance final ya es el correcto."""
+    balance_largo_en_desglose_eur = ejercicio.balance_eur["otras_deudas_largo"]
+    if ejercicio.año == AÑO_BASE and ejercicio.deuda_grupo_largo_eur > 0:
+        balance_largo_en_desglose_eur -= ejercicio.deuda_grupo_largo_eur
+    periodificacion_eur = ejercicio.periodificacion_pasivo_largo_pct * balance_largo_en_desglose_eur
     return (
         ejercicio.balance_eur["otras_deudas_largo"]
         - ejercicio.provision_saldo_largo_eur
         - ejercicio.deuda_grupo_largo_eur
         - _pasivos_por_impuesto_diferido_eur(ejercicio)
+        - periodificacion_eur
     )
 
 
 def _otras_deudas_corto_target_eur(ejercicio) -> float:
-    return max(0.0, ejercicio.balance_eur["otras_deudas_corto"] - ejercicio.provision_saldo_corto_eur)
+    return max(
+        0.0,
+        ejercicio.balance_eur["otras_deudas_corto"]
+        - ejercicio.provision_saldo_corto_eur
+        - ejercicio.periodificacion_pasivo_corto_eur,
+    )
 
 
 def _identidad_pn(ejercicio) -> float:
@@ -110,8 +133,10 @@ def _identidad_pn(ejercicio) -> float:
 
 def test_desglose_otras_deudas_suma_exacta_en_empresa_base(catalogo):
     """Año base: sin provisiones/deudas del grupo/pasivos por impuesto diferido activos todavía
-    (ninguno de esos 3 mecanismos actúa antes de 2024) — el residuo coincide con el propio
-    agregado bruto del catálogo, sin nada que restar."""
+    (ninguno de esos 3 mecanismos actúa antes de 2024) — pero las periodificaciones de pasivo
+    (primer lote, perfil fijo desde 2023) SÍ pueden tener saldo ya en el año base, así que el
+    residuo excluye también ese importe (mismo criterio que en evolución, ver `motor.empresa_
+    base.calcular_desglose_otras_deudas`)."""
     for codigo in _sectores(catalogo):
         for semilla in range(3):
             empresa = generar_empresa_base(codigo, "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=semilla, catalogo=catalogo)
@@ -119,10 +144,12 @@ def test_desglose_otras_deudas_suma_exacta_en_empresa_base(catalogo):
             dc = empresa.otras_deudas_corto_desglose_eur
             assert set(dl) == set(CATEGORIAS_LARGO)
             assert set(dc) == set(CATEGORIAS_CORTO)
-            assert sum(dl.values()) == pytest.approx(empresa.balance_eur["otras_deudas_largo"], abs=0.01)
-            assert sum(dc.values()) == pytest.approx(empresa.balance_eur["otras_deudas_corto"], abs=0.01)
+            target_largo = empresa.balance_eur["otras_deudas_largo"] - empresa.periodificacion_pasivo_largo_eur
+            target_corto = max(0.0, empresa.balance_eur["otras_deudas_corto"] - empresa.periodificacion_pasivo_corto_eur)
+            assert sum(dl.values()) == pytest.approx(target_largo, abs=0.01)
+            assert sum(dc.values()) == pytest.approx(target_corto, abs=0.01)
             # Sin reclasificación en el año base (no hay "año anterior").
-            assert dc["aapp_pendiente"] == pytest.approx(empresa.aapp_pendiente_corto_pct * empresa.balance_eur["otras_deudas_corto"])
+            assert dc["aapp_pendiente"] == pytest.approx(empresa.aapp_pendiente_corto_pct * target_corto)
             for valor in {**dl, **dc}.values():
                 assert valor >= -1e-6
 
