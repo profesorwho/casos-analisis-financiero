@@ -396,9 +396,18 @@ def test_reimplementacion_generica_reproduce_los_valores_de_referencia(catalogo,
     # mecanismo del arquetipo 1 en sí (existencias por continuidad) NO cambió, pero al cambiar el
     # ruido de fondo de PyG cambia resultado_ejercicio/PN, que cambia endeudamiento, que cambia
     # CUÁNTO amortigua la contención de plausibilidad sobre existencias en 2024/2025 — mismo tipo
-    # de re-pin ya hecho una vez antes, para el cambio de fuente de `tipo_interes` (#41-43). Si
-    # este test vuelve a fallar SIN que se haya tocado deliberadamente la semilla del RNG ni el
-    # mecanismo de continuidad de PyG, sí es una regresión real del arquetipo 1.
+    # de re-pin ya hecho una vez antes, para el cambio de fuente de `tipo_interes` (#41-43).
+    #
+    # RE-PINNEADO de nuevo tras el encargo de bajas anticipadas de sub-lote (línea 11 PyG,
+    # "Deterioro y resultado por enajenaciones del inmovilizado" — ver motor/amortizacion.py):
+    # con la probabilidad aprobada (`PROBABILIDAD_BAJA_ANTICIPADA_ANUAL = 0.01`) este caso
+    # concreto (24.1, semilla 5) NO tiene baja en ningún año (existencias y endeudamiento 2023/
+    # 2024/2025 vuelven, dentro de la tolerancia, al valor de antes del encargo de bajas — un
+    # primer intento de implementación con 0.03 SÍ generaba una baja en 2025 para este caso y
+    # llegó a re-pinnearse a 0.746; se corrigió a la probabilidad realmente aprobada antes de
+    # comitear, ver decisiones_plausibilidad.md). Si este test vuelve a fallar SIN que se haya
+    # tocado deliberadamente la semilla del RNG, el mecanismo de continuidad de PyG o el de bajas
+    # anticipadas, sí es una regresión real del arquetipo 1.
     evolucion = _generar(catalogo, arquetipos, "24.1", 5, "fuerte")
     ej = evolucion.ejercicios
     assert ej[2023].balance_eur["existencias"] == pytest.approx(2_344_937, abs=1)

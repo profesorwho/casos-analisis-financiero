@@ -1185,6 +1185,7 @@ class _PygParcial:
     valor_añadido_eur: float
     gastos_personal_eur: float
     amortizaciones_eur: float
+    deterioro_enajenacion_inmovilizado_eur: float
     resultado_extraordinario_eur: float
     baii_eur: float
     ingresos_financieros_eur: float
@@ -1200,6 +1201,7 @@ def _generar_pyg_hasta_baii(
     año: int,
     primitivas_forzadas: dict[str, float] | None = None,
     amortizaciones_eur: float | None = None,
+    deterioro_enajenacion_inmovilizado_eur: float = 0.0,
     anterior_pyg_pct: dict[str, float] | None = None,
     anterior_tipo_interes: float | None = None,
 ) -> _PygParcial:
@@ -1225,6 +1227,13 @@ def _generar_pyg_hasta_baii(
     calculado en este punto — ver más abajo). "amortizaciones" se excluye del sorteo/bucle de
     primitivas en ese caso (no consume ningún draw de `rng`) y su modo queda registrado como
     "derivado".
+
+    `deterioro_enajenacion_inmovilizado_eur`: línea oficial 11 del modelo PGC de PyG
+    ("Deterioro y resultado por enajenaciones del inmovilizado") — SIEMPRE derivada de las bajas
+    anticipadas de sub-lotes de `motor/amortizacion.py` (nunca sorteada desde el catálogo: no
+    existe columna ACCID para esta línea), 0.0 en el año base (2023, sin bajas) y en cualquier
+    llamada que no la pase explícita. No consume ningún draw de `rng`, mismo criterio que
+    `amortizaciones_eur`; su modo queda registrado como "derivado".
 
     `anterior_pyg_pct`/`anterior_tipo_interes`: SOLO se pasan al generar 2024/2025 (el año base
     no tiene "año anterior" al que agarrarse — sigue siendo un sorteo limpio contra el Huber del
@@ -1298,7 +1307,14 @@ def _generar_pyg_hasta_baii(
 
     margen_bruto_eur = ingresos_explotacion_eur - consumos_explotacion_eur
     valor_añadido_eur = margen_bruto_eur - otros_gastos_explot_eur
-    baii_eur = valor_añadido_eur - gastos_personal_eur - amortizaciones_eur_final + resultado_extraordinario_eur
+    baii_eur = (
+        valor_añadido_eur
+        - gastos_personal_eur
+        - amortizaciones_eur_final
+        + deterioro_enajenacion_inmovilizado_eur
+        + resultado_extraordinario_eur
+    )
+    modos["pyg.deterioro_enajenacion_inmovilizado"] = "derivado"
 
     return _PygParcial(
         ingresos_explotacion_eur=ingresos_explotacion_eur,
@@ -1310,6 +1326,7 @@ def _generar_pyg_hasta_baii(
         valor_añadido_eur=valor_añadido_eur,
         gastos_personal_eur=gastos_personal_eur,
         amortizaciones_eur=amortizaciones_eur_final,
+        deterioro_enajenacion_inmovilizado_eur=deterioro_enajenacion_inmovilizado_eur,
         resultado_extraordinario_eur=resultado_extraordinario_eur,
         baii_eur=baii_eur,
         ingresos_financieros_eur=ingresos_financieros_eur,
@@ -1339,6 +1356,7 @@ def _completar_pyg_con_deuda(
         "valor_añadido": parcial.valor_añadido_eur,
         "gastos_personal": parcial.gastos_personal_eur,
         "amortizaciones": parcial.amortizaciones_eur,
+        "deterioro_enajenacion_inmovilizado": parcial.deterioro_enajenacion_inmovilizado_eur,
         "resultado_extraordinario": parcial.resultado_extraordinario_eur,
         "baii": parcial.baii_eur,
         "ingresos_financieros": parcial.ingresos_financieros_eur,

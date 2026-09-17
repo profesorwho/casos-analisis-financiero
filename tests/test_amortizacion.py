@@ -121,9 +121,15 @@ def test_capex_y_adquisicion_generan_cohortes_nuevas(catalogo, arquetipos):
         "24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=0, intensidad="fuerte",
         arquetipo_id="capex_elevado", catalogo=catalogo, arquetipos=arquetipos,
     )
+    # Cada año compara contra el neto esperado (cohortes nuevas de capex menos las bajas
+    # anticipadas de sub-lote de ese mismo año, línea 11 PyG — ver motor/amortizacion.py): con
+    # capex "fuerte" el neto sigue siendo positivo, pero la igualdad estricta (sin restar bajas)
+    # ya no es válida en general.
     n_2023 = len(ev_capex.ejercicios[2023].coleccion_activos_amortizables)
-    assert len(ev_capex.ejercicios[2024].coleccion_activos_amortizables) > n_2023
-    assert len(ev_capex.ejercicios[2025].coleccion_activos_amortizables) > len(ev_capex.ejercicios[2024].coleccion_activos_amortizables)
+    n_2024 = len(ev_capex.ejercicios[2024].coleccion_activos_amortizables)
+    n_2025 = len(ev_capex.ejercicios[2025].coleccion_activos_amortizables)
+    assert n_2024 + len(ev_capex.ejercicios[2024].bajas_inmovilizado) > n_2023
+    assert n_2025 + len(ev_capex.ejercicios[2025].bajas_inmovilizado) > n_2024
 
     ev_adq = generar_evolucion_arquetipo(
         "24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=0, intensidad="fuerte",
@@ -131,8 +137,12 @@ def test_capex_y_adquisicion_generan_cohortes_nuevas(catalogo, arquetipos):
     )
     n_2023_adq = len(ev_adq.ejercicios[2023].coleccion_activos_amortizables)
     assert len(ev_adq.ejercicios[2024].coleccion_activos_amortizables) > n_2023_adq
-    # AÑO_ADQUISICION es fijo=2024 — 2025 no añade cohortes nuevas.
-    assert len(ev_adq.ejercicios[2025].coleccion_activos_amortizables) == len(ev_adq.ejercicios[2024].coleccion_activos_amortizables)
+    # AÑO_ADQUISICION es fijo=2024 — 2025 no añade cohortes nuevas, pero SÍ puede quitar alguna
+    # por una baja anticipada de sub-lote (línea 11 PyG, ver motor/amortizacion.py): la colección
+    # de 2025 = la de 2024 menos las bajas de 2025, nunca más.
+    assert len(ev_adq.ejercicios[2025].coleccion_activos_amortizables) == len(
+        ev_adq.ejercicios[2024].coleccion_activos_amortizables
+    ) - len(ev_adq.ejercicios[2025].bajas_inmovilizado)
 
 
 def test_bienes_totalmente_amortizados_quedan_expuestos(catalogo, arquetipos):

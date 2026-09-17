@@ -175,9 +175,13 @@ sectores, 4 semillas, 2024 y 2025), 0 descuadres en ambos** — ver decisiones #
   financia); `reclasificacion_deuda` (8/16) → NINGUNA línea, correctamente invisible (no mueve
   deuda total, no es un flujo real); perfil de `activo_no_corriente` → B.6/7 por componente,
   aplicado al cambio ORGÁNICO (excluyendo el salto de adquisición del año); adquisición (18) →
-  B.6.a "Empresas del grupo y asociadas", aparte. Líneas sin mecanismo que las alimente (siempre
-  0, documentado, no inventado): correcciones valorativas, bajas de inmovilizado, diferencias de
-  cambio, valor razonable, dividendos de terceros, "otros activos corrientes" (A.3.c). **Las
+  B.6.a "Empresas del grupo y asociadas", aparte. **Bajas anticipadas de sub-lote (línea 11 PyG,
+  "Deterioro y resultado por enajenaciones del inmovilizado" — ver sección "Bajas anticipadas de
+  sub-lotes" más abajo) → A.2.e (revierte el resultado no monetario) + B.6 "Enajenación de
+  inmovilizado" (cobro real, si hubo enajenación) — ya NO es una línea sin mecanismo.** Líneas
+  sin mecanismo que las alimente (siempre 0, documentado, no inventado): correcciones
+  valorativas, diferencias de cambio, valor razonable, dividendos de terceros, "otros activos
+  corrientes" (A.3.c). **Las
   provisiones (tercer lote) SÍ tienen mecanismo desde ese encargo — fluyen por A.3.e/A.3.f, sin
   ninguna línea nueva, ver sección "Provisiones" abajo.** **C.9 ("Instrumentos de patrimonio...
   subvenciones") ya NO es siempre 0** desde el encargo de coberturas/subvenciones: = cobro de
@@ -393,6 +397,53 @@ hallazgos.
   "servicios_tic" (62 — mantiene intangible alto, 50%, sin cambios sustanciales). Resultado:
   69.2 10,1x→3,9x, 70.2 7,8x→3,3x — mismo orden de magnitud que otros sectores capital-intensivos
   ya aceptados (construcción 41.2 en 4,1x); 62 sin cambio (1,0x, nunca tuvo el problema).
+
+## Bajas anticipadas de sub-lotes (línea 11 PyG, `motor/amortizacion.py`)
+
+Modela la línea oficial "11. Deterioro y resultado por enajenaciones del inmovilizado" del PyG,
+reutilizando la colección de sub-lotes de la sección anterior — sin catálogo sectorial nuevo.
+**Primer mecanismo que SÍ reduce `activo_no_corriente` del balance** por un evento ligado a la
+colección real de activos (a diferencia de la amortización normal, que nunca lo hace — ver
+sección anterior): era, explícitamente, el encargo aplazado que reabre `motor/efe.py`.
+
+- **Mecanismo**: cada año, cada sub-lote todavía vivo (valor en libros > 0) de la colección YA
+  EXISTENTE al empezar el año (nunca las cohortes nuevas de capex/adquisición de ese mismo año)
+  tiene una probabilidad pequeña e independiente de baja anticipada
+  (`PROBABILIDAD_BAJA_ANTICIPADA_ANUAL = 0.01`, 1% anual por sub-lote — hipótesis de diseño
+  discutida y fijada explícitamente con el usuario, sin ancla externa). Si sale: 50/50
+  (`FRACCION_DETERIORO_VS_ENAJENACION`, elección neutra sin ancla externa, misma honestidad que
+  `FRACCION_TERRENO`) entre **deterioro** (pérdida total del valor en libros, sin caja) y
+  **enajenación** (venta por el valor en libros REAL en ese momento × un factor aleatorio
+  simétrico `RANGO_FACTOR_PRECIO_VENTA = (0.70, 1.30)`, sin ancla externa, con caja real). RNG
+  propio e independiente (`sortear_bajas_del_año`, sufijo `_bajas_{año}`). El sub-lote sigue
+  amortizando con normalidad el propio año de la baja (mismo criterio "año completo, sin
+  prorratear" que capex/adquisición) — se retira de la colección a partir del año SIGUIENTE
+  (`excluir_bajas`), dejando de generar gasto para siempre.
+- **PyG**: nueva primitiva `deterioro_enajenacion_inmovilizado_eur` (SIEMPRE derivada, nunca
+  sorteada del catálogo — no existe columna ACCID para esta línea; modo `"derivado"`, mismo
+  patrón que `amortizaciones_eur`), sumada dentro de `baii_eur` en `_generar_pyg_hasta_baii`
+  (motor/empresa_base.py). Expuesta como `EjercicioEmpresa.pyg_linea_11_deterioro_resultado_
+  enajenacion_inmovilizado_eur` (alias, mismo patrón que la línea 13 ya existente).
+- **Balance**: el valor en libros total de las bajas del año resta de `activo_no_corriente_eur`
+  (con un `max(0.0, ...)` defensivo — verificado en stress test que nunca se activa, ver
+  tests/test_bajas_inmovilizado.py); el precio de venta (si hubo enajenación) suma a
+  `disponible` — mismo patrón que la adquisición (18) en reversa.
+- **EFE**: `a2e_deterioro_enajenacion_inmovilizado` revierte íntegro el resultado no monetario de
+  A.1 (mismo criterio que a2a/a2k); `b6_enajenacion_inmovilizado` muestra el cobro real (0.0 si
+  fue deterioro puro); el valor en libros de la baja se excluye del delta "orgánico" que reparte
+  el perfil fijo material/intangible/inversiones_inmobiliarias/otros_financieros — mismo criterio
+  que ya excluye el salto de adquisición (`b6a`). Ver CLAUDE.md, sección "EFE y ECPN", y
+  docstring de `motor/efe.py` para la derivación algebraica completa.
+- **Stress test (verificación pedida explícitamente por el usuario, no solo "no descuadra")**:
+  barrido de 27 sectores × 6 semillas (324 ejercicios-empresa, 162 casos de 3 años), a p=1%
+  anual por sub-lote (27 sub-lotes/caso, 9 buckets × 3 sub-lotes — NUNCA 9, error de una
+  aproximación inicial que sí usó 9, corregido) — **21,3% de los ejercicios-empresa (2024/2025)
+  salen con línea 11 != 0; 38,3% de los casos tienen al menos una baja en el arco de 3 años**
+  (aproximación analítica 1-0,99^54 ≈ 42%, con 54 = 27 sub-lotes × 2 años en riesgo; el 38,3%
+  observado queda algo por debajo por los sub-lotes ya totalmente amortizados al empezar el año,
+  excluidos del sorteo). 0 descuadres de balance/EFE/ECPN en el mismo barrido, incluido un test
+  dedicado que reconcilia específicamente los ejercicios con baja activa (no solo el barrido
+  general).
 
 ## Desglose de balance según el PGC — primer lote: existencias y periodificaciones (`motor/empresa_base.py`)
 

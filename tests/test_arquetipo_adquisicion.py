@@ -109,6 +109,9 @@ def test_adquisicion_desglose_de_ventas_suma_el_total(catalogo, arquetipos, sect
 def test_adquisicion_incremento_de_activo_proporcional_a_intensidad(catalogo, arquetipos, sector):
     # Regresión de la fórmula de magnitud: incremento = intensidad_base x activo total 2023
     # (antes de la operación) — no escalado por fracción del año (suceso puntual, no progresivo).
+    # `baja_valor_en_libros_eur` (línea 11 PyG, bajas anticipadas de sub-lote — ver motor/
+    # amortizacion.py) puede restar de `activo_no_corriente` ese mismo año: se añade de vuelta
+    # aquí para aislar el efecto puro de la adquisición, mismo criterio que ya usa motor/efe.py.
     for intensidad in ("leve", "moderado", "fuerte"):
         for semilla in SEMILLAS:
             evolucion = _generar(catalogo, arquetipos, sector, semilla, intensidad)
@@ -117,20 +120,25 @@ def test_adquisicion_incremento_de_activo_proporcional_a_intensidad(catalogo, ar
             activo_no_corriente_proporcional = ej[2023].balance_eur["activo_no_corriente"] * (
                 1 + (ej[2024].ventas_organicas_eur / ej[2023].ventas - 1)
             )
-            exceso_activo = ej[2024].balance_eur["activo_no_corriente"] - activo_no_corriente_proporcional
+            exceso_activo = (
+                ej[2024].balance_eur["activo_no_corriente"] + ej[2024].baja_valor_en_libros_eur - activo_no_corriente_proporcional
+            )
             incremento_esperado = INTENSIDAD_BASE[intensidad] * activo_total_2023
             assert exceso_activo == pytest.approx(incremento_esperado, rel=1e-6)
 
 
 @pytest.mark.parametrize("sector", SECTORES)
 def test_adquisicion_no_se_repite_en_2025(catalogo, arquetipos, sector):
-    # 2025 crece proporcionalmente desde la base YA ampliada de 2024, sin una segunda inyección.
+    # 2025 crece proporcionalmente desde la base YA ampliada de 2024, sin una segunda inyección —
+    # salvo por una posible baja anticipada de sub-lote ese año (línea 11 PyG, ver motor/
+    # amortizacion.py), que se añade de vuelta aquí (mismo criterio que motor/efe.py).
     for semilla in SEMILLAS:
         evolucion = _generar(catalogo, arquetipos, sector, semilla)
         ej = evolucion.ejercicios
         crecimiento_ventas_2025 = ej[2025].ventas / ej[2024].ventas - 1
         proporcional = ej[2024].balance_eur["activo_no_corriente"] * (1 + crecimiento_ventas_2025)
-        assert ej[2025].balance_eur["activo_no_corriente"] == pytest.approx(proporcional, rel=1e-6)
+        activo_no_corriente_sin_baja = ej[2025].balance_eur["activo_no_corriente"] + ej[2025].baja_valor_en_libros_eur
+        assert activo_no_corriente_sin_baja == pytest.approx(proporcional, rel=1e-6)
 
 
 @pytest.mark.parametrize("sector", SECTORES)

@@ -417,3 +417,88 @@ def bienes_totalmente_amortizados_en(coleccion: tuple[SubLoteActivo, ...], año:
         if sl.año_amortizacion_total is not None and sl.año_amortizacion_total <= año:
             resultado.append(BienTotalmenteAmortizado(sl.tipo, sl.es_construccion, sl.valor_bruto_eur, sl.año_amortizacion_total))
     return tuple(resultado)
+
+
+# --------------------------------------------------------------------------------------------
+# Bajas anticipadas de sub-lotes — línea oficial "11. Deterioro y resultado por enajenaciones
+# del inmovilizado" del modelo PGC de PyG. Discutido y aprobado explícitamente con el usuario
+# (sin dato externo que lo ancle, misma honestidad ya aplicada a `FRACCION_TERRENO` o al
+# reparto 50/30/20 de sub-lotes): cada año, cada sub-lote TODAVÍA VIVO (valor en libros > 0) de
+# la colección YA EXISTENTE al empezar el año (no las cohortes nuevas de capex/adquisición de
+# ESE mismo año — un activo recién comprado no está en riesgo de baja el mismo año en que se
+# compra, mismo criterio que `nuevo=True` en `_generar_sublotes`) tiene una probabilidad
+# pequeña e independiente de sufrir una baja anticipada:
+#
+# - **Deterioro** (50%): pérdida total del valor en libros, SIN contrapartida de caja.
+# - **Enajenación** (50%, elección neutra sin ancla externa — ver arriba): venta por un precio
+#   = valor en libros REAL en ese momento (no un % sectorial) x un factor aleatorio simétrico,
+#   con contrapartida de caja real.
+#
+# El sub-lote sigue amortizando con normalidad el propio año de la baja (mismo criterio "año
+# completo, sin prorratear" que ya usa este módulo para capex/adquisición) — se retira de la
+# colección a partir del año SIGUIENTE, ver `excluir_bajas`.
+# --------------------------------------------------------------------------------------------
+PROBABILIDAD_BAJA_ANTICIPADA_ANUAL = 0.01
+FRACCION_DETERIORO_VS_ENAJENACION = 0.5
+RANGO_FACTOR_PRECIO_VENTA = (0.70, 1.30)
+
+
+@dataclass(frozen=True)
+class BajaSubLoteActivo:
+    """Una baja anticipada de un sub-lote. `resultado_eur = valor_venta_eur - valor_en_libros_eur`
+    (positivo = plusvalía, negativo = minusvalía o deterioro puro, cuando `valor_venta_eur=0.0`)."""
+
+    sublote: SubLoteActivo
+    tipo: str  # "deterioro" | "enajenacion"
+    valor_en_libros_eur: float
+    valor_venta_eur: float  # 0.0 si es deterioro (sin contrapartida de caja)
+    resultado_eur: float
+
+
+def sortear_bajas_del_año(
+    sector: str, segmento: str, semilla: int, coleccion: tuple[SubLoteActivo, ...], año: int
+) -> tuple[BajaSubLoteActivo, ...]:
+    """Sortea qué sub-lotes de `coleccion` (la colección YA EXISTENTE al empezar `año`, sin las
+    cohortes nuevas de capex/adquisición de ese mismo año) sufren una baja anticipada este año.
+    RNG propio e independiente por año (`_bajas_{año}`, mismo patrón que `_capex_{año}`/
+    `_adquisicion_{año}`) — no desplaza ningún otro sorteo del módulo."""
+    rng = np.random.default_rng([semilla, _entropia_amortizacion(sector, segmento, f"_bajas_{año}")])
+    bajas: list[BajaSubLoteActivo] = []
+    for sl in coleccion:
+        valor_en_libros_eur = sl.valor_bruto_eur - sl.acumulada_en(año)
+        if valor_en_libros_eur <= 1e-6:
+            continue  # ya totalmente amortizado: sin magnitud real que dar de baja
+        if rng.random() >= PROBABILIDAD_BAJA_ANTICIPADA_ANUAL:
+            continue
+        if rng.random() < FRACCION_DETERIORO_VS_ENAJENACION:
+            tipo = "deterioro"
+            valor_venta_eur = 0.0
+        else:
+            tipo = "enajenacion"
+            factor = rng.uniform(*RANGO_FACTOR_PRECIO_VENTA)
+            valor_venta_eur = valor_en_libros_eur * factor
+        resultado_eur = valor_venta_eur - valor_en_libros_eur
+        bajas.append(BajaSubLoteActivo(sl, tipo, valor_en_libros_eur, valor_venta_eur, resultado_eur))
+    return tuple(bajas)
+
+
+def excluir_bajas(coleccion: tuple[SubLoteActivo, ...], bajas: tuple[BajaSubLoteActivo, ...]) -> tuple[SubLoteActivo, ...]:
+    """Colección sin los sub-lotes dados de baja este año — dejan de generar gasto de
+    amortización a partir del año SIGUIENTE (el propio año de la baja ya cargó su cuota
+    completa, calculada con la colección ANTES de excluir — ver `evolucion_arquetipo._evaluar`)."""
+    if not bajas:
+        return coleccion
+    dados_de_baja = {baja.sublote for baja in bajas}
+    return tuple(sl for sl in coleccion if sl not in dados_de_baja)
+
+
+def resultado_bajas_eur(bajas: tuple[BajaSubLoteActivo, ...]) -> float:
+    return sum(baja.resultado_eur for baja in bajas)
+
+
+def valor_en_libros_bajas_eur(bajas: tuple[BajaSubLoteActivo, ...]) -> float:
+    return sum(baja.valor_en_libros_eur for baja in bajas)
+
+
+def valor_venta_bajas_eur(bajas: tuple[BajaSubLoteActivo, ...]) -> float:
+    return sum(baja.valor_venta_eur for baja in bajas)

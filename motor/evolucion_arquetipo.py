@@ -489,8 +489,13 @@ from motor.arquetipos import (
 )
 from motor.amortizacion import (
     amortizacion_eur_del_año,
+    excluir_bajas,
     generar_cohortes_adquisicion,
     generar_cohortes_capex,
+    resultado_bajas_eur,
+    sortear_bajas_del_año,
+    valor_en_libros_bajas_eur,
+    valor_venta_bajas_eur,
 )
 from motor.coberturas_subvenciones import (
     TIPO_IMPOSITIVO_GENERAL,
@@ -1176,6 +1181,17 @@ class EjercicioEmpresa:
     perfil_subtipos_intangible_pct: dict[str, float] = field(default_factory=dict)
     tipo_interes: float = 0.0  # ver empresa_base.EmpresaBase.tipo_interes — expuesto para el Δr de la cobertura
 
+    # --- Bajas anticipadas de sub-lotes (línea 11 PGC, "Deterioro y resultado por enajenaciones
+    # del inmovilizado", ver motor/amortizacion.py) — () en el año base y en cualquier año sin
+    # baja. `baja_valor_en_libros_eur`/`..._valor_venta_eur` son las sumas de ESTE año (ya
+    # restadas/sumadas en `balance_eur["activo_no_corriente"]`/`disponible`): expuestas aparte
+    # para que `motor/efe.py` pueda excluir el valor en libros del delta "orgánico" de B) e
+    # incluir el precio de venta como cobro real, mismo patrón que `incremento_activo_
+    # adquisicion_eur` (18). ---
+    bajas_inmovilizado: tuple = ()
+    baja_valor_en_libros_eur: float = 0.0
+    baja_valor_venta_eur: float = 0.0
+
     # --- Cobertura de flujos de efectivo (arquetipo 21) — ver motor/coberturas_subvenciones.py.
     # Estado bruto (antes de impuesto) que se traslada año a año; los importes NETOS de PN y las
     # cuentas de impuesto diferido son propiedades derivadas más abajo, no se guardan aparte. ---
@@ -1293,6 +1309,15 @@ class EjercicioEmpresa:
     pyg_otros_gastos_explot_desglose_eur: dict[str, float] = field(default_factory=dict)
     pyg_gastos_personal_desglose_eur: dict[str, float] = field(default_factory=dict)
     pyg_ingresos_financieros_desglose_eur: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def pyg_linea_11_deterioro_resultado_enajenacion_inmovilizado_eur(self) -> float:
+        """Línea oficial "11. Deterioro y resultado por enajenaciones del inmovilizado" del
+        modelo PGC de PyG — alias de `pyg_eur["deterioro_enajenacion_inmovilizado"]`, ya sumado
+        dentro de `baii` en `_generar_pyg_hasta_baii` (motor.empresa_base). SIEMPRE derivado de
+        las bajas anticipadas de sub-lotes de este año (`bajas_inmovilizado`), nunca sorteado
+        desde el catálogo — ver motor/amortizacion.py."""
+        return self.pyg_eur["deterioro_enajenacion_inmovilizado"]
 
     @property
     def pyg_linea_13_otros_resultados_eur(self) -> float:
@@ -2002,6 +2027,13 @@ def _evolucionar_un_año(
     # acumulada_en`) más las cohortes NUEVAS que genere el capex (17) o la adquisición (18) de
     # ESTE año concreto, si los hay — con `año_ancla` = este año, sin sorteo de fecha/ya-
     # amortizado (activos recién comprados). ---
+    # --- Bajas anticipadas de sub-lotes (línea 11 PGC, "Deterioro y resultado por
+    # enajenaciones del inmovilizado") — motor/amortizacion.py, mecanismo aprobado explícitamente
+    # por el usuario. Se sortean sobre la colección YA EXISTENTE al empezar el año (nunca sobre
+    # las cohortes nuevas de capex/adquisición de este mismo año, añadidas más abajo) para que un
+    # activo recién comprado no pueda darse de baja el mismo año en que se compra. ---
+    bajas_este_año = sortear_bajas_del_año(sector, segmento, semilla, anterior.coleccion_activos_amortizables, año)
+
     coleccion_activos_amortizables = anterior.coleccion_activos_amortizables
     cohortes_capex_este_año: tuple = ()
     if exceso_capex_eur > 0:
@@ -2048,6 +2080,24 @@ def _evolucionar_un_año(
     subvencion_transferencia_bruto_eur = paso_subvencion.transferencia_bruto_eur
 
     amortizacion_eur_año = amortizacion_eur_del_año(coleccion_activos_amortizables, año)
+    # Las bajas de este año ya cargaron su cuota completa en `amortizacion_eur_año` de arriba
+    # (colección todavía sin excluir) — se retiran AHORA, de cara al año SIGUIENTE, ver
+    # docstring de `excluir_bajas`.
+    coleccion_activos_amortizables = excluir_bajas(coleccion_activos_amortizables, bajas_este_año)
+
+    # --- Efecto de las bajas sobre balance y caja (Restricciones del encargo): el valor en
+    # libros de las bajas reduce `activo_no_corriente` (deja de existir como activo); el precio
+    # de venta de las que fueron enajenación (0.0 si fue deterioro puro) entra como caja real —
+    # mismo patrón que adquisición (18) en reversa (allí la caja se USA, aquí se RECIBE). El
+    # `max(0.0, ...)` es una salvaguarda estructural (ver verificación en tests/test_
+    # amortizacion.py: el valor en libros de una baja nunca puede superar lo que queda de
+    # activo_no_corriente, cada sub-lote resta como mucho su propio valor en libros real, nunca
+    # sorteado por separado). ---
+    baja_valor_en_libros_eur = valor_en_libros_bajas_eur(bajas_este_año)
+    baja_valor_venta_eur = valor_venta_bajas_eur(bajas_este_año)
+    deterioro_enajenacion_inmovilizado_eur = resultado_bajas_eur(bajas_este_año)
+    activo_no_corriente_eur = max(0.0, activo_no_corriente_eur - baja_valor_en_libros_eur)
+    disponible_proporcional_eur += baja_valor_venta_eur
 
     # --- PyG: primitivas no financieras + tipo de interés, sorteadas UNA sola vez. Las que el
     # arquetipo toca (efecto pyg_primitiva) se fuerzan por continuidad en vez de sortearse, y
@@ -2086,6 +2136,7 @@ def _evolucionar_un_año(
             pyg_subtotales_sin_contener[subtotal_topado] = subtotal_sin_contener
     parcial_pyg = _generar_pyg_hasta_baii(
         rng_pyg, fila, ventas, año, primitivas_forzadas=primitivas_forzadas, amortizaciones_eur=amortizacion_eur_año,
+        deterioro_enajenacion_inmovilizado_eur=deterioro_enajenacion_inmovilizado_eur,
         anterior_pyg_pct=anterior.pyg_pct, anterior_tipo_interes=anterior.tipo_interes,
     )
     for ea in efectos_pyg_base_dinamica:
@@ -2725,6 +2776,9 @@ def _evolucionar_un_año(
         perfil_subtipos_material_pct=anterior.perfil_subtipos_material_pct,
         perfil_subtipos_intangible_pct=anterior.perfil_subtipos_intangible_pct,
         tipo_interes=parcial_pyg.tipo_interes,
+        bajas_inmovilizado=bajas_este_año,
+        baja_valor_en_libros_eur=baja_valor_en_libros_eur,
+        baja_valor_venta_eur=baja_valor_venta_eur,
         cobertura_activa=parametros_grupo89.cobertura_activa,
         cobertura_pct_deuda=parametros_grupo89.cobertura_pct_deuda,
         cobertura_eficacia_pct=parametros_grupo89.cobertura_eficacia_pct,

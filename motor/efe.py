@@ -24,6 +24,18 @@ se deja siempre en 0.0 aquí, una desviación deliberada del modelo de texto, do
 explícitamente, no un olvido. Los demás ajustes de A.2 (ingresos/gastos financieros) SÍ se
 incluyen tal cual porque se cancelan exactamente dentro del propio EFE (A.2.g/h se deshacen en
 A.4.a/c), sin depender de si el balance tiene o no una partida propia detrás.
+
+**Bajas anticipadas de sub-lotes (línea 11 PyG, "Deterioro y resultado por enajenaciones del
+inmovilizado" — ver motor/amortizacion.py): PRIMER mecanismo que SÍ reduce `activo_no_corriente`
+del balance por un evento ligado a la colección de activos** (a diferencia de la amortización
+normal, que NUNCA lo hace — ver arriba). `a2e_deterioro_enajenacion_inmovilizado` revierte
+ÍNTEGRO el resultado no monetario de la línea 11 ya incluido en A.1 (el valor en libros dado de
+baja nunca es caja, y la plus/minusvalía sobre él tampoco); el único movimiento de caja real (el
+precio de venta, si hubo enajenación) aparece en B) como `b6_enajenacion_inmovilizado`, un cobro
+positivo — nunca en A). El valor en libros de la baja se excluye del delta "orgánico" que
+alimenta `b6b7_intangible/material/inversiones_inmobiliarias/otros_activos_financieros` (mismo
+criterio que ya excluye el salto de adquisición del arquetipo 18, `b6a`): una baja no es una
+compra/venta "normal" repartible por el perfil fijo del caso.
 """
 
 from __future__ import annotations
@@ -43,6 +55,7 @@ class EstadoFlujosEfectivo:
     # A) Flujos de efectivo de las actividades de explotación
     a1_resultado_antes_impuestos: float
     a2a_amortizacion: float  # SIEMPRE 0.0 en este motor — ver docstring del módulo
+    a2e_deterioro_enajenacion_inmovilizado: float  # revierte la línea 11 de PyG (no monetaria en A.1) — ver motor/amortizacion.py
     a2g_ingresos_financieros: float
     a2h_gastos_financieros: float
     a2k_otros_ingresos_gastos: float  # SIEMPRE 0.0 — sin mecanismo que lo alimente
@@ -65,6 +78,7 @@ class EstadoFlujosEfectivo:
     b6b7_inversiones_inmobiliarias: float
     b6b7_otros_activos_financieros: float
     b6a_empresas_grupo_adquisicion: float  # arquetipo 18 — salto separado del crecimiento orgánico
+    b6_enajenacion_inmovilizado: float  # cobro real por las bajas que fueron enajenación (0.0 si fue deterioro puro) — ver motor/amortizacion.py
     b6c_prestamo_empresas_grupo: float  # arquetipo 20, "préstamo a matriz" — variación de inversion_grupo_largo_eur
     b8_flujo_inversion: float
 
@@ -91,6 +105,13 @@ def generar_efe(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligatori
     """EFE del ejercicio `actual` frente al `anterior` (p. ej. 2023→2024 o 2024→2025)."""
     a1 = actual.pyg_eur["bai"]
     a2a = 0.0  # ver docstring del módulo
+    # A.2.e ("Resultados por bajas y enajenaciones del inmovilizado") — revierte ÍNTEGRO el
+    # resultado no monetario de la línea 11 de PyG ya incluido en A.1 (BAI): el valor en libros
+    # dado de baja no es una salida de caja de este año, y la plus/minusvalía sobre él tampoco lo
+    # es — el único movimiento de caja real (el precio de venta cobrado, si hubo enajenación) se
+    # muestra aparte, en B) como cobro de inversión (`b6_enajenacion_inmovilizado`), NUNCA aquí.
+    # Mismo criterio que a2a/a2k: una reclasificación contable sin caja detrás.
+    a2e = -actual.pyg_eur["deterioro_enajenacion_inmovilizado"]
     a2g = -actual.pyg_eur["ingresos_financieros"]
     a2h = actual.pyg_eur["gastos_financieros"]
     # A.2.k ("otros ajustes") — reversa el importe BRUTO que la cobertura/subvención inyectó en
@@ -132,7 +153,7 @@ def generar_efe(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligatori
     a4d = -actual.pyg_eur["impuesto_beneficios"]
     a4e = 0.0
 
-    a5 = a1 + a2a + a2g + a2h + a2k + a3a + a3b + a3c + a3d + a3e + a3f + a4a + a4b + a4c + a4d + a4e
+    a5 = a1 + a2a + a2e + a2g + a2h + a2k + a3a + a3b + a3c + a3d + a3e + a3f + a4a + a4b + a4c + a4d + a4e
 
     # B) Inversión — desglose por perfil (material/intangible/inversiones_inmobiliarias/otros
     # financieros), constante para el caso, aplicado al cambio ORGÁNICO de activo_no_corriente
@@ -151,9 +172,18 @@ def generar_efe(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligatori
     grupo89_activo_no_corriente_anterior = (
         anterior.activos_por_impuesto_diferido_eur + max(0.0, anterior.cobertura_valor_swap_eur) + anterior.inversion_grupo_largo_eur
     )
+    # Excluye, igual que la adquisición (18), el valor en libros de las bajas anticipadas de
+    # sub-lotes de ESTE año (`baja_valor_en_libros_eur` — motor/amortizacion.py): esa reducción
+    # de `activo_no_corriente` no es una compra/venta "normal" que deba repartirse por el perfil
+    # genérico material/intangible/inversiones_inmobiliarias/otros_financieros — se añade de
+    # vuelta aquí (el `- actual.incremento...` y el `+ actual.baja_valor_en_libros_eur` se anulan
+    # exactamente entre el balance de este año y el del anterior, dejando el delta puramente
+    # orgánico) y su cobro real (si hubo enajenación) se muestra aparte en `b6_enajenacion_
+    # inmovilizado` más abajo.
     delta_activo_no_corriente_organico = (
         (actual.balance_eur["activo_no_corriente"] - grupo89_activo_no_corriente_actual)
         - actual.incremento_activo_adquisicion_eur
+        + actual.baja_valor_en_libros_eur
         - (anterior.balance_eur["activo_no_corriente"] - grupo89_activo_no_corriente_anterior)
     )
     perfil = actual.activo_no_corriente_perfil_pct
@@ -162,9 +192,13 @@ def generar_efe(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligatori
     b_inversiones_inmobiliarias = -perfil["inversiones_inmobiliarias"] * delta_activo_no_corriente_organico
     b_otros_financieros = -perfil["otros_financieros"] * delta_activo_no_corriente_organico
     b_adquisicion = -actual.incremento_activo_adquisicion_eur
+    b_enajenacion_inmovilizado = actual.baja_valor_venta_eur
     b_prestamo_grupo = -(actual.inversion_grupo_largo_eur - anterior.inversion_grupo_largo_eur)
 
-    b8 = b_intangible + b_material + b_inversiones_inmobiliarias + b_otros_financieros + b_adquisicion + b_prestamo_grupo
+    b8 = (
+        b_intangible + b_material + b_inversiones_inmobiliarias + b_otros_financieros
+        + b_adquisicion + b_enajenacion_inmovilizado + b_prestamo_grupo
+    )
 
     # C) Financiación — `c10` excluye el derivado de la cobertura (cuando es PASIVO): desde el
     # cuarto lote de desglose de balance vive dentro de `deudas_fin_largo` (línea "IV. Derivados"
@@ -208,6 +242,7 @@ def generar_efe(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligatori
         obligatorio=obligatorio,
         a1_resultado_antes_impuestos=a1,
         a2a_amortizacion=a2a,
+        a2e_deterioro_enajenacion_inmovilizado=a2e,
         a2g_ingresos_financieros=a2g,
         a2h_gastos_financieros=a2h,
         a2k_otros_ingresos_gastos=a2k,
@@ -228,6 +263,7 @@ def generar_efe(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligatori
         b6b7_inversiones_inmobiliarias=b_inversiones_inmobiliarias,
         b6b7_otros_activos_financieros=b_otros_financieros,
         b6a_empresas_grupo_adquisicion=b_adquisicion,
+        b6_enajenacion_inmovilizado=b_enajenacion_inmovilizado,
         b6c_prestamo_empresas_grupo=b_prestamo_grupo,
         b8_flujo_inversion=b8,
         c9_instrumentos_patrimonio=c9,
