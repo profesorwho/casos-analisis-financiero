@@ -521,9 +521,11 @@ from motor.empresa_base import (
     calcular_desglose_gastos_personal,
     calcular_desglose_ingresos_financieros,
     calcular_desglose_otros_gastos_explot,
+    calcular_desglose_otras_deudas,
     categoria_de_sector,
     generar_empresa_base,
     resolver_fila_sector,
+    sortear_aapp_pendiente_corto_pct,
     tier_existencias_de_sector,
 )
 from motor.provisiones import (
@@ -1310,6 +1312,26 @@ class EjercicioEmpresa:
     pyg_gastos_personal_desglose_eur: dict[str, float] = field(default_factory=dict)
     pyg_ingresos_financieros_desglose_eur: dict[str, float] = field(default_factory=dict)
 
+    # --- Quinto lote de desglose de balance ("Otras deudas" largo/corto plazo, ver motor/
+    # empresa_base.py) — `otras_deudas_largo_perfil_pct`/`..._corto_resto_perfil_pct` son el
+    # perfil FIJO del caso (arquetipo-agnóstico salvo `deudas_socios_activa`, decidida una única
+    # vez, sin ancla a ningún arquetipo); `otras_deudas_largo_desglose_eur`/`..._corto_desglose_
+    # eur` son las 4 sub-partidas ya resueltas de ESTE año (con la reclasificación anual de
+    # `acreedores_inmovilizado` de largo a corto ya aplicada), sumando exacto al residuo de cada
+    # plazo tras excluir provisiones/deudas del grupo/pasivos por impuesto diferido.
+    # `aapp_pendiente_corto_pct` es la ÚNICA pieza que NO es fija desde 2023 (re-invocada cada
+    # año, con el boost de arquetipo 4/7 ya aplicado si procede) — pero DETERMINISTA para
+    # semilla/sector/segmento/boost dados: como el boost es una propiedad del caso completo (un
+    # arquetipo activo lo está en 2024 Y 2025 por igual), el resultado nunca "parpadea" entre
+    # esos dos años, verificado — ver docstring de `sortear_aapp_pendiente_corto_pct` en
+    # motor.empresa_base para la propiedad completa. ---
+    deudas_socios_activa: bool = False
+    otras_deudas_largo_perfil_pct: dict[str, float] = field(default_factory=dict)
+    otras_deudas_corto_resto_perfil_pct: dict[str, float] = field(default_factory=dict)
+    otras_deudas_largo_desglose_eur: dict[str, float] = field(default_factory=dict)
+    otras_deudas_corto_desglose_eur: dict[str, float] = field(default_factory=dict)
+    aapp_pendiente_corto_pct: float = 0.0
+
     @property
     def pyg_linea_11_deterioro_resultado_enajenacion_inmovilizado_eur(self) -> float:
         """Línea oficial "11. Deterioro y resultado por enajenaciones del inmovilizado" del
@@ -1445,6 +1467,12 @@ def _ejercicio_desde_empresa_base(empresa: EmpresaBase) -> EjercicioEmpresa:
         deudas_fin_fraccion_largo=dict(empresa.deudas_fin_fraccion_largo),
         deudas_fin_largo_desglose_eur=dict(empresa.deudas_fin_largo_desglose_eur),
         deudas_fin_corto_desglose_eur=dict(empresa.deudas_fin_corto_desglose_eur),
+        deudas_socios_activa=empresa.deudas_socios_activa,
+        otras_deudas_largo_perfil_pct=dict(empresa.otras_deudas_largo_perfil_pct),
+        otras_deudas_corto_resto_perfil_pct=dict(empresa.otras_deudas_corto_resto_perfil_pct),
+        otras_deudas_largo_desglose_eur=dict(empresa.otras_deudas_largo_desglose_eur),
+        otras_deudas_corto_desglose_eur=dict(empresa.otras_deudas_corto_desglose_eur),
+        aapp_pendiente_corto_pct=empresa.aapp_pendiente_corto_pct,
         pyg_cifra_negocios_perfil_pct=dict(empresa.pyg_cifra_negocios_perfil_pct),
         pyg_cifra_negocios_desglose_eur=dict(empresa.pyg_cifra_negocios_desglose_eur),
         pyg_consumos_explotacion_perfil_pct=dict(empresa.pyg_consumos_explotacion_perfil_pct),
@@ -2694,6 +2722,31 @@ def _evolucionar_un_año(
         deudas_fin_largo_con_coste_año_eur, balance_eur["deudas_fin_corto"], derivados_pasivo_largo_eur,
     )
 
+    # Desglose de "otras deudas" (quinto lote de desglose de balance) — calculado, igual que el
+    # de deudas financieras, DESPUÉS de la contención de endeudamiento, sobre el balance YA final
+    # de este año. El residuo de cada plazo excluye provisiones (tercer lote)/deudas con el grupo
+    # (arquetipo 20)/pasivos por impuesto diferido (grupo 8/9) — ya sumados sobre `otras_deudas_
+    # largo_eur`/`..._corto_eur` más arriba en esta función, antes de `_construir_balance` — para
+    # no re-etiquetar el mismo euro bajo dos epígrafes oficiales distintos (ver motor.empresa_
+    # base.calcular_desglose_otras_deudas). El residuo de corto se defiende con `max(0.0, ...)`:
+    # a diferencia de largo, el plug de cuadre de `_construir_balance` SÍ puede tocar `otras_
+    # deudas_corto` (nunca `otras_deudas_largo`). `aapp_pendiente` se sortea FRESCO cada año (no
+    # forma parte del perfil fijo desde 2023, ver docstring de `sortear_aapp_pendiente_corto_pct`)
+    # con el boost real de arquetipo 4/7 de ESTE año — a diferencia del año base, donde ambos son
+    # siempre False.
+    otras_deudas_largo_residual_año_eur = balance_eur["otras_deudas_largo"] - pasivos_por_impuesto_diferido_eur - deuda_grupo_largo_eur - provision_saldo_largo_eur
+    otras_deudas_corto_residual_año_eur = max(0.0, balance_eur["otras_deudas_corto"] - provision_saldo_corto_eur)
+    aapp_pendiente_corto_pct_año, _modo_aapp_pendiente_año = sortear_aapp_pendiente_corto_pct(
+        sector, segmento, semilla,
+        deterioro_ciclo_caja_activo=deterioro_ciclo_caja_activo,
+        dependencia_clientes_activo=dependencia_pocos_clientes_activo,
+    )
+    otras_deudas_largo_desglose_eur_año, otras_deudas_corto_desglose_eur_año = calcular_desglose_otras_deudas(
+        anterior.otras_deudas_largo_perfil_pct, anterior.otras_deudas_corto_resto_perfil_pct,
+        aapp_pendiente_corto_pct_año, otras_deudas_largo_residual_año_eur, otras_deudas_corto_residual_año_eur,
+        acreedores_inmovilizado_largo_anterior_eur=anterior.otras_deudas_largo_desglose_eur.get("acreedores_inmovilizado", 0.0),
+    )
+
     # Desglose de PyG en líneas oficiales del PGC (encargo 1/2 de este lote) — perfiles (%)
     # constantes ya fijados "desde 2023" para cifra_negocios/consumos_explotacion/otros_gastos_
     # explot, aplicados al agregado YA final de este año (`pyg_eur`, después de cualquier ajuste
@@ -2846,6 +2899,12 @@ def _evolucionar_un_año(
         deudas_fin_fraccion_largo=anterior.deudas_fin_fraccion_largo,
         deudas_fin_largo_desglose_eur=deudas_fin_largo_desglose_eur_año,
         deudas_fin_corto_desglose_eur=deudas_fin_corto_desglose_eur_año,
+        deudas_socios_activa=anterior.deudas_socios_activa,
+        otras_deudas_largo_perfil_pct=anterior.otras_deudas_largo_perfil_pct,
+        otras_deudas_corto_resto_perfil_pct=anterior.otras_deudas_corto_resto_perfil_pct,
+        otras_deudas_largo_desglose_eur=otras_deudas_largo_desglose_eur_año,
+        otras_deudas_corto_desglose_eur=otras_deudas_corto_desglose_eur_año,
+        aapp_pendiente_corto_pct=aapp_pendiente_corto_pct_año,
     )
 
 

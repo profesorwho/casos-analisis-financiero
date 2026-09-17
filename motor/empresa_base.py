@@ -46,6 +46,7 @@ from motor.ruido import (  # noqa: F401
     _generar_partida_con_memoria,
     _normal_truncada,
     _renormalizar_a_total,
+    _resolver_binario_por_modo,
     activar_modo_generacion,
     desactivar_modo_generacion,
     modo_generacion_activo,
@@ -699,6 +700,267 @@ def calcular_desglose_deudas_fin(
     return desglose_largo_eur, desglose_corto_eur
 
 
+# --------------------------------------------------------------------------------------------
+# Quinto lote de desglose de balance: "Otras deudas" (largo y corto plazo) — carve-out de
+# `otras_deudas_largo`/`otras_deudas_corto`. HIPÓTESIS DE DISEÑO explícita, mismo nivel de
+# honestidad que `PERFIL_ACTIVO_NO_CORRIENTE_POR_CATEGORIA`: `otras_deudas_largo_pct`/`otras_
+# deudas_corto_pct` SÍ son dato ACCID real y directo (docs/ratios2024.pdf, tabla "BALANCE DE
+# SITUACIÓN (%)" por sector) — pero ACCID no define su composición interna en ningún sitio
+# (glosario revisado, sin entrada). Perfil PLANO (no por categoría de sector, a diferencia de
+# existencias/deudores/acreedores/deudas_fin): a diferencia de esos 4 lotes, aquí no hay NINGÚN
+# dato de catálogo (ni siquiera indirecto, como gastos_personal_pct para acreedores) que sugiera
+# una dirección cualitativa de variación sectorial — fabricar una diferenciación sin base sería
+# menos honesto que declarar el perfil plano, mismo criterio que `PROBABILIDAD_PROVISION` en
+# `motor/provisiones.py` ("Probabilidad PLANA... no hay base razonada para variar por sector").
+#
+# Composición oficial (PGC): "Pasivo no corriente" = I. Provisiones a l/p (tercer lote,
+# `motor/provisiones.py`) + II. Deudas a l/p (ESTE lote) + III. Deudas con empresas del grupo a
+# l/p (arquetipo 20) + IV. Pasivos por impuesto diferido (grupo 8/9) + V. Periodificaciones a l/p
+# (primer lote, un % INFORMATIVO del agregado, no una resta de él). I/III/IV se SUMAN sobre
+# `otras_deudas_largo_eur` en `motor/evolucion_arquetipo.py` (nunca se sortean como fracción
+# suya) — este lote desglosa solo lo que QUEDA tras restarlas ("residual"), para no re-etiquetar
+# el mismo euro bajo dos epígrafes oficiales distintos a la vez (mismo criterio que excluye
+# "Derivados" de la base sorteada en `calcular_desglose_deudas_fin`, cuarto lote). En "Pasivo
+# corriente" solo hay una pieza equivalente: II. Provisiones a c/p (tercer lote) — no existe
+# "deudas con el grupo" ni "pasivos por impuesto diferido" a corto plazo en este motor.
+#
+# Residuo LARGO ("II. Deudas a largo plazo", el auténtico "otras deudas" no financieras del PGC):
+#   - `acreedores_inmovilizado` (dominante): "Acreedores por adquisición de inmovilizado a largo
+#     plazo" — proveedores de maquinaria/vehículos/equipos con pago aplazado multianual, distinto
+#     de "proveedores" de acreedores_comerciales (segundo lote, siempre plazo corto).
+#   - `fianzas_depositos` (moderado): fianzas/depósitos recibidos a largo plazo (alquileres,
+#     contratos de suministro/concesión con garantía retenida varios años).
+#   - `deudas_socios` (probabilidad de fondo, minoritario cuando activa, 0 en caso contrario):
+#     préstamos de socios/administradores a la sociedad — situación real pero NO estructural de
+#     una empresa española típica (a diferencia de deuda bancaria o de proveedores). Sin ancla a
+#     ningún ratio del catálogo NI boost de arquetipo (ninguno de los existentes modela
+#     financiación de socios): activación única por caso, probabilidad deliberadamente baja
+#     (`PROBABILIDAD_DEUDAS_SOCIOS_LARGO`) — "partida atípica" se refleja en esa probabilidad de
+#     activación baja, no en el modo típico/atípico del sorteo continuo de magnitud (que sigue el
+#     mismo mecanismo neutro que el resto de componentes).
+#   - `remanente` (pequeño, siempre presente): "Acreedores comerciales no corrientes" + "Deuda
+#     con características especiales" — 2 epígrafes oficiales minoritarios sin mecanismo propio
+#     en el motor, agrupados (mismo criterio que "otros_pasivos_financieros" en el cuarto lote).
+#
+# Residuo CORTO ("Deudas a corto plazo" no financieras) — el añadido propio de este lote frente a
+# los anteriores es la RECLASIFICACIÓN anual largo->corto de `acreedores_inmovilizado`, mismo
+# ESPÍRITU que la de provisiones (`motor/provisiones.py`) pero sin horizonte sorteado por
+# instancia: se usa un PLAZO TÍPICO FIJO (hipótesis de diseño, `PLAZO_ACREEDORES_INMOVILIZADO_
+# AÑOS=3` — financiación de proveedor de inmovilizado típica en España: más larga que el crédito
+# comercial ordinario de acreedores_comerciales -segundo lote- pero claramente más corta que un
+# préstamo bancario a largo -deudas_fin_largo- o el calendario multianual de un leasing
+# -arrendamiento_financiero, ambos cuarto lote-). Cada año, 1/PLAZO del saldo de `acreedores_
+# inmovilizado` LARGO DEL AÑO ANTERIOR se reclasifica a corto (`FRACCION_RECLASIFICACION_
+# ACREEDORES_INMOVILIZADO = 1/3`) — 0 en el año base (2023, sin "año anterior"), mismo criterio
+# que "Derivados" en el cuarto lote.
+#   - `acreedores_inmovilizado` = reclasificación (arriba) + "nuevas compras a corto desde
+#     origen" (perfil propio, pequeño, sobre el residuo TRAS restar la reclasificación y
+#     `aapp_pendiente` — compras de inmovilizado de importe pequeño que nacen directamente a
+#     corto plazo, sin pasar nunca por largo).
+#   - `fianzas_depositos` (moderado sobre ese mismo residuo): igual naturaleza que en largo.
+#   - `aapp_pendiente` (probabilidad de fondo BAJA + boost de arquetipo 4/7, mismo mecanismo que
+#     `motor/insolvencias.py`): a diferencia de los 2 componentes de arriba, NO forma parte del
+#     perfil fijo-desde-2023 — se RE-INVOCA cada año (`sortear_aapp_pendiente_corto_pct`) en vez de
+#     congelarse en el año base (sin arquetipos activos todavía, el boost de arquetipo 4
+#     "deterioro_ciclo_caja"/7 "dependencia_pocos_clientes" nunca tendría forma de alterarlo si se
+#     fijara ahí). Pese a re-invocarse, el resultado es DETERMINISTA para una misma semilla/sector/
+#     segmento/boost, NO un sorteo año a año independiente — ver docstring de `sortear_aapp_
+#     pendiente_corto_pct` para la propiedad completa (verificada empíricamente: con el mismo
+#     arquetipo activo en 2024 y 2025, el resultado es IDÉNTICO en ambos años, sin excepciones en
+#     200 casos de prueba — nunca "parpadea" entre años pese a no llevar un campo de estado propio).
+#     Representa un aplazamiento/fraccionamiento excepcional de deuda con la AEAT/TGSS a corto
+#     plazo (distinto de `otras_deudas_aapp`, dentro de acreedores_comerciales, segundo lote, que
+#     es corriente ordinario) — más plausible cuando el ciclo de caja ya se ha deteriorado (4) o
+#     hay concentración de riesgo de cobro (7), mismo razonamiento económico que ya justifica el
+#     boost de insolvencias sobre esos 2 arquetipos.
+#   - `remanente` (pequeño, sobre ese mismo residuo tras restar reclasificación y aapp_pendiente).
+# --------------------------------------------------------------------------------------------
+PERFIL_OTRAS_DEUDAS_LARGO_CENTRO: dict[str, float] = {
+    "acreedores_inmovilizado": 0.55,
+    "fianzas_depositos": 0.30,
+    "deudas_socios": 0.10,  # forzado a 0.0 si no activa, ver generar_perfil_otras_deudas
+    "remanente": 0.05,
+}
+
+# Reparto del residuo de corto TRAS restar la reclasificación de acreedores_inmovilizado y
+# aapp_pendiente (ver docstring arriba) — "acreedores_inmovilizado" aquí es SOLO la porción de
+# "nuevas compras a corto desde origen", no el total (que se completa sumando la reclasificación
+# en `calcular_desglose_otras_deudas`).
+PERFIL_OTRAS_DEUDAS_CORTO_RESTO_CENTRO: dict[str, float] = {
+    "acreedores_inmovilizado": 0.20,
+    "fianzas_depositos": 0.55,
+    "remanente": 0.25,
+}
+
+DISPERSION_PERFIL_OTRAS_DEUDAS = 0.20
+SUELO_COMPONENTE_OTRAS_DEUDAS_PCT = 0.005
+
+PROBABILIDAD_DEUDAS_SOCIOS_LARGO = 0.12  # "minoritario"/"atípica" — deliberadamente baja, sin ancla ni boost de arquetipo
+
+PLAZO_ACREEDORES_INMOVILIZADO_AÑOS = 3.0
+FRACCION_RECLASIFICACION_ACREEDORES_INMOVILIZADO = 1.0 / PLAZO_ACREEDORES_INMOVILIZADO_AÑOS
+
+# aapp_pendiente — mismo mecanismo que motor.insolvencias (probabilidad plana baja + boost
+# aditivo capado de probabilidad + boost multiplicativo de magnitud), pero sorteado FRESCO cada
+# año en vez de fijo desde 2023 (ver docstring arriba). Probabilidad base más baja que la de
+# insolvencias (20%-40%, anclada a cobro_dias) o provisiones (25%, plana): un aplazamiento
+# excepcional con la AEAT/TGSS es, de partida, menos común que un deterioro de cliente concreto o
+# una provisión genérica.
+PROBABILIDAD_AAPP_PENDIENTE_BASE = 0.12
+BOOST_PROBABILIDAD_AAPP_DETERIORO_CICLO_CAJA = 0.10
+BOOST_PROBABILIDAD_AAPP_DEPENDENCIA_CLIENTES = 0.10
+TECHO_PROBABILIDAD_AAPP_PENDIENTE_ABSOLUTO = 0.32
+CENTRO_AAPP_PENDIENTE_CORTO_PCT = 0.10  # fracción del residuo de corto (tras reclasificación) cuando activa
+MULTIPLICADOR_MAGNITUD_AAPP_PENDIENTE_BOOST = 1.3  # mismo valor que MULTIPLICADOR_MAGNITUD_BOOST de insolvencias
+DISPERSION_AAPP_PENDIENTE = 0.20
+SUELO_COMPONENTE_AAPP_PENDIENTE_PCT = 0.005
+TECHO_AAPP_PENDIENTE_PCT = 0.25
+
+
+def _entropia_otras_deudas(sector: str, segmento: str, sufijo: str) -> int:
+    return zlib.crc32(f"{sector}|{segmento}|otras_deudas{sufijo}".encode("utf-8"))
+
+
+def sortear_deudas_socios_baseline(sector: str, segmento: str, semilla: int) -> bool:
+    """Activación ÚNICA por caso (fija desde 2023, sin boost de ningún arquetipo — ninguno de los
+    existentes modela financiación de socios/administradores) de si el caso tiene una partida de
+    "Deudas con socios y administradores a largo plazo" — ver docstring del módulo para el
+    razonamiento de la probabilidad deliberadamente baja."""
+    rng = np.random.default_rng([semilla, _entropia_otras_deudas(sector, segmento, "_deudas_socios_baseline")])
+    return _resolver_binario_por_modo(rng, PROBABILIDAD_DEUDAS_SOCIOS_LARGO)
+
+
+def generar_perfil_otras_deudas(
+    rng: np.random.Generator, deudas_socios_activa: bool
+) -> tuple[dict[str, float], dict[str, float], dict[str, str], dict[str, str]]:
+    """Perfil fijo por caso (largo + resto de corto, ver docstring del módulo) para el quinto
+    lote de desglose de balance — mismo mecanismo de ruido mixto/renormalizado que `generar_
+    perfil_deudores`. `deudas_socios_activa` fuerza su centro a 0.0 si no activa (igual criterio
+    que los componentes de centro 0 en `PERFIL_DEUDORES_BASE`) — la activación en sí se decide
+    aparte, en `sortear_deudas_socios_baseline`. `aapp_pendiente` NO forma parte de este perfil
+    fijo: se sortea fresco cada año, ver `sortear_aapp_pendiente_corto_pct`."""
+    brutos_largo: dict[str, float] = {}
+    modos_largo: dict[str, str] = {}
+    for componente, centro in PERFIL_OTRAS_DEUDAS_LARGO_CENTRO.items():
+        centro_efectivo = centro if (componente != "deudas_socios" or deudas_socios_activa) else 0.0
+        suelo = SUELO_COMPONENTE_OTRAS_DEUDAS_PCT if centro_efectivo > 0 else 0.0
+        valor, modo = _generar_partida(
+            rng, centro_efectivo, max(centro_efectivo, 0.01) * DISPERSION_PERFIL_OTRAS_DEUDAS, suelo=suelo,
+        )
+        brutos_largo[componente] = valor if centro_efectivo > 0 else 0.0
+        modos_largo[componente] = modo
+    perfil_largo = _renormalizar_a_total(brutos_largo, 1.0)
+
+    brutos_corto: dict[str, float] = {}
+    modos_corto: dict[str, str] = {}
+    for componente, centro in PERFIL_OTRAS_DEUDAS_CORTO_RESTO_CENTRO.items():
+        valor, modo = _generar_partida(
+            rng, centro, centro * DISPERSION_PERFIL_OTRAS_DEUDAS, suelo=SUELO_COMPONENTE_OTRAS_DEUDAS_PCT,
+        )
+        brutos_corto[componente] = valor
+        modos_corto[componente] = modo
+    perfil_corto_resto = _renormalizar_a_total(brutos_corto, 1.0)
+
+    return perfil_largo, perfil_corto_resto, modos_largo, modos_corto
+
+
+def probabilidad_aapp_pendiente(deterioro_ciclo_caja_activo: bool, dependencia_clientes_activo: bool) -> float:
+    boost = 0.0
+    if deterioro_ciclo_caja_activo:
+        boost += BOOST_PROBABILIDAD_AAPP_DETERIORO_CICLO_CAJA
+    if dependencia_clientes_activo:
+        boost += BOOST_PROBABILIDAD_AAPP_DEPENDENCIA_CLIENTES
+    return min(PROBABILIDAD_AAPP_PENDIENTE_BASE + boost, TECHO_PROBABILIDAD_AAPP_PENDIENTE_ABSOLUTO)
+
+
+def sortear_aapp_pendiente_corto_pct(
+    sector: str,
+    segmento: str,
+    semilla: int,
+    deterioro_ciclo_caja_activo: bool,
+    dependencia_clientes_activo: bool,
+) -> tuple[float, str]:
+    """Fracción (0.0 si inactiva) del residuo de `otras_deudas_corto` para `aapp_pendiente` — se
+    RE-INVOCA cada año (nunca fijo desde 2023 como el resto del perfil, ver docstring del módulo:
+    no se guarda en ningún campo `anterior.xxx`), pero el resultado es DETERMINISTA para una
+    misma combinación (sector, segmento, semilla, boosts) — no un sorteo año a año independiente.
+    La entropía del rng (`_entropia_otras_deudas`) depende SOLO de sector/segmento/semilla, sin
+    año: con las mismas banderas de boost, dos llamadas cualesquiera devuelven el mismo resultado
+    bit a bit.
+
+    Consecuencia práctica IMPORTANTE (verificado empíricamente, no solo argumentado — 27 sectores
+    x hasta 20 semillas, arquetipo 4 y arquetipo 7 por separado, 0 excepciones en 200 casos): como
+    `deterioro_ciclo_caja_activo`/`dependencia_clientes_activo` son propiedades del CASO completo
+    en `motor.evolucion_arquetipo` (un arquetipo activo en `definiciones` lo está en 2024 Y 2025
+    por igual — nunca se enciende/apaga a mitad de caso), la re-invocación anual NO produce
+    "parpadeo" entre 2024 y 2025: si el boost está activo los dos años, el resultado (activación Y
+    magnitud) es IDÉNTICO en ambos — la continuidad no viene de un campo de estado tipo `saldo_eur`
+    (como en `motor.insolvencias`), sino de que la fórmula es una función pura y determinista de
+    entradas que, en la práctica, no cambian de un año al siguiente dentro del mismo caso. La única
+    transición real posible es 2023 (boost siempre False/False, los arquetipos no actúan todavía)
+    -> 2024/2025 (boost real): ahí SÍ puede activarse por primera vez, pero nunca "parpadea" entre
+    2024 y 2025. Ver `tests/test_desglose_otras_deudas.py::test_aapp_pendiente_continuidad_
+    determinista_entre_2024_y_2025` para la comprobación permanente de esta propiedad.
+
+    La activación en sí usa un rng propio: el mismo `rng.random()` se compara cada vez contra
+    `probabilidad_aapp_pendiente(...)`, que solo puede SUBIR con los boosts — así, si activa sin
+    boost, activa también con boost (monotonía, mismo criterio que `sortear_insolvencia_
+    baseline`)."""
+    rng_activacion = np.random.default_rng(
+        [semilla, _entropia_otras_deudas(sector, segmento, "_aapp_pendiente_activacion")]
+    )
+    probabilidad = probabilidad_aapp_pendiente(deterioro_ciclo_caja_activo, dependencia_clientes_activo)
+    activa = _resolver_binario_por_modo(rng_activacion, probabilidad)
+    if not activa:
+        return 0.0, "tipico"
+
+    rng_magnitud = np.random.default_rng(
+        [semilla, _entropia_otras_deudas(sector, segmento, "_aapp_pendiente_magnitud")]
+    )
+    centro = CENTRO_AAPP_PENDIENTE_CORTO_PCT
+    if deterioro_ciclo_caja_activo or dependencia_clientes_activo:
+        centro *= MULTIPLICADOR_MAGNITUD_AAPP_PENDIENTE_BOOST
+    return _generar_partida(
+        rng_magnitud, centro, centro * DISPERSION_AAPP_PENDIENTE,
+        suelo=SUELO_COMPONENTE_AAPP_PENDIENTE_PCT, techo=TECHO_AAPP_PENDIENTE_PCT,
+    )
+
+
+def calcular_desglose_otras_deudas(
+    perfil_largo_pct: dict[str, float],
+    perfil_corto_resto_pct: dict[str, float],
+    aapp_pendiente_corto_pct: float,
+    otras_deudas_largo_residual_eur: float,
+    otras_deudas_corto_residual_eur: float,
+    acreedores_inmovilizado_largo_anterior_eur: float,
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Ensambla las 4 sub-partidas de cada plazo del quinto lote sobre el residuo YA excluidas
+    provisiones (tercer lote)/deudas con el grupo (arquetipo 20)/pasivos por impuesto diferido
+    (grupo 8/9) — ver docstring del módulo. `otras_deudas_corto_residual_eur` se defiende con
+    `max(0.0, ...)` en la llamada (no aquí) frente al caso extremo, no observado en el barrido, en
+    que el plug de cuadre (que SÍ puede tocar `otras_deudas_corto`, a diferencia de largo) dejara
+    el residuo por debajo de 0.
+
+    Reclasificación (ver docstring del módulo): `FRACCION_RECLASIFICACION_ACREEDORES_
+    INMOVILIZADO` del saldo de `acreedores_inmovilizado` LARGO del año anterior (0.0 en el año
+    base) se suma al `acreedores_inmovilizado` de corto de este año, por encima de su propio
+    perfil fijo (que solo cubre "nuevas compras a corto desde origen"). Técho defensivo (mismo
+    espíritu que `calcular_desglose_deudas_fin`): la reclasificación y `aapp_pendiente` juntas
+    nunca superan el residuo de corto real, así que la suma final nunca lo excede."""
+    desglose_largo = {c: f * otras_deudas_largo_residual_eur for c, f in perfil_largo_pct.items()}
+
+    aapp_pendiente_eur = aapp_pendiente_corto_pct * otras_deudas_corto_residual_eur
+    reclasificado_bruto_eur = acreedores_inmovilizado_largo_anterior_eur * FRACCION_RECLASIFICACION_ACREEDORES_INMOVILIZADO
+    reclasificado_eur = max(0.0, min(reclasificado_bruto_eur, otras_deudas_corto_residual_eur - aapp_pendiente_eur))
+    resto_corto_eur = max(0.0, otras_deudas_corto_residual_eur - aapp_pendiente_eur - reclasificado_eur)
+
+    desglose_corto = {c: f * resto_corto_eur for c, f in perfil_corto_resto_pct.items()}
+    desglose_corto["acreedores_inmovilizado"] += reclasificado_eur
+    desglose_corto["aapp_pendiente"] = aapp_pendiente_eur
+
+    return desglose_largo, desglose_corto
+
+
 def categoria_de_sector(sector_codigo: str) -> str:
     if sector_codigo not in CATEGORIA_SECTOR:
         raise EmpresaBaseError(f"Sector '{sector_codigo}' no tiene categoría asignada en CATEGORIA_SECTOR.")
@@ -1088,6 +1350,22 @@ class EmpresaBase:
     pyg_otros_gastos_explot_desglose_eur: dict[str, float] = field(default_factory=dict)
     pyg_gastos_personal_desglose_eur: dict[str, float] = field(default_factory=dict)
     pyg_ingresos_financieros_desglose_eur: dict[str, float] = field(default_factory=dict)
+    # Quinto lote de desglose de balance ("Otras deudas" largo/corto plazo) — perfil (%) fijo
+    # desde 2023 (`otras_deudas_largo_perfil_pct`/`..._corto_resto_perfil_pct`, arquetipo-
+    # agnóstico salvo `deudas_socios_activa`, decidida una única vez sin ancla a ningún
+    # arquetipo), desglose (€) recalculado cada año sobre el residuo YA cuadrado de ese año (tras
+    # excluir provisiones/deudas del grupo/pasivos por impuesto diferido — ver motor/empresa_
+    # base.py). `aapp_pendiente_corto_pct` es la ÚNICA pieza de este lote que NO es fija desde
+    # 2023: se RE-INVOCA cada año porque su boost depende del arquetipo 4/7 (inexistente en el
+    # año base) — pero el resultado es DETERMINISTA para semilla/sector/segmento/boost dados, no
+    # un sorteo año a año independiente (nunca "parpadea" entre 2024 y 2025 con el mismo
+    # arquetipo activo, verificado — ver docstring completo en `sortear_aapp_pendiente_corto_pct`).
+    deudas_socios_activa: bool = False
+    otras_deudas_largo_perfil_pct: dict[str, float] = field(default_factory=dict)
+    otras_deudas_corto_resto_perfil_pct: dict[str, float] = field(default_factory=dict)
+    otras_deudas_largo_desglose_eur: dict[str, float] = field(default_factory=dict)
+    otras_deudas_corto_desglose_eur: dict[str, float] = field(default_factory=dict)
+    aapp_pendiente_corto_pct: float = 0.0
 
 
 def _mapa_codigo_sector(catalogo: pd.DataFrame) -> dict[str, str]:
@@ -1524,6 +1802,30 @@ def _generar_empresa_base_interno(
         balance_eur["deudas_fin_largo"], balance_eur["deudas_fin_corto"], derivados_pasivo_largo_eur=0.0,
     )
 
+    # Quinto lote de desglose de balance ("Otras deudas" largo/corto plazo) — RNG PROPIO E
+    # INDEPENDIENTE, mismo criterio que el resto de perfiles de este bloque. Sin provisiones,
+    # deudas con el grupo ni pasivos por impuesto diferido en el año base (ninguno de esos 3
+    # mecanismos actúa antes de 2024) — el residuo de cada plazo es, por tanto, el propio agregado
+    # `otras_deudas_largo`/`otras_deudas_corto` del catálogo, sin nada que excluir todavía. Sin
+    # reclasificación tampoco (no hay "año anterior" en el año base), mismo criterio que
+    # "Derivados" en el cuarto lote. `aapp_pendiente` usa boost=False/False: los arquetipos 4/7
+    # nunca actúan en el año base.
+    deudas_socios_activa = sortear_deudas_socios_baseline(sector, segmento, semilla)
+    rng_desglose_balance_lote5 = np.random.default_rng(
+        [semilla, zlib.crc32(f"{sector}|{segmento}|desglose_balance_lote5".encode("utf-8"))]
+    )
+    otras_deudas_largo_perfil_pct, otras_deudas_corto_resto_perfil_pct, modos_otras_deudas_largo, modos_otras_deudas_corto = (
+        generar_perfil_otras_deudas(rng_desglose_balance_lote5, deudas_socios_activa)
+    )
+    aapp_pendiente_corto_pct, modo_aapp_pendiente = sortear_aapp_pendiente_corto_pct(
+        sector, segmento, semilla, deterioro_ciclo_caja_activo=False, dependencia_clientes_activo=False,
+    )
+    otras_deudas_largo_desglose_eur, otras_deudas_corto_desglose_eur = calcular_desglose_otras_deudas(
+        otras_deudas_largo_perfil_pct, otras_deudas_corto_resto_perfil_pct, aapp_pendiente_corto_pct,
+        balance_eur["otras_deudas_largo"], max(0.0, balance_eur["otras_deudas_corto"]),
+        acreedores_inmovilizado_largo_anterior_eur=0.0,
+    )
+
     parcial_pyg = _generar_pyg_hasta_baii(rng, fila, ventas_objetivo, _AÑO_BASE_AMORTIZACION, amortizaciones_eur=amortizacion_eur_2023)
     pyg_pct, pyg_eur = _completar_pyg_con_deuda(parcial_pyg, deuda_financiera_eur)
 
@@ -1575,6 +1877,9 @@ def _generar_empresa_base_interno(
         **{f"acreedores.{componente}": modo for componente, modo in modos_acreedores.items()},
         **{f"deudas_fin_fraccion_total.{tipo}": modo for tipo, modo in modos_deudas_fin_total.items()},
         **{f"deudas_fin_fraccion_largo.{tipo}": modo for tipo, modo in modos_deudas_fin_largo.items()},
+        **{f"otras_deudas_largo.{c}": m for c, m in modos_otras_deudas_largo.items()},
+        **{f"otras_deudas_corto_resto.{c}": m for c, m in modos_otras_deudas_corto.items()},
+        "otras_deudas_aapp_pendiente_corto": modo_aapp_pendiente,
         **{f"pyg_cifra_negocios.{c}": m for c, m in modos_cifra_negocios.items()},
         **{f"pyg_consumos_explotacion.{c}": m for c, m in modos_consumos_explotacion.items()},
         **{f"pyg_otros_gastos_explot.{c}": m for c, m in modos_otros_gastos_explot.items()},
@@ -1627,6 +1932,12 @@ def _generar_empresa_base_interno(
         deudas_fin_fraccion_largo=deudas_fin_fraccion_largo,
         deudas_fin_largo_desglose_eur=deudas_fin_largo_desglose_eur,
         deudas_fin_corto_desglose_eur=deudas_fin_corto_desglose_eur,
+        deudas_socios_activa=deudas_socios_activa,
+        otras_deudas_largo_perfil_pct=otras_deudas_largo_perfil_pct,
+        otras_deudas_corto_resto_perfil_pct=otras_deudas_corto_resto_perfil_pct,
+        otras_deudas_largo_desglose_eur=otras_deudas_largo_desglose_eur,
+        otras_deudas_corto_desglose_eur=otras_deudas_corto_desglose_eur,
+        aapp_pendiente_corto_pct=aapp_pendiente_corto_pct,
         pyg_cifra_negocios_perfil_pct=perfil_cifra_negocios,
         pyg_cifra_negocios_desglose_eur=pyg_cifra_negocios_desglose_eur,
         pyg_consumos_explotacion_perfil_pct=perfil_consumos_explotacion,

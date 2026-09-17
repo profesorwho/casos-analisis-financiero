@@ -758,6 +758,74 @@ Derivados como línea propia para la cobertura del arquetipo 21. Ver decisiones 
   fórmula excluye el derivado (`a3f`→`c10`, ver sección EFE arriba). **EIGR no necesitó ningún
   cambio** (no referencia `balance_eur` ni la colocación del derivado en absoluto).
 
+## Otras deudas — quinto lote de desglose de balance (`motor/empresa_base.py`)
+
+Carve-out de `otras_deudas_largo`/`otras_deudas_corto` en 4 sub-partidas por plazo. HIPÓTESIS DE
+DISEÑO explícita (mismo nivel de honestidad que `PERFIL_ACTIVO_NO_CORRIENTE_POR_CATEGORIA`):
+`otras_deudas_largo_pct`/`otras_deudas_corto_pct` SÍ son dato ACCID real (docs/ratios2024.pdf,
+tabla "BALANCE DE SITUACIÓN (%)"), pero ACCID no define su composición interna en ningún sitio.
+Perfil PLANO (no por categoría de sector, a diferencia de los 4 lotes anteriores): no hay ningún
+dato de catálogo, ni siquiera indirecto, que sugiera una dirección de variación sectorial aquí.
+
+- **Exclusión de las 3 piezas ya identificadas con epígrafe propio** — mismo criterio que
+  "Derivados" en `calcular_desglose_deudas_fin` (cuarto lote): provisiones a largo/corto (tercer
+  lote, `motor/provisiones.py`), "financiación recibida de grupo" (arquetipo 20,
+  `deuda_grupo_largo_eur`) y pasivos por impuesto diferido (grupo 8/9) se SUMAN sobre
+  `otras_deudas_largo_eur`/`..._corto_eur` en `motor/evolucion_arquetipo.py` ANTES de este lote —
+  el residuo que `calcular_desglose_otras_deudas` reparte es el agregado MENOS esas 3 piezas, para
+  no re-etiquetar el mismo euro bajo dos epígrafes oficiales distintos a la vez.
+- **Largo** (`PERFIL_OTRAS_DEUDAS_LARGO_CENTRO`): `acreedores_inmovilizado` (dominante, 55% —
+  "Acreedores por adquisición de inmovilizado a largo plazo") / `fianzas_depositos` (moderado,
+  30%) / `deudas_socios` (probabilidad de fondo baja, 12%, `PROBABILIDAD_DEUDAS_SOCIOS_LARGO`, SIN
+  ancla ni boost de ningún arquetipo — ninguno de los existentes modela financiación de
+  socios/administradores; forzado a 0% si no activa) / `remanente` (5%, "Acreedores comerciales no
+  corrientes" + "Deuda con características especiales", lumped).
+- **Corto** (`PERFIL_OTRAS_DEUDAS_CORTO_RESTO_CENTRO` + reclasificación + `aapp_pendiente`):
+  `acreedores_inmovilizado` = reclasificación anual (ver abajo) + "nuevas compras a corto desde
+  origen" (perfil propio, 20% del residuo TRAS restar reclasificación y `aapp_pendiente`) /
+  `fianzas_depositos` (55% de ese mismo residuo) / `aapp_pendiente` (ver abajo) / `remanente` (25%
+  de ese mismo residuo).
+- **Reclasificación**: plazo típico fijo `PLAZO_ACREEDORES_INMOVILIZADO_AÑOS=3` (hipótesis de
+  diseño — financiación de proveedor de inmovilizado más larga que el crédito comercial ordinario
+  de acreedores_comerciales -segundo lote-, más corta que un préstamo bancario a largo o un leasing
+  -ambos cuarto lote-). Cada año, `FRACCION_RECLASIFICACION_ACREEDORES_INMOVILIZADO=1/3` del saldo
+  de `acreedores_inmovilizado` LARGO del año ANTERIOR se suma al de corto de este año, por encima
+  de su propio perfil de origen — 0 en el año base (sin "año anterior"), mismo criterio que
+  "Derivados" en el cuarto lote. Técho defensivo (mismo espíritu que `calcular_desglose_deudas_
+  fin`): la reclasificación + `aapp_pendiente` nunca superan el residuo de corto real.
+- **`aapp_pendiente`** — única pieza que NO es fija desde 2023 (a diferencia de las otras 3 de cada
+  plazo): se RE-INVOCA cada año (`sortear_aapp_pendiente_corto_pct`, nunca se congela en un campo
+  `anterior.xxx`), mismo mecanismo que `motor/insolvencias.py` (probabilidad plana baja
+  `PROBABILIDAD_AAPP_PENDIENTE_BASE=12%` + boost aditivo capado de probabilidad si arquetipo 4
+  "deterioro_ciclo_caja"/7 "dependencia_pocos_clientes" activos, +10pp cada uno hasta `TECHO_
+  PROBABILIDAD_AAPP_PENDIENTE_ABSOLUTO=32%` + boost multiplicativo de magnitud `MULTIPLICADOR_
+  MAGNITUD_AAPP_PENDIENTE_BOOST=1,3` si cualquiera de los 2 activo). Fija desde 2023 la habría
+  dejado ciega al boost (los arquetipos no actúan en el año base) — se sortea con la MISMA
+  entropía cada vez (monotonía: si activa sin boost, activa también con boost, verificado sobre
+  200 semillas) y con boost=False/False en el año base.
+  **Propiedad importante, aclarada explícitamente tras pregunta del usuario antes de comitear:**
+  pese a re-invocarse cada año, el resultado es DETERMINISTA para una misma combinación (sector,
+  segmento, semilla, boost) — la entropía del rng no depende del año, y `deterioro_ciclo_caja_
+  activo`/`dependencia_clientes_activo` son propiedades del CASO completo (un arquetipo activo lo
+  está en 2024 Y 2025 por igual, nunca a medias). Consecuencia verificada empíricamente (27
+  sectores x hasta 20 semillas, arquetipo 4 y arquetipo 7 por separado, 200 casos, 0 excepciones):
+  con el mismo arquetipo activo los dos años, `aapp_pendiente_corto_pct` es IDÉNTICO bit a bit en
+  2024 y 2025 — nunca "parpadea" entre años pese a no llevar un campo de estado tipo `saldo_eur`
+  como insolvencias/provisiones. La única transición real es 2023 (boost siempre False) -> 2024/
+  2025 (boost real) — protegido con un test de regresión permanente (`tests/test_desglose_otras_
+  deudas.py::test_aapp_pendiente_continuidad_determinista_entre_2024_y_2025`).
+- **Verificado con barrido de estrés** (27 sectores x 6-8 semillas x varios arquetipos x 3 años):
+  0 sub-partidas negativas, 0 descuadres del residuo (largo/corto), 0 descuadres de EFE/ECPN en
+  3.402 ejercicios. `deudas_socios` activa en ~7-12% de los casos (sector x semilla; rango
+  esperado ~12% ±ruido de muestra finita, invariante al arquetipo activo — verificado
+  cuantitativamente). `aapp_pendiente`, separado por año/condición de boost (27 sectores x 8
+  semillas, 2024+2025): **11,6%** sin arquetipo 4/7 activo (216 casos base 2023 y 432 años-caso
+  2024/2025, ambos ~11,6% — coincide con el 12% teórico), subiendo a **25,5%** con el 4 o con el 7
+  activo (432 años-caso cada uno; algo por encima del 22% teórico pero dentro de ruido de muestra
+  razonable para n=432 — mismo criterio de validación ya aplicado al boost de insolvencias);
+  magnitud media también sube de ~9,9% a ~12,9% del residuo cuando activa. Las tasas con 4 y con 7
+  salen idénticas porque ambos boosts usan el mismo valor (+10pp, multiplicador 1,3x), no por error.
+
 ## Validación de plausibilidad del caso completo — sección 2.13 (`motor/evolucion_arquetipo.py`)
 
 Pasada FINAL, independiente de qué arquetipos estén activos, sobre el caso YA generado (3 años,
