@@ -1172,7 +1172,7 @@ class EjercicioEmpresa:
     capital_social_eur: float = 0.0  # fijo desde el año base (2023), constante en 2024/2025 — ver empresa_base.py
     reservas_eur: float = 0.0  # = patrimonio_neto - capital_social_eur - pyg_eur["resultado_ejercicio"], por resta
     activo_no_corriente_perfil_pct: dict[str, float] = field(default_factory=dict)  # fijo desde 2023, ver empresa_base.py
-    activo_no_corriente_desglose_eur: dict[str, float] = field(default_factory=dict)  # SIN el salto de adquisición (18)
+    activo_no_corriente_desglose_eur: dict[str, float] = field(default_factory=dict)  # CON el salto de adquisición (18) plegado en material/intangible/inversiones_inmobiliarias; SIN grupo89/préstamo a matriz (líneas PGC propias) — ver comentario en su construcción
     incremento_activo_adquisicion_eur: float = 0.0  # solo en AÑO_ADQUISICION (18) — mantenido aparte del desglose
     # Amortización derivada de una colección real de activos (motor/amortizacion.py) — la
     # colección de ESTE año (base + cualquier cohorte nueva de capex/adquisición ya incorporada),
@@ -2830,14 +2830,27 @@ def _evolucionar_un_año(
             - subvenciones_pn_eur
         ),
         activo_no_corriente_perfil_pct=anterior.activo_no_corriente_perfil_pct,
-        # Desglose del TOTAL de activo_no_corriente de ESTE año (incluye cualquier salto de
-        # adquisición ya absorbido, de este año o de años anteriores) — instantánea informativa.
-        # `motor/efe.py` calcula el flujo de inversión "orgánico" restando `incremento_activo_
-        # adquisicion_eur` del cambio total, con el perfil (constante) aplicado a ESE delta, no a
-        # la diferencia entre dos desgloses ya guardados — evita duplicar el salto de un año en
-        # el "crecimiento orgánico" del año siguiente.
+        # Desglose del RESIDUO "orgánico" de activo_no_corriente de ESTE año (incluye cualquier
+        # salto de adquisición ya absorbido, de este año o de años anteriores — SÍ forma parte de
+        # material/intangible/inversiones_inmobiliarias por diseño: `generar_cohortes_adquisicion`
+        # en motor/amortizacion.py reparte el importe adquirido con el MISMO perfil de categoría
+        # que el resto del activo, sin una línea PGC propia como "fondo de comercio" separada —
+        # ver decisiones_plausibilidad.md #13) — instantánea informativa. El residuo excluye
+        # `inversion_grupo_largo_eur` (arquetipo 20, "préstamo a matriz"), `activos_por_impuesto_
+        # diferido_eur` (grupo 8/9) y `max(0.0, cobertura_valor_swap_eur)` (derivado de cobertura
+        # cuando es ACTIVO): las 3 tienen su propia línea PGC oficial y separada ("Inversiones en
+        # empresas del grupo", "Activos por impuesto diferido", "Derivados"), a diferencia de la
+        # adquisición — mismo criterio que el quinto lote de "otras deudas" (ver decisiones_
+        # plausibilidad.md #90), para no re-etiquetar el mismo euro bajo dos epígrafes oficiales
+        # distintos. `motor/efe.py` calcula el flujo de inversión "orgánico" de forma INDEPENDIENTE
+        # (resta las mismas 3 cantidades, más `incremento_activo_adquisicion_eur`, directamente del
+        # delta de `balance_eur["activo_no_corriente"]` entre dos años, con el perfil aplicado a
+        # ESE delta) — nunca lee este diccionario, así que este cambio no le afecta.
         activo_no_corriente_desglose_eur={
-            componente: fraccion * balance_eur["activo_no_corriente"]
+            componente: fraccion * (
+                balance_eur["activo_no_corriente"] - inversion_grupo_largo_eur - activos_por_impuesto_diferido_eur
+                - max(0.0, cobertura_valor_swap_eur)
+            )
             for componente, fraccion in anterior.activo_no_corriente_perfil_pct.items()
         },
         incremento_activo_adquisicion_eur=incremento_activo_adquisicion_eur,
