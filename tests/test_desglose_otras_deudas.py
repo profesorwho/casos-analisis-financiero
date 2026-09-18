@@ -546,6 +546,37 @@ def test_residuo_excluye_deuda_grupo_y_pasivos_impuesto_diferido(catalogo, arque
     assert comprobados > 0, "ninguna 'financiación recibida de grupo' activa — ampliar semillas"
 
 
+@pytest.mark.parametrize("codigo", ["19", "86.1"])
+def test_residuo_de_largo_nunca_negativo_con_pasivo_impuesto_diferido_que_absorbe_la_masa(catalogo, arquetipos, codigo):
+    """Regresión (decisiones #101): capex_elevado (17) dispara una subvención de capital cuyo pasivo
+    por impuesto diferido (grupo 8/9) puede absorber casi todo `otras_deudas_largo` en sectores
+    con masa de base minúscula (19, 86.1); la periodificación nominal (pct × masa) hacía que la
+    suma de piezas superara la masa y el residuo repartido saliera negativo. La periodificación
+    cede ahora ante las piezas identificadas."""
+    comprobados = 0
+    for semilla in range(1, 7):
+        for intensidad in ("leve", "moderado", "fuerte"):
+            evolucion = generar_evolucion_arquetipo(
+                codigo, "pequeñas", 8_000_000.0, semilla=semilla, intensidad=intensidad,
+                arquetipo_id="capex_elevado", catalogo=catalogo, arquetipos=arquetipos,
+            )
+            for ejercicio in evolucion.ejercicios.values():
+                bal = ejercicio.balance_eur["otras_deudas_largo"]
+                piezas = (
+                    ejercicio.pasivos_por_impuesto_diferido_eur + ejercicio.deuda_grupo_largo_eur
+                    + ejercicio.provision_saldo_largo_eur
+                )
+                per = ejercicio.periodificacion_pasivo_largo_eur
+                assert 0.0 <= per <= max(0.0, bal - piezas) + 1e-6
+                dl = ejercicio.otras_deudas_largo_desglose_eur
+                for valor in dl.values():
+                    assert valor >= -1e-6, f"{codigo} semilla={semilla} {intensidad} año={ejercicio.año}: {dl}"
+                assert sum(dl.values()) + per + piezas == pytest.approx(bal, abs=0.01)
+                if piezas > 0.9 * bal:
+                    comprobados += 1
+    assert comprobados > 0, "ningún caso con pasivo diferido absorbiendo la masa — el test no prueba nada"
+
+
 # --------------------------------------------------------------------------------------------
 # Cuadre de EFE/ECPN — igual estándar que el resto de lotes (sin líneas nuevas, es un carve-out).
 # --------------------------------------------------------------------------------------------

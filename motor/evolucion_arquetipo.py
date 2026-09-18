@@ -1140,6 +1140,20 @@ class EfectoActivo:
     intensidad_base: float
 
 
+def _periodificacion_pasivo_acotada_eur(pct: float, masa_eur: float, piezas_identificadas_eur: float) -> float:
+    """Periodificación de pasivo (primer lote) = `pct × masa`, acotada por lo que QUEDA de la masa
+    tras restar las piezas ya identificadas con epígrafe propio (provisiones, deuda con el grupo,
+    pasivos por impuesto diferido) — techo defensivo, mismo espíritu que `calcular_desglose_deudas_
+    fin`/`calcular_desglose_otras_deudas`: la periodificación es un porcentaje NOMINAL de toda la
+    masa, mientras que esas piezas son importes concretos que pueden llegar a absorber casi toda
+    la masa (p. ej. el pasivo por impuesto diferido de una subvención de capital, arquetipo 17,
+    en sectores con `otras_deudas_largo` de base minúsculo, ver decisiones #101); sin este techo, la
+    suma de las piezas superaba la masa y el residuo repartido por `calcular_desglose_otras_deudas`
+    salía negativo. Las piezas identificadas tienen prioridad: es la periodificación nominal la
+    que cede."""
+    return min(pct * masa_eur, max(0.0, masa_eur - piezas_identificadas_eur))
+
+
 @dataclass(frozen=True)
 class EjercicioEmpresa:
     año: int
@@ -1376,11 +1390,17 @@ class EjercicioEmpresa:
 
     @property
     def periodificacion_pasivo_corto_eur(self) -> float:
-        return self.periodificacion_pasivo_corto_pct * self.balance_eur["otras_deudas_corto"]
+        return _periodificacion_pasivo_acotada_eur(
+            self.periodificacion_pasivo_corto_pct, self.balance_eur["otras_deudas_corto"],
+            self.provision_saldo_corto_eur,
+        )
 
     @property
     def periodificacion_pasivo_largo_eur(self) -> float:
-        return self.periodificacion_pasivo_largo_pct * self.balance_eur["otras_deudas_largo"]
+        return _periodificacion_pasivo_acotada_eur(
+            self.periodificacion_pasivo_largo_pct, self.balance_eur["otras_deudas_largo"],
+            self.pasivos_por_impuesto_diferido_eur + self.deuda_grupo_largo_eur + self.provision_saldo_largo_eur,
+        )
 
     @property
     def ajustes_cambio_valor_pn_eur(self) -> float:
@@ -2813,11 +2833,18 @@ def _evolucionar_un_año(
     # FRESCO cada año (no forma parte del perfil fijo desde 2023, ver docstring de `sortear_aapp_
     # pendiente_corto_pct`) con el boost real de arquetipo 4/7 de ESTE año — a diferencia del año
     # base, donde ambos son siempre False.
-    periodificacion_pasivo_largo_año_eur = anterior.periodificacion_pasivo_largo_pct * balance_eur["otras_deudas_largo"]
-    periodificacion_pasivo_corto_año_eur = anterior.periodificacion_pasivo_corto_pct * balance_eur["otras_deudas_corto"]
-    otras_deudas_largo_residual_año_eur = (
-        balance_eur["otras_deudas_largo"] - pasivos_por_impuesto_diferido_eur - deuda_grupo_largo_eur
-        - provision_saldo_largo_eur - periodificacion_pasivo_largo_año_eur
+    # La periodificación se acota por lo que queda de la masa tras las piezas identificadas
+    # (`_periodificacion_pasivo_acotada_eur`) — misma fórmula que las propiedades expuestas en
+    # `EjercicioEmpresa`, para que el residuo de largo tampoco pueda salir negativo (decisiones #101).
+    piezas_identificadas_largo_eur = pasivos_por_impuesto_diferido_eur + deuda_grupo_largo_eur + provision_saldo_largo_eur
+    periodificacion_pasivo_largo_año_eur = _periodificacion_pasivo_acotada_eur(
+        anterior.periodificacion_pasivo_largo_pct, balance_eur["otras_deudas_largo"], piezas_identificadas_largo_eur
+    )
+    periodificacion_pasivo_corto_año_eur = _periodificacion_pasivo_acotada_eur(
+        anterior.periodificacion_pasivo_corto_pct, balance_eur["otras_deudas_corto"], provision_saldo_corto_eur
+    )
+    otras_deudas_largo_residual_año_eur = max(
+        0.0, balance_eur["otras_deudas_largo"] - piezas_identificadas_largo_eur - periodificacion_pasivo_largo_año_eur
     )
     otras_deudas_corto_residual_año_eur = max(
         0.0, balance_eur["otras_deudas_corto"] - provision_saldo_corto_eur - periodificacion_pasivo_corto_año_eur

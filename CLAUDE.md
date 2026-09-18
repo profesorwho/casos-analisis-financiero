@@ -777,6 +777,7 @@ tabla "BALANCE DE SITUACIÓN (%)"), pero ACCID no define su composición interna
 Perfil PLANO (no por categoría de sector, a diferencia de los 4 lotes anteriores): no hay ningún
 dato de catálogo, ni siquiera indirecto, que sugiera una dirección de variación sectorial aquí.
 
+- **Techo defensivo de la periodificación de pasivo (decisiones #101)**: la periodificación (`pct × masa`) se acota por lo que queda de la masa tras restar provisiones/deuda con el grupo/pasivo por impuesto diferido (`_periodificacion_pasivo_acotada_eur`, `motor/evolucion_arquetipo.py`) — sin él, `capex_elevado` × sectores 19/86.1 daba residuo de largo negativo y sub-partidas negativas.
 - **Exclusión de las 3 piezas ya identificadas con epígrafe propio** — mismo criterio que
   "Derivados" en `calcular_desglose_deudas_fin` (cuarto lote): provisiones a largo/corto (tercer
   lote, `motor/provisiones.py`), "financiación recibida de grupo" (arquetipo 20,
