@@ -418,14 +418,42 @@ def test_reimplementacion_generica_reproduce_los_valores_de_referencia(catalogo,
     # test vuelve a fallar SIN que se haya tocado deliberadamente la semilla del RNG, el
     # mecanismo de continuidad de PyG, el de bajas anticipadas o el de capex implícito, sí es una
     # regresión real del arquetipo 1.
+    #
+    # RE-PINNEADO de nuevo tras la reconstrucción del año base de la colección de activos
+    # (decisiones_plausibilidad.md #96, bruto derivado de neto en `_generar_sublotes` con
+    # `nuevo=False`): el valor bruto de cada sub-lote del año base ya no coincide con el valor
+    # "ancla ACCID" (que en realidad representa una cifra NETA) — ahora es sistemáticamente MAYOR
+    # (bruto ≈ neto/(1−frac_transcurrida)), lo que sube la cuota de amortización anual de forma
+    # importante. 2023 sin cambio (PN(2023) es una masa de balance independiente de la PyG, ver
+    # docstring de `empresa_base.py` — el año base nunca depende de su propio resultado_ejercicio)
+    # — existencias y endeudamiento 2023 IDÉNTICOS. 2024/2025 SÍ cambian en cascada (más
+    # amortización real → menos resultado_ejercicio/PN → más endeudamiento → la contención de
+    # plausibilidad sobre existencias se activa con más fuerza): existencias 2024 3.744.065 →
+    # **2.861.635**, existencias 2025 4.478.283 → **3.422.807**, endeudamiento 2024 0,669 →
+    # **0,672**, endeudamiento 2025 0,723 → **0,749**. Esta vez el cambio es sustancialmente mayor
+    # que en los re-pins anteriores de este test — consecuencia esperada y aceptada de corregir el
+    # error de magnitud de #94 (colección neta agregada pasaba de reconciliar al ~57% de gap con
+    # el Balance a reconciliar al ~9% —, ver decisiones_plausibilidad.md #96 para el hallazgo
+    # colateral, todavía SIN decisión del usuario, de que la amortización derivada queda muy por
+    # encima del catálogo ACCID tras esta corrección).
+    #
+    # RE-PINNEADO de nuevo tras la recalibración de vidas fiscales (continuación de #96,
+    # decisiones_plausibilidad.md #96): coeficiente MÍNIMO/período MÁXIMO de la MISMA tabla AEAT
+    # en vez de coeficiente máximo/vida más corta — la amortización derivada baja de forma
+    # sustancial (multiplicador medio vs. catálogo 3,23x→2,00x), así que existencias/endeudamiento
+    # 2024/2025 vuelven a acercarse a los valores de #94 (ANTES de la corrección bruto←neto):
+    # existencias 2024 2.861.635→**3.744.065€** (prácticamente idéntico al valor de #94, dentro de
+    # 1€), 2025 3.422.807→**4.478.283€** (ídem); endeudamiento 2024 0,672→**0,667**, 2025
+    # 0,749→**0,717** (cerca pero no idéntico a #94, 0,669/0,723 — la colección sigue teniendo un
+    # bruto mayor que antes de #96, solo que con una vida más larga que atempera su cuota).
     evolucion = _generar(catalogo, arquetipos, "24.1", 5, "fuerte")
     ej = evolucion.ejercicios
     assert ej[2023].balance_eur["existencias"] == pytest.approx(2_344_937, abs=1)
     assert ej[2024].balance_eur["existencias"] == pytest.approx(3_744_065, abs=1)
     assert ej[2025].balance_eur["existencias"] == pytest.approx(4_478_283, abs=1)
     assert ej[2023].endeudamiento == pytest.approx(0.600, abs=1e-3)
-    assert ej[2024].endeudamiento == pytest.approx(0.669, abs=1e-3)
-    assert ej[2025].endeudamiento == pytest.approx(0.723, abs=1e-3)
+    assert ej[2024].endeudamiento == pytest.approx(0.667, abs=1e-3)
+    assert ej[2025].endeudamiento == pytest.approx(0.717, abs=1e-3)
 
 
 def test_sectores_distintos_no_comparten_crecimiento_pleno_objetivo(catalogo, arquetipos):

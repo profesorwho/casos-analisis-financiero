@@ -22,11 +22,32 @@ del gasto).
   parte de terreno no se amortiza, la de construcción sí.
 
 **Tabla de coeficientes fiscales verificada contra la Agencia Tributaria** (tabla vigente desde
-2015, Ley 27/2014 del Impuesto sobre Sociedades — "amortiza siempre al coeficiente máximo
-fiscalmente permitido" significa usar la vida MÁS CORTA, `100/coeficiente_máximo`, no el
-"período máximo" de la tabla oficial, que es la cifra que corresponde al coeficiente MÍNIMO).
+2015, Ley 27/2014 del Impuesto sobre Sociedades).
 
 Fuente: sede.agenciatributaria.gob.es, tabla de coeficientes de amortización lineal.
+
+**Recalibración de vidas fiscales (continuación del encargo #96, decisiones_plausibilidad.md
+#96): coeficiente MÍNIMO/período MÁXIMO, no coeficiente máximo/vida más corta.** Hasta esta
+recalibración, el módulo usaba el coeficiente MÁXIMO de la tabla (vida MÁS CORTA, `100/
+coeficiente_máximo`) — una interpretación literal de "amortiza siempre al coeficiente máximo
+fiscalmente permitido" planteada al proponer el encargo original (#27). Diagnosticado tras
+corregir el año base de la colección (bruto derivado de neto, #96): con el bruto ya calibrado
+correctamente (antes sistemáticamente infravalorado — la vida más corta, aplicada sobre un bruto
+ya de por sí pequeño, producía por pura coincidencia una amortización derivada que parecía
+razonable frente al catálogo ACCID, ~1,3-1,5x), la vida más corta sobre un bruto correcto dispara
+la amortización a ~2,2x el catálogo (52% de sectores fuera de banda 0,7x-2,5x). Investigado
+antes de tocar nada: la propia tabla oficial (MISMA fuente ya citada en #27) da, para cada
+categoría, un coeficiente MÍNIMO/período MÁXIMO además del máximo — y la razón entre ambos
+(`coeficiente_máximo / coeficiente_mínimo`) es, para todos los tipos usados en este módulo,
+2,0-2,24x — prácticamente idéntico al factor de sobrecalibración diagnosticado. Se cambia el
+criterio a coeficiente MÍNIMO (vida MÁS LARGA, el otro extremo de la MISMA tabla oficial, no un
+número inventado ni un simple "dividir por 2,2") — más próximo a lo que sería una vida ECONÓMICA/
+contable típica que a la vida fiscal más agresiva posible (que solo tiene sentido como elección
+deliberada para maximizar el escudo fiscal a corto plazo, no como reflejo de la vida útil real
+del activo, que es lo que le interesa a este motor). Fondo de comercio NO se toca (no viene de
+esta tabla — presunción legal PGC norma 6ª, 10 años fijos, ver más arriba). Verificación completa
+(reconciliación neta, calibración de amortización, BAII negativo en año base, bajas anticipadas,
+regresión) en decisiones_plausibilidad.md #96.
 """
 
 from __future__ import annotations
@@ -45,35 +66,47 @@ AÑO_BASE = 2023
 @dataclass(frozen=True)
 class TipoActivoAmortizable:
     nombre: str
-    coeficiente_fiscal_maximo: float  # p. ej. 0.12 para maquinaria (12%)
+    coeficiente_fiscal: float  # coeficiente MÍNIMO de la tabla (vida MÁS LARGA) — ver docstring del módulo, #96
     es_construccion: bool  # distinción exacta que pide la nota de memoria del PGC (punto 2.l)
 
     @property
     def vida_fiscal_años(self) -> float:
-        return 1.0 / self.coeficiente_fiscal_maximo
+        return 1.0 / self.coeficiente_fiscal
 
 
-# Vida fiscal = 100/coeficiente máximo (la más CORTA de la tabla, ver docstring del módulo).
+# Vida fiscal = 100/coeficiente MÍNIMO (período MÁXIMO de la tabla — recalibrado en #96, ver
+# docstring del módulo). Comentario de cada línea: coeficiente_máximo/período_mínimo ORIGINAL
+# (#27, ya no usado) → coeficiente_mínimo/período_máximo ACTUAL, misma fuente AEAT.
 TIPOS_ACTIVO_MATERIAL: dict[str, TipoActivoAmortizable] = {
-    "construcciones_industriales": TipoActivoAmortizable("Construcciones (uso industrial)", 0.03, True),
-    "construcciones_comerciales": TipoActivoAmortizable("Construcciones (uso comercial/administrativo)", 0.02, True),
-    "instalaciones_maquinaria": TipoActivoAmortizable("Instalaciones técnicas y maquinaria", 0.12, False),
-    "equipos_informaticos": TipoActivoAmortizable("Equipos para procesos de información", 0.25, False),
-    "elementos_transporte": TipoActivoAmortizable("Elementos de transporte", 0.16, False),
-    "mobiliario": TipoActivoAmortizable("Mobiliario", 0.10, False),
-    "otro_inmovilizado_material": TipoActivoAmortizable("Otro inmovilizado material (otros enseres)", 0.15, False),
+    # Edificios industriales: 3%/33,3 años (#27) → 1/68 años (coef. mín. 1,47%).
+    "construcciones_industriales": TipoActivoAmortizable("Construcciones (uso industrial)", 1 / 68, True),
+    # Edificios comerciales/administrativos/servicios: 2%/50 años (#27) → 1/100 años (coef. mín. 1,00%).
+    "construcciones_comerciales": TipoActivoAmortizable("Construcciones (uso comercial/administrativo)", 1 / 100, True),
+    # Maquinaria: 12%/8,33 años (#27) → 1/18 años (coef. mín. 5,56%).
+    "instalaciones_maquinaria": TipoActivoAmortizable("Instalaciones técnicas y maquinaria", 1 / 18, False),
+    # Equipos para procesos de información: 25%/4 años (#27) → 1/8 años (coef. mín. 12,50%).
+    "equipos_informaticos": TipoActivoAmortizable("Equipos para procesos de información", 1 / 8, False),
+    # Elementos de transporte externo: 16%/6,25 años (#27) → 1/14 años (coef. mín. 7,14%).
+    "elementos_transporte": TipoActivoAmortizable("Elementos de transporte", 1 / 14, False),
+    # Mobiliario: 10%/10 años (#27) → 1/20 años (coef. mín. 5,00%).
+    "mobiliario": TipoActivoAmortizable("Mobiliario", 1 / 20, False),
+    # Otros enseres: 15%/6,67 años (#27) → 1/14 años (coef. mín. 7,14%).
+    "otro_inmovilizado_material": TipoActivoAmortizable("Otro inmovilizado material (otros enseres)", 1 / 14, False),
 }
 
 TIPOS_ACTIVO_INTANGIBLE: dict[str, TipoActivoAmortizable] = {
-    "aplicaciones_informaticas": TipoActivoAmortizable("Aplicaciones informáticas", 0.33, False),
+    # Sistemas y programas informáticos: 33%/3,03 años (#27) → 1/6 años (coef. mín. 16,67%).
+    "aplicaciones_informaticas": TipoActivoAmortizable("Aplicaciones informáticas", 1 / 6, False),
     # Fondo de comercio: coeficiente NO viene de la tabla fiscal (no es inmovilizado material) —
     # viene directo de la presunción legal del PGC norma 6ª, 10 años, ver docstring del módulo.
+    # Sin cambios en la recalibración #96 (no es un coeficiente fiscal, es una presunción legal fija).
     "fondo_comercio_y_otro_intangible": TipoActivoAmortizable("Fondo de comercio y otro intangible", 0.10, False),
 }
 
 # `inversiones_inmobiliarias` reutiliza el coeficiente de construcción comercial (oficinas/
 # locales en alquiler/inversión son, por defecto, uso terciario, no industrial).
-TIPO_INVERSION_INMOBILIARIA = TipoActivoAmortizable("Inversión inmobiliaria (construcción)", 0.02, True)
+# 2%/50 años (#27) → 1/100 años (coef. mín. 1,00%), misma recalibración #96.
+TIPO_INVERSION_INMOBILIARIA = TipoActivoAmortizable("Inversión inmobiliaria (construcción)", 1 / 100, True)
 
 # Fracción de "terrenos y construcciones" que es terreno (nunca amortizable) — hipótesis de
 # diseño (rango típico de tasación en España 20-30%), NO un dato del catálogo ACCID. Fija, sin
@@ -196,6 +229,15 @@ def probabilidad_ya_amortizado(vida_util_años: float) -> float:
     return 1.0 / (vida_util_años * multiplicador)
 
 
+# Reconstrucción del año base (decisiones_plausibilidad.md #96): suelo defensivo para el
+# denominador de la corrección bruto←neto de un bucket cuando TODOS sus sub-lotes salen
+# "ya_amortizado" (denominador algebraicamente ≈0, indeterminado) — hipótesis de diseño sin
+# ancla externa, mismo criterio de honestidad que FRACCION_TERRENO/PESO_SUBLOTES_CENTRO. Sin
+# este suelo, ese caso (raro pero no nulo, ver verificación del encargo) dispararía una división
+# por (casi) cero y un valor bruto absurdo para el bucket completo.
+SUELO_DENOMINADOR_CORRECCION_BUCKET = 0.05
+
+
 @dataclass(frozen=True)
 class SubLoteActivo:
     """Un sub-lote de un tipo de activo — unidad mínima de amortización de este motor (ver
@@ -275,9 +317,14 @@ def _generar_sublotes(
 ) -> tuple[SubLoteActivo, ...]:
     """3 sub-lotes independientes por bucket (corrección aprobada, ver docstring del módulo).
     `nuevo=True` (capex/adquisición): sin sorteo de fecha/ya-amortizado, arrancan en `año_ancla`
-    con acumulada=0 — son activos recién comprados, no pueden estar ya amortizados. `nuevo=False`
-    (cohortes del año base 2023): fecha de compra y "ya totalmente amortizado" sorteados por
-    sub-lote, cada uno de forma independiente."""
+    con acumulada=0 — son activos recién comprados, no pueden estar ya amortizados; `valor_bucket_
+    eur` se reparte tal cual entre los 3 sub-lotes (es ya, por construcción, el importe BRUTO del
+    incremento). `nuevo=False` (cohortes del año base 2023): fecha de compra y "ya totalmente
+    amortizado" sorteados por sub-lote, cada uno de forma independiente — y, a diferencia de
+    `nuevo=True`, `valor_bucket_eur` (anclado al ratio ACCID del desglose informativo del
+    Balance) representa de facto una cifra NETA, no el valor bruto de compra (así presentan el
+    inmovilizado las empresas reales bajo el PGC) — ver reconstrucción del año base,
+    decisiones_plausibilidad.md #96."""
     if valor_bucket_eur <= 0:
         return ()
     pesos_brutos: dict[int, float] = {}
@@ -287,24 +334,48 @@ def _generar_sublotes(
     pesos = _renormalizar_a_total(pesos_brutos, 1.0)
 
     vida = info.vida_fiscal_años
-    sublotes = []
-    for i in range(N_SUBLOTES):
-        valor_sublote_eur = pesos[i] * valor_bucket_eur
-        cuota_anual_eur = valor_sublote_eur / vida
-        if nuevo:
+
+    if nuevo:
+        sublotes = []
+        for i in range(N_SUBLOTES):
+            valor_sublote_eur = pesos[i] * valor_bucket_eur
+            cuota_anual_eur = valor_sublote_eur / vida
             # Capex/adquisición: tratado como comprado al INICIO del propio año del suceso, para
             # que genere un año completo de cuota YA ese año — mismo criterio de "año completo,
             # sin prorratear" que ya usa el arquetipo 18 para `ventas_inorganicas_eur`.
             año_compra = float(año_ancla) - 1.0
-        else:
-            años_transcurridos = rng.uniform(0.0, vida)
-            ya_amortizado = rng.random() < probabilidad_ya_amortizado(vida)
-            # "Ya totalmente amortizado" = comprado bastante antes de que ninguna evaluación
-            # dentro de 2023-2025 pueda verlo todavía generando gasto (un año más de margen que
-            # la propia vida fiscal, para que ni siquiera el año base 2022→2023 implícito lo
-            # capture like en curso).
-            año_compra = (AÑO_BASE - vida - 1.0) if ya_amortizado else (AÑO_BASE - años_transcurridos)
-        sublotes.append(SubLoteActivo(tipo_key, info.es_construccion, valor_sublote_eur, cuota_anual_eur, año_compra))
+            sublotes.append(SubLoteActivo(tipo_key, info.es_construccion, valor_sublote_eur, cuota_anual_eur, año_compra))
+        return tuple(sublotes)
+
+    # nuevo=False (año base): primero se sortea año_compra/ya_amortizado de cada sub-lote, como
+    # siempre (tiene que ir antes de poder calcular el valor bruto — depende de la fracción de
+    # vida ya transcurrida de cada uno).
+    años_compra = []
+    for _ in range(N_SUBLOTES):
+        años_transcurridos = rng.uniform(0.0, vida)
+        ya_amortizado = rng.random() < probabilidad_ya_amortizado(vida)
+        # "Ya totalmente amortizado" = comprado bastante antes de que ninguna evaluación dentro
+        # de 2023-2025 pueda verlo todavía generando gasto (un año más de margen que la propia
+        # vida fiscal, para que ni siquiera el año base 2022→2023 implícito lo capture en curso).
+        año_compra = (AÑO_BASE - vida - 1.0) if ya_amortizado else (AÑO_BASE - años_transcurridos)
+        años_compra.append(año_compra)
+
+    # Corrección bruto←neto (decisiones_plausibilidad.md #96): `valor_bucket_eur` es el NETO
+    # objetivo del bucket completo. Cada sub-lote ya tiene, por su año_compra sorteado, una
+    # fracción de su vida útil ya transcurrida a fecha AÑO_BASE — así que su aportación al neto
+    # agregado es `peso_i × (1 − frac_transcurrida_i)` de su propio valor bruto. Se resuelve el
+    # único factor (`bucket_bruto_eur`) que hace que la suma de esas aportaciones, en valor
+    # bruto, reproduzca exactamente `valor_bucket_eur` en términos netos.
+    fracciones_transcurridas = [min(1.0, (AÑO_BASE - año_compra) / vida) for año_compra in años_compra]
+    denominador = sum(pesos[i] * (1.0 - fracciones_transcurridas[i]) for i in range(N_SUBLOTES))
+    denominador = max(denominador, SUELO_DENOMINADOR_CORRECCION_BUCKET)
+    bucket_bruto_eur = valor_bucket_eur / denominador
+
+    sublotes = []
+    for i in range(N_SUBLOTES):
+        valor_sublote_eur = pesos[i] * bucket_bruto_eur
+        cuota_anual_eur = valor_sublote_eur / vida
+        sublotes.append(SubLoteActivo(tipo_key, info.es_construccion, valor_sublote_eur, cuota_anual_eur, años_compra[i]))
     return tuple(sublotes)
 
 
