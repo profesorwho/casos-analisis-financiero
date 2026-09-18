@@ -251,15 +251,21 @@ def sortear_pct_cofinanciacion(sector: str, segmento: str, semilla: int) -> floa
     return rng.uniform(bajo, alto)
 
 
-def generar_activo_subvencionado(sector: str, segmento: str, semilla: int, año: int, capex_subvencionable_eur: float) -> tuple[SubLoteActivo, ...]:
-    """El "activo subvencionado" de la NRV 18.ª — se reutiliza `generar_cohortes_capex` (100% a
-    instalaciones técnicas y maquinaria, inversión productiva típica) para que el activo
-    financiado por la subvención entre también en la colección amortizable del caso, con un
-    sufijo de entropía propio para no colisionar con las cohortes de capex "normales" del
-    arquetipo 17 cuando la vía es la del disparador principal (mismo importe, mismo año, pero
-    NO debe generar una cohorte duplicada: ver `_evolucionar_un_año`, que en la vía "17" reutiliza
-    la cohorte YA creada por el capex en vez de llamar aquí de nuevo)."""
-    return generar_cohortes_capex(sector, segmento, semilla, año, capex_subvencionable_eur)
+def generar_activo_subvencionado(
+    sector: str, segmento: str, semilla: int, año: int, capex_subvencionable_eur: float, categoria: str,
+    perfil_top: dict[str, float], perfil_material: dict[str, float], perfil_intangible: dict[str, float],
+) -> tuple[SubLoteActivo, ...]:
+    """El "activo subvencionado" de la NRV 18.ª — se reutiliza `generar_cohortes_capex` (perfil
+    COMPLETO de la categoría, ver decisiones_plausibilidad.md #95) para que el activo financiado
+    por la subvención entre también en la colección amortizable del caso, con un sufijo de
+    entropía propio para no colisionar con las cohortes de capex "normales" del arquetipo 17
+    cuando la vía es la del disparador principal (mismo importe, mismo año, pero NO debe generar
+    una cohorte duplicada: ver `_evolucionar_un_año`, que en la vía "17" reutiliza la cohorte YA
+    creada por el capex en vez de llamar aquí de nuevo)."""
+    return generar_cohortes_capex(
+        sector, segmento, semilla, año, capex_subvencionable_eur, categoria,
+        perfil_top, perfil_material, perfil_intangible,
+    )
 
 
 @dataclass(frozen=True)

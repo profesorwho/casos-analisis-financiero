@@ -2072,13 +2072,20 @@ def _evolucionar_un_año(
     # activo recién comprado no pueda darse de baja el mismo año en que se compra. ---
     bajas_este_año = sortear_bajas_del_año(sector, segmento, semilla, anterior.coleccion_activos_amortizables, año)
 
+    categoria = categoria_de_sector(sector)
     coleccion_activos_amortizables = anterior.coleccion_activos_amortizables
     cohortes_capex_este_año: tuple = ()
     if exceso_capex_eur > 0:
-        cohortes_capex_este_año = generar_cohortes_capex(sector, segmento, semilla, año, exceso_capex_eur)
+        # Perfil COMPLETO de la categoría (mismo patrón que adquisición/capex implícito, ver
+        # decisiones_plausibilidad.md #95) — corrección: antes el 100% del exceso se metía en
+        # `instalaciones_maquinaria`, sin tener en cuenta `perfil_top`, lo que divergía del
+        # desglose informativo del Balance (que SÍ aplica `perfil_top` sobre el activo total).
+        cohortes_capex_este_año = generar_cohortes_capex(
+            sector, segmento, semilla, año, exceso_capex_eur, categoria,
+            anterior.activo_no_corriente_perfil_pct, anterior.perfil_subtipos_material_pct, anterior.perfil_subtipos_intangible_pct,
+        )
         coleccion_activos_amortizables += cohortes_capex_este_año
     if incremento_activo_adquisicion_eur > 0:
-        categoria = categoria_de_sector(sector)
         coleccion_activos_amortizables += generar_cohortes_adquisicion(
             sector, segmento, semilla, año, incremento_activo_adquisicion_eur, categoria,
             anterior.activo_no_corriente_perfil_pct, anterior.perfil_subtipos_material_pct, anterior.perfil_subtipos_intangible_pct,
@@ -2109,7 +2116,10 @@ def _evolucionar_un_año(
         capex_baseline_eur = capex_subvencionable_baseline_eur(
             sector, segmento, semilla, anterior.balance_eur["activo_no_corriente"]
         )
-        subvencion_activo_asociado = generar_activo_subvencionado(sector, segmento, semilla, año, capex_baseline_eur)
+        subvencion_activo_asociado = generar_activo_subvencionado(
+            sector, segmento, semilla, año, capex_baseline_eur, categoria,
+            anterior.activo_no_corriente_perfil_pct, anterior.perfil_subtipos_material_pct, anterior.perfil_subtipos_intangible_pct,
+        )
         coleccion_activos_amortizables += subvencion_activo_asociado
         subvencion_importe_concedido_eur = subvencion_pct_cofinanciacion * capex_baseline_eur
 

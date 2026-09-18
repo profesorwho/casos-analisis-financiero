@@ -371,15 +371,22 @@ def generar_coleccion_y_perfiles_base(
     return coleccion, perfil_material, perfil_intangible
 
 
-def generar_cohortes_capex(sector: str, segmento: str, semilla: int, año: int, incremento_eur: float) -> tuple[SubLoteActivo, ...]:
-    """Arquetipo 17 (capex): el 100% del incremento se trata como inversión productiva típica —
-    instalaciones técnicas y maquinaria — con `año_ancla` = el propio año del capex (activos
-    recién comprados, sin sorteo de fecha/ya-amortizado)."""
-    if incremento_eur <= 0:
-        return ()
-    rng = np.random.default_rng([semilla, _entropia_amortizacion(sector, segmento, f"_capex_{año}")])
-    info = TIPOS_ACTIVO_MATERIAL["instalaciones_maquinaria"]
-    return _generar_sublotes(rng, "instalaciones_maquinaria", info, incremento_eur, año, nuevo=True)
+def generar_cohortes_capex(
+    sector: str, segmento: str, semilla: int, año: int, incremento_eur: float, categoria: str,
+    perfil_top: dict[str, float], perfil_material: dict[str, float], perfil_intangible: dict[str, float],
+) -> tuple[SubLoteActivo, ...]:
+    """Arquetipo 17 (capex): reparte el incremento con el perfil COMPLETO de la categoría —
+    corrección aprobada (ver decisiones_plausibilidad.md #95): la versión anterior metía el 100%
+    en `instalaciones_maquinaria`, sin tener en cuenta `perfil_top`, lo que hacía divergir la
+    colección del desglose informativo del Balance (`activo_no_corriente_desglose_eur`, que SÍ
+    aplica `perfil_top` completo sobre el activo total) en sectores con poco peso de "material" —
+    mismo patrón (perfiles ya generados para el caso, sin sortear uno nuevo) que `generar_
+    cohortes_adquisicion` (18) y `generar_cohortes_capex_implicito`. `año_ancla` = el propio año
+    del capex (activos recién comprados, sin sorteo de fecha/ya-amortizado)."""
+    return _generar_cohortes_desde_perfil_completo(
+        sector, segmento, semilla, año, incremento_eur, categoria,
+        perfil_top, perfil_material, perfil_intangible, f"_capex_{año}",
+    )
 
 
 def _generar_cohortes_desde_perfil_completo(
