@@ -841,6 +841,10 @@ dato de catálogo, ni siquiera indirecto, que sugiera una dirección de variaci�
   magnitud media también sube de ~9,9% a ~12,9% del residuo cuando activa. Las tasas con 4 y con 7
   salen idénticas porque ambos boosts usan el mismo valor (+10pp, multiplicador 1,3x), no por error.
 
+## Reparto de sub-partidas: exceso dirigido y cuentas de movimiento casi nulo (decisiones #99, `motor/evolucion_arquetipo.py`)
+
+Corrige que el perfil % fijo de los lotes 1/2/4/5 inflara TODAS las sub-partidas cuando un arquetipo inflaba una masa. **Parte A**: `_reparto_organico_con_exceso_dirigido` reparte el valor orgánico con el % fijo y manda el exceso (con efecto − orgánico) al 100 % a la sub-partida objetivo — realizable→`clientes` (1/3/4/6), acreedores→`proveedores` (4), existencias→`materias_primas`+`productos_curso`+`productos_terminados`+`comerciales` por los pesos del perfil del caso (5; `EXISTENCIAS_OBJETIVO_EXCESO_STOCK`), apalancamiento→`entidades_credito` (9/14; la reclasificación 8/16 ya iba ahí por el residual); techo defensivo a reparto proporcional si forzar dejara el objetivo en negativo. **Parte B**: `accionistas_desembolsos_exigidos` ×2/3 al año, `obligaciones` plana, `arrendamiento_financiero` lineal a 5 años, `fianzas_depositos` con el 30 % del crecimiento de ventas (recortada al residuo disponible), `personal` acreedor sigue `gastos_personal`. Límite conocido: `fianzas_depositos` queda recortada por el techo defensivo en ~30 % de las observaciones. Sin re-pins.
+
 ## Validación de plausibilidad del caso completo — sección 2.13 (`motor/evolucion_arquetipo.py`)
 
 Pasada FINAL, independiente de qué arquetipos estén activos, sobre el caso YA generado (3 años,

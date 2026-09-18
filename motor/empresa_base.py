@@ -933,6 +933,8 @@ def calcular_desglose_otras_deudas(
     otras_deudas_largo_residual_eur: float,
     otras_deudas_corto_residual_eur: float,
     acreedores_inmovilizado_largo_anterior_eur: float,
+    fianzas_depositos_largo_eur: float | None = None,
+    fianzas_depositos_corto_eur: float | None = None,
 ) -> tuple[dict[str, float], dict[str, float]]:
     """Ensambla las 4 sub-partidas de cada plazo del quinto lote sobre el residuo YA excluidas
     provisiones (tercer lote)/deudas con el grupo (arquetipo 20)/pasivos por impuesto diferido
@@ -947,15 +949,43 @@ def calcular_desglose_otras_deudas(
     base) se suma al `acreedores_inmovilizado` de corto de este año, por encima de su propio
     perfil fijo (que solo cubre "nuevas compras a corto desde origen"). Técho defensivo (mismo
     espíritu que `calcular_desglose_deudas_fin`): la reclasificación y `aapp_pendiente` juntas
-    nunca superan el residuo de corto real, así que la suma final nunca lo excede."""
-    desglose_largo = {c: f * otras_deudas_largo_residual_eur for c, f in perfil_largo_pct.items()}
+    nunca superan el residuo de corto real, así que la suma final nunca lo excede.
+
+    `fianzas_depositos_largo_eur`/`..._corto_eur` (decisiones_plausibilidad.md #99, Parte B):
+    cuando se pasan (no None — solo desde `evolucion_arquetipo._evolucionar_un_año`, NUNCA desde
+    el año base 2023, que sigue usando el perfil % fijo tal cual), sustituyen el importe que
+    tocaría a "fianzas_depositos" por su propia dinámica externa (crecimiento atenuado, ajeno a
+    este módulo) — el resto del perfil (excluyendo esa clave) se renormaliza a 1.0 sobre el
+    residuo YA restado ese importe, para que la suma total no cambie. `aapp_pendiente_eur`/
+    `reclasificado_eur` (más abajo) se calculan SIEMPRE sobre el residuo COMPLETO de corto, sin
+    restar la fianza — solo la parte "resto" (perfil_corto_resto_pct) se ve afectada. Técho
+    defensivo (mismo espíritu que `reclasificado_eur` un poco más abajo y que
+    `calcular_desglose_deudas_fin`): si la masa total se ha encogido tanto (típicamente el plug de
+    cuadre general, que SÍ puede reducir `otras_deudas_corto` de un año a otro) que la fianza
+    "atenuada" ya no cabe en el residuo disponible, se recorta al residuo completo (deja 0, nunca
+    negativo, al resto del perfil) en vez de dejar acreedores_inmovilizado/remanente en negativo."""
+    if fianzas_depositos_largo_eur is None:
+        desglose_largo = {c: f * otras_deudas_largo_residual_eur for c, f in perfil_largo_pct.items()}
+    else:
+        fianzas_depositos_largo_efectivo_eur = max(0.0, min(fianzas_depositos_largo_eur, otras_deudas_largo_residual_eur))
+        perfil_largo_sin_fianzas_pct = {c: f for c, f in perfil_largo_pct.items() if c != "fianzas_depositos"}
+        presupuesto_largo_normal_eur = otras_deudas_largo_residual_eur - fianzas_depositos_largo_efectivo_eur
+        desglose_largo = _renormalizar_a_total(perfil_largo_sin_fianzas_pct, presupuesto_largo_normal_eur)
+        desglose_largo["fianzas_depositos"] = fianzas_depositos_largo_efectivo_eur
 
     aapp_pendiente_eur = aapp_pendiente_corto_pct * otras_deudas_corto_residual_eur
     reclasificado_bruto_eur = acreedores_inmovilizado_largo_anterior_eur * FRACCION_RECLASIFICACION_ACREEDORES_INMOVILIZADO
     reclasificado_eur = max(0.0, min(reclasificado_bruto_eur, otras_deudas_corto_residual_eur - aapp_pendiente_eur))
     resto_corto_eur = max(0.0, otras_deudas_corto_residual_eur - aapp_pendiente_eur - reclasificado_eur)
 
-    desglose_corto = {c: f * resto_corto_eur for c, f in perfil_corto_resto_pct.items()}
+    if fianzas_depositos_corto_eur is None:
+        desglose_corto = {c: f * resto_corto_eur for c, f in perfil_corto_resto_pct.items()}
+    else:
+        fianzas_depositos_corto_efectivo_eur = max(0.0, min(fianzas_depositos_corto_eur, resto_corto_eur))
+        perfil_corto_resto_sin_fianzas_pct = {c: f for c, f in perfil_corto_resto_pct.items() if c != "fianzas_depositos"}
+        presupuesto_corto_normal_eur = resto_corto_eur - fianzas_depositos_corto_efectivo_eur
+        desglose_corto = _renormalizar_a_total(perfil_corto_resto_sin_fianzas_pct, presupuesto_corto_normal_eur)
+        desglose_corto["fianzas_depositos"] = fianzas_depositos_corto_efectivo_eur
     desglose_corto["acreedores_inmovilizado"] += reclasificado_eur
     desglose_corto["aapp_pendiente"] = aapp_pendiente_eur
 

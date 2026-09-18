@@ -825,6 +825,145 @@ SIGNO_NOF_MASA_CIRCULANTE = {
 }
 
 
+# --------------------------------------------------------------------------------------------
+# Reparto de sub-partidas — orgánico vs. exceso dirigido (decisiones_plausibilidad.md #99,
+# Parte A) y cuentas de movimiento casi nulo (Parte B). Diagnóstico que motivó este encargo: el
+# reparto porcentual FIJO (perfil % constante desde 2023, aplicado al total YA cuadrado de la
+# masa) que usan los lotes 2/4/5 de desglose de balance hace que TODAS las sub-partidas crezcan
+# por igual cuando un arquetipo infla la masa completa — incluidas las que no tienen nada que
+# ver con la historia concreta del arquetipo ("aumento de clientes" también inflaba "accionistas
+# por desembolsos exigidos", "apalancamiento" también inflaba "arrendamiento financiero") — y
+# también cuando NO hay ningún arquetipo activo: el crecimiento orgánico ligado a ventas se
+# reparte con el mismo % fijo sobre cuentas que deberían moverse poco o nada (eventos discretos,
+# ligadas a un motor de crecimiento distinto de las ventas).
+#
+# Parte A — mecanismo genérico: para cada masa con desglose, se separa el valor ORGÁNICO (la
+# masa creciendo solo por el mecanismo habitual ligado a ventas, sin ningún efecto de arquetipo
+# — para masa_circulante, el mismo valor `proporcional_circulante`/`..._proporcional_eur` que ya
+# usa la contención de endeudamiento para medir "cuánto exceso creó el arquetipo") del valor CON
+# EFECTO (el que ya calcula hoy el mecanismo del arquetipo activo, sin cambios en esa parte). El
+# reparto % fijo de siempre se aplica solo al orgánico; el exceso (con efecto − orgánico, ya
+# amortiguado por la contención de endeudamiento si la hubo) se fuerza al 100% a la sub-partida
+# objetivo de la tabla del encargo — o se reparte entre dos donde se indique — vía
+# `_reparto_organico_con_exceso_dirigido`. Cuando el arquetipo que toca la masa no tiene una
+# sub-partida objetivo definida (tabla: "Proporcional, sin forzar" — crecimiento_destruccion_
+# caja/aumento_nof sobre `existencias`), el exceso se reparte con el MISMO % fijo que el resto —
+# comportamiento IDÉNTICO al de siempre, no un caso especial.
+#
+# Apalancamiento (9/14, deudas_fin_largo) y reclasificación de deuda (8/16, largo↔corto) NO
+# necesitan este helper: reutilizan mecanismos ya existentes — `apalancamiento_extra_eur` (más
+# abajo) YA es exactamente el exceso sobre `deudas_fin_largo_proporcional_eur` (nunca amortiguado
+# por la contención, que solo actúa sobre existencias/realizable), y `calcular_desglose_deudas_
+# fin` YA fuerza a "Entidades de crédito" el 100% de cualquier movimiento largo↔corto de
+# reclasificación (residual por diseño, ver CLAUDE.md "Deudas financieras — cuarto lote") — pero
+# SÍ hacía falta excluir `apalancamiento_extra_eur` de la base que reparte arrendamiento
+# financiero/obligaciones/otros pasivos financieros (fracción FIJA del total con coste): sin esa
+# exclusión, la deuda nueva de apalancamiento se filtraba proporcionalmente a esas 3 categorías
+# en vez de ir al 100% a "Entidades de crédito" (ver bloque "Deudas financieras" más abajo).
+def _reparto_organico_con_exceso_dirigido(
+    perfil_pct: dict[str, float],
+    presupuesto_organico_eur: float,
+    exceso_eur: float,
+    objetivo_exceso: str | dict[str, float] | None,
+) -> dict[str, float]:
+    """`perfil_pct` puede sumar menos de 1.0 (cuando el llamador ya excluyó una cuenta de
+    movimiento casi nulo de la Parte B, ver más abajo) — `_renormalizar_a_total` lo compensa,
+    igual criterio que el resto del proyecto (p. ej. `otros_financieros` en `activo_no_
+    corriente_desglose_eur`).
+
+    Técho defensivo (arquetipos con `direccion=-1` sobre la masa, p. ej. 4 "deterioro del ciclo
+    de caja" sobre `acreedores_comerciales": un exceso NEGATIVO grande en intensidad "fuerte"
+    puede superar la propia cuota orgánica de la sub-partida objetivo y dejarla en negativo —
+    saldo implausible, nunca observado con el reparto proporcional de siempre. Si forzar el 100%
+    (o el reparto entre varias) dejaría alguna sub-partida objetivo en negativo, se cae al mismo
+    reparto proporcional que el caso "sin forzar" (`objetivo_exceso=None`) — el total sigue
+    cuadrando exacto, solo cambia CÓMO se reparte en ese caso límite."""
+    reparto = _renormalizar_a_total(perfil_pct, presupuesto_organico_eur)
+    if objetivo_exceso is None:
+        for componente, valor in _renormalizar_a_total(perfil_pct, exceso_eur).items():
+            reparto[componente] += valor
+        return reparto
+
+    reparto_forzado = dict(reparto)
+    if isinstance(objetivo_exceso, str):
+        reparto_forzado[objetivo_exceso] += exceso_eur
+        forzado_negativo = reparto_forzado[objetivo_exceso] < 0
+    else:
+        for componente, peso in objetivo_exceso.items():
+            reparto_forzado[componente] += peso * exceso_eur
+        forzado_negativo = any(reparto_forzado[componente] < 0 for componente in objetivo_exceso)
+
+    if forzado_negativo:
+        for componente, valor in _renormalizar_a_total(perfil_pct, exceso_eur).items():
+            reparto[componente] += valor
+        return reparto
+    return reparto_forzado
+
+
+# Parte B — 5 cuentas de "movimiento casi nulo": dinámica propia, excluidas del reparto
+# proporcional genérico de arriba (orgánico Y exceso, en los casos CON arquetipo activo). Cada
+# hipótesis de diseño nueva está documentada con su razonamiento en decisiones_plausibilidad.md
+# #99 (mismo nivel de detalle que FRACCION_TERRENO).
+#
+# `accionistas_desembolsos_exigidos` (lote 2, deudores): capital social pendiente de desembolso,
+# decreciente hacia 0 — Art. 81 LSC fija un plazo MÁXIMO de 5 años desde la constitución/acuerdo
+# de ampliación para exigir el desembolso pendiente; en la práctica societaria los estatutos
+# suelen fijar un plazo más corto (1-5 años según la casuística observada). Se toma 3 años como
+# horizonte de amortización de referencia (punto medio de ese rango, ni el mínimo agresivo ni el
+# máximo legal) — fracción lineal 1/3 del saldo del año anterior cada año, con suelo en 0. Art.
+# 1964.2 CC (prescripción de acciones personales sin plazo especial, 5 años) queda como cota
+# externa de que la partida no debería sobrevivir indefinidamente en balance sin resolverse.
+FRACCION_AMORTIZACION_ANUAL_DESEMBOLSOS_EXIGIDOS = 1.0 / 3.0
+
+# `arrendamiento_financiero` (lote 4, deuda financiera): amortización lineal a plazo remanente
+# fijo, igual espíritu que un préstamo — 5 años de plazo remanente de referencia (leasing típico
+# de maquinaria/vehículos en PYME española, los activos que dominan esta categoría por sector —
+# ver `PERFIL_DEUDAS_FIN_POR_CATEGORIA`, mayor peso en transporte_logistica/construcción/
+# industria — habitualmente 3-7 años; 5 es un punto medio representativo, ni el leasing corto de
+# vehículos ligeros ni el largo de maquinaria pesada/inmuebles). Saldo pendiente / plazo
+# remanente cada año (mismo resultado que una amortización lineal sobre el saldo base, ver
+# docstring de `_arrendamiento_financiero_amortizado_eur`), con suelo en 0.
+PLAZO_REMANENTE_ARRENDAMIENTO_AÑOS = 5.0
+
+
+def _arrendamiento_financiero_amortizado_eur(saldo_anterior_eur: float, año: int) -> float:
+    """Amortización lineal a plazo remanente fijo (`PLAZO_REMANENTE_ARRENDAMIENTO_AÑOS`):
+    saldo_pendiente / plazo_remanente_al_empezar_este_año, con suelo en 0. `año - AÑO_BASE - 1`
+    son los años YA amortizados en ejercicios anteriores (0 en 2024, 1 en 2025) — produce la
+    MISMA cuota constante que una amortización lineal fija sobre el saldo de 2023 (verificado por
+    inducción: con N=PLAZO_REMANENTE_ARRENDAMIENTO_AÑOS, la cuota de cada año es siempre
+    saldo_base_2023/N, nunca decreciente ni creciente entre años)."""
+    plazo_remanente = PLAZO_REMANENTE_ARRENDAMIENTO_AÑOS - (año - AÑO_BASE - 1)
+    return max(0.0, saldo_anterior_eur * (1 - 1 / plazo_remanente))
+
+# `fianzas_depositos` (lote 5, otras deudas largo y corto): crecimiento MUY atenuado, no 1:1 con
+# el crecimiento orgánico general — una fianza/depósito (alquileres, contratos de suministro/
+# concesión con garantía retenida) es un importe FIJO por contrato ya firmado (p. ej. la fianza
+# legal de la LAU se fija en meses de renta al firmar, no escala con la facturación futura del
+# arrendatario); el saldo agregado solo crece cuando se añaden contratos nuevos a medida que el
+# negocio se expande, mucho más lento que las ventas. Fracción de paso pequeña (30% del
+# crecimiento de ventas del año) — ni 0% (ignoraría la expansión real de la cartera de
+# contratos) ni 100% (repetiría el mismo sesgo que se quiere corregir).
+FRACCION_ATENUACION_FIANZAS_DEPOSITOS = 0.30
+
+# `exceso_stock` (arquetipo 5, existencias): el exceso se reparte entre `materias_primas`,
+# `productos_curso`, `productos_terminados` y `comerciales` en proporción al peso que YA tienen
+# esas 4 en el perfil de existencias de ESE caso — sin pesos inventados a mano por sector
+# (subproductos_residuos y anticipos_proveedores quedan fuera: no son "stock que no se vende").
+# Un reparto fijo 50/50 entre terminados y comerciales rompía, en intensidad fuerte y 2025, las
+# invariantes semánticas del lote 1 en los tiers donde esas dos no son la partida natural
+# (construccion, producto_en_curso, sanidad_consumibles, inmobiliario_mixto); y la versión de 3
+# partidas (sin `materias_primas`) dejaba a `comerciales` absorbiendo ~80% del exceso en
+# `sanidad_consumibles` (86.1), donde `materias_primas` (consumibles sanitarios) es la partida
+# dominante por diseño — ver #99.
+EXISTENCIAS_OBJETIVO_EXCESO_STOCK = ("materias_primas", "productos_curso", "productos_terminados", "comerciales")
+
+
+def _pesos_exceso_stock(perfil_existencias_pct: dict[str, float]) -> dict[str, float]:
+    total = sum(perfil_existencias_pct[c] for c in EXISTENCIAS_OBJETIVO_EXCESO_STOCK)
+    return {c: perfil_existencias_pct[c] / total for c in EXISTENCIAS_OBJETIVO_EXCESO_STOCK}
+
+
 class EvolucionArquetipoError(ValueError):
     """Parámetros de entrada inválidos."""
 
@@ -2789,23 +2928,82 @@ def _evolucionar_un_año(
             if cambio_eur < TOLERANCIA_CONVERGENCIA_DETERIORO_EUR:
                 break  # convergido al techo
 
-    # Desglose del TOTAL de deudores/acreedores comerciales de ESTE año — mismo criterio que
-    # existencias: perfil (%) constante (ya fijado "desde 2023", incluida cualquier sub-partida
-    # de grupo/varios forzada por el arquetipo 20 en el año base), aplicado al agregado YA
-    # cuadrado de este año. El residuo de `realizable` excluye `periodificacion_activo_eur`
-    # (primer lote): perfil fijo desde 2023 (`anterior.periodificacion_activo_pct`), aplicado sobre
-    # el balance YA final de ESTE año (mismo criterio que el residuo de "otras deudas", ver más
-    # abajo) — para no re-etiquetar el mismo euro bajo dos epígrafes oficiales distintos.
-    # `acreedores_comerciales` no tiene ninguna partida de activo que excluir, sigue sin cambios.
+    # Desglose del TOTAL de existencias de ESTE año (decisiones_plausibilidad.md #99, Parte A):
+    # "exceso_stock" (5) es el ÚNICO arquetipo que la tabla del encargo fuerza a una sub-partida
+    # objetivo ("materias_primas"+"productos_curso"+"productos_terminados"+"comerciales", proporcional al perfil del caso) — "crecimiento_destruccion_caja" (1)
+    # y "aumento_nof" (3) quedan "Proporcional, sin forzar": aunque también tocan `existencias`,
+    # su historia concreta es sobre `realizable`, no sobre qué tipo de stock crece, así que su
+    # exceso se reparte con el mismo % fijo que el resto (objetivo_exceso=None) — comportamiento
+    # IDÉNTICO al de siempre. Tras la fusión de masa_circulante (Combo F, 1+5 combinados en un
+    # único EfectoActivo con `arquetipo_id="crecimiento_destruccion_caja+exceso_stock"`), basta
+    # con mirar si "exceso_stock" aparece entre los arquetipos fusionados para forzar — es
+    # indiferente si 1 también está activo a la vez, su ausencia de objetivo propio no anula el
+    # forzado de 5.
+    ea_existencias = next((ea for ea in efectos_masa_circulante if ea.efecto.variable == "existencias"), None)
+    objetivo_exceso_existencias = (
+        _pesos_exceso_stock(anterior.existencias_perfil_pct)
+        if ea_existencias is not None and "exceso_stock" in ea_existencias.arquetipo_id.split("+")
+        else None
+    )
+    exceso_existencias_eur = existencias_eur - existencias_proporcional_eur
+    existencias_desglose_eur_año = _reparto_organico_con_exceso_dirigido(
+        anterior.existencias_perfil_pct, existencias_proporcional_eur, exceso_existencias_eur,
+        objetivo_exceso_existencias,
+    )
+
+    # Desglose del TOTAL de deudores/acreedores comerciales de ESTE año (decisiones_
+    # plausibilidad.md #99, Parte A+B — ver bloque `_reparto_organico_con_exceso_dirigido` más
+    # arriba). `realizable_eur`/`acreedores_comerciales_eur` (variables locales, YA con
+    # cualquier efecto de arquetipo Y con la contención de endeudamiento aplicada — la contención
+    # solo damper existencias/realizable, nunca acreedores_comerciales, ver el bucle de arriba)
+    # frente a `..._proporcional_eur` (la misma masa SIN el efecto, calculada más arriba para el
+    # déficit de NOF) dan el exceso de CADA masa: `realizable`/`acreedores_comerciales` SOLO los
+    # tocan arquetipos que la tabla del encargo fuerza al 100% a una única sub-partida
+    # ("clientes"/"proveedores" respectivamente), así que la exclusión no depende de qué
+    # arquetipo concreto esté activo — si ninguno la toca, el exceso es 0 y el resultado es
+    # idéntico al reparto fijo de siempre. El residuo de `realizable` sigue excluyendo
+    # `periodificacion_activo_eur` (primer lote, sin cambios).
     periodificacion_activo_año_eur = anterior.periodificacion_activo_pct * balance_eur["realizable"]
     realizable_residual_año_eur = balance_eur["realizable"] - periodificacion_activo_año_eur
-    deudores_desglose_eur_año = {
-        componente: fraccion * realizable_residual_año_eur for componente, fraccion in anterior.deudores_perfil_pct.items()
-    }
-    acreedores_desglose_eur_año = {
-        componente: fraccion * balance_eur["acreedores_comerciales"]
-        for componente, fraccion in anterior.acreedores_perfil_pct.items()
-    }
+    exceso_clientes_eur = realizable_eur - realizable_proporcional_eur
+    organico_residual_deudores_eur = realizable_residual_año_eur - exceso_clientes_eur
+    # Parte B: `accionistas_desembolsos_exigidos` decrece hacia 0 por su propia amortización
+    # (ver FRACCION_AMORTIZACION_ANUAL_DESEMBOLSOS_EXIGIDOS), excluida del reparto genérico tanto
+    # en su parte orgánica como en el exceso de cualquier arquetipo.
+    accionistas_desembolsos_exigidos_eur = max(
+        0.0,
+        anterior.deudores_desglose_eur["accionistas_desembolsos_exigidos"]
+        * (1 - FRACCION_AMORTIZACION_ANUAL_DESEMBOLSOS_EXIGIDOS),
+    )
+    deudores_desglose_eur_año = _reparto_organico_con_exceso_dirigido(
+        {c: f for c, f in anterior.deudores_perfil_pct.items() if c != "accionistas_desembolsos_exigidos"},
+        organico_residual_deudores_eur - accionistas_desembolsos_exigidos_eur,
+        exceso_clientes_eur,
+        "clientes",
+    )
+    deudores_desglose_eur_año["accionistas_desembolsos_exigidos"] = accionistas_desembolsos_exigidos_eur
+
+    exceso_proveedores_eur = acreedores_comerciales_eur - acreedores_comerciales_proporcional_eur
+    organico_acreedores_eur = acreedores_comerciales_proporcional_eur  # = total - exceso, por construcción
+    # Parte B: "Personal (remuneraciones pendientes de pago)" sigue el crecimiento de
+    # `gastos_personal` (PyG) de ESTE año, no el de la masa de acreedores comerciales — un
+    # aumento de plantilla/salarios genera más nómina pendiente de pago con independencia de
+    # cómo evolucione el crédito de proveedores.
+    crecimiento_gastos_personal = (
+        pyg_eur["gastos_personal"] / anterior.pyg_eur["gastos_personal"] - 1
+        if anterior.pyg_eur["gastos_personal"] > 0
+        else crecimiento_ventas
+    )
+    personal_acreedor_eur = max(
+        0.0, anterior.acreedores_desglose_eur["personal"] * (1 + crecimiento_gastos_personal)
+    )
+    acreedores_desglose_eur_año = _reparto_organico_con_exceso_dirigido(
+        {c: f for c, f in anterior.acreedores_perfil_pct.items() if c != "personal"},
+        organico_acreedores_eur - personal_acreedor_eur,
+        exceso_proveedores_eur,
+        "proveedores",
+    )
+    acreedores_desglose_eur_año["personal"] = personal_acreedor_eur
     magnitud_operacion_vinculada_eur = _magnitud_operacion_vinculada(
         ventas, balance_eur, parametros_operacion_vinculada.tipo_operacion
     ) if parametros_operacion_vinculada.activa else 0.0
@@ -2829,11 +3027,80 @@ def _evolucionar_un_año(
     # "deudas_fin_largo"]` dentro de `_construir_balance` — se resta aquí para aislar la base
     # CON COSTE que sí reparten los perfiles fijos de arrendamiento financiero/obligaciones/
     # otros pasivos financieros. Ver `motor.empresa_base.calcular_desglose_deudas_fin`.
+    #
+    # Parte A (decisiones_plausibilidad.md #99): `apalancamiento_extra_eur` es exactamente el
+    # exceso de "apalancamiento" (9/14) sobre `deudas_fin_largo_proporcional_eur` — sin damping
+    # de la contención de endeudamiento, que no toca deuda financiera — así que se excluye de la
+    # base ANTES de `calcular_desglose_deudas_fin` (para que arrendamiento/obligaciones/otros no
+    # absorban ninguna fracción de la deuda nueva, cuyo % es fijo sobre el TOTAL) y se añade
+    # DESPUÉS al 100% a "Entidades de crédito" — sin este cambio, la deuda nueva de apalancamiento
+    # se filtraba a las otras 3 categorías proporcionalmente a su peso, contradiciendo la tabla
+    # del encargo ("Forzar 100%" a entidades_credito).
+    #
+    # Parte B: "obligaciones" (plana desde 2023 — se copia el importe del año anterior tal cual,
+    # sin recalcular nada) y "arrendamiento_financiero" (amortización lineal a plazo remanente,
+    # `_arrendamiento_financiero_amortizado_eur`) siguen su propia dinámica — se excluyen de
+    # `fraccion_total` (perfil % fijo por caso) ANTES de la llamada, igual criterio que
+    # "Derivados": "Entidades de crédito" absorbe su hueco como residual, y se les resta después
+    # el mismo importe para realojarlo en su propia línea (mismo total, solo cambia qué línea lo
+    # aloja). El reparto largo/corto de cada una usa su propia `fraccion_largo` fija del caso
+    # (`anterior.deudas_fin_fraccion_largo`), igual que en el año base.
     deudas_fin_largo_con_coste_año_eur = balance_eur["deudas_fin_largo"] - derivados_pasivo_largo_eur
+    fraccion_total_sin_ob_arr = {
+        tipo: (0.0 if tipo in ("obligaciones", "arrendamiento_financiero") else fraccion)
+        for tipo, fraccion in anterior.deudas_fin_fraccion_total.items()
+    }
     deudas_fin_largo_desglose_eur_año, deudas_fin_corto_desglose_eur_año = calcular_desglose_deudas_fin(
-        anterior.deudas_fin_fraccion_total, anterior.deudas_fin_fraccion_largo,
-        deudas_fin_largo_con_coste_año_eur, balance_eur["deudas_fin_corto"], derivados_pasivo_largo_eur,
+        fraccion_total_sin_ob_arr, anterior.deudas_fin_fraccion_largo,
+        deudas_fin_largo_con_coste_año_eur - apalancamiento_extra_eur, balance_eur["deudas_fin_corto"],
+        derivados_pasivo_largo_eur,
     )
+
+    obligaciones_largo_eur = anterior.deudas_fin_largo_desglose_eur["obligaciones"]
+    obligaciones_corto_eur = anterior.deudas_fin_corto_desglose_eur["obligaciones"]
+    arrendamiento_total_anterior_eur = (
+        anterior.deudas_fin_largo_desglose_eur["arrendamiento_financiero"]
+        + anterior.deudas_fin_corto_desglose_eur["arrendamiento_financiero"]
+    )
+    arrendamiento_total_eur = _arrendamiento_financiero_amortizado_eur(arrendamiento_total_anterior_eur, año)
+    arrendamiento_largo_eur = anterior.deudas_fin_fraccion_largo["arrendamiento_financiero"] * arrendamiento_total_eur
+    arrendamiento_corto_eur = arrendamiento_total_eur - arrendamiento_largo_eur
+
+    # Técho defensivo (mismo espíritu que el de `calcular_desglose_deudas_fin` para sus propias 3
+    # categorías): "obligaciones"/"arrendamiento_financiero" son flujos AJENOS al reparto de este
+    # año (planos/amortización propia) — si `reclasificacion_deuda` (8/16) ha movido tanto que
+    # "Entidades de crédito" de un plazo ya no tiene hueco para absorberlos sin quedar negativo,
+    # se reescala el exceso ENTRE ELLOS hacia el otro plazo (conservando el total de cada
+    # categoría, igual que la reclasificación de `acreedores_inmovilizado` en el quinto lote) —
+    # nunca se deja "Entidades de crédito" en negativo.
+    suma_largo_ob_arr_eur = obligaciones_largo_eur + arrendamiento_largo_eur
+    if suma_largo_ob_arr_eur > deudas_fin_largo_desglose_eur_año["entidades_credito"] and suma_largo_ob_arr_eur > 0:
+        factor = deudas_fin_largo_desglose_eur_año["entidades_credito"] / suma_largo_ob_arr_eur
+        exceso_obligaciones_eur = obligaciones_largo_eur * (1 - factor)
+        exceso_arrendamiento_eur = arrendamiento_largo_eur * (1 - factor)
+        obligaciones_largo_eur -= exceso_obligaciones_eur
+        arrendamiento_largo_eur -= exceso_arrendamiento_eur
+        obligaciones_corto_eur += exceso_obligaciones_eur
+        arrendamiento_corto_eur += exceso_arrendamiento_eur
+    suma_corto_ob_arr_eur = obligaciones_corto_eur + arrendamiento_corto_eur
+    if suma_corto_ob_arr_eur > deudas_fin_corto_desglose_eur_año["entidades_credito"] and suma_corto_ob_arr_eur > 0:
+        factor = deudas_fin_corto_desglose_eur_año["entidades_credito"] / suma_corto_ob_arr_eur
+        exceso_obligaciones_eur = obligaciones_corto_eur * (1 - factor)
+        exceso_arrendamiento_eur = arrendamiento_corto_eur * (1 - factor)
+        obligaciones_corto_eur -= exceso_obligaciones_eur
+        arrendamiento_corto_eur -= exceso_arrendamiento_eur
+        obligaciones_largo_eur += exceso_obligaciones_eur
+        arrendamiento_largo_eur += exceso_arrendamiento_eur
+
+    deudas_fin_largo_desglose_eur_año["entidades_credito"] -= obligaciones_largo_eur + arrendamiento_largo_eur
+    deudas_fin_corto_desglose_eur_año["entidades_credito"] -= obligaciones_corto_eur + arrendamiento_corto_eur
+    deudas_fin_largo_desglose_eur_año["obligaciones"] = obligaciones_largo_eur
+    deudas_fin_corto_desglose_eur_año["obligaciones"] = obligaciones_corto_eur
+    deudas_fin_largo_desglose_eur_año["arrendamiento_financiero"] = arrendamiento_largo_eur
+    deudas_fin_corto_desglose_eur_año["arrendamiento_financiero"] = arrendamiento_corto_eur
+    # Exceso de apalancamiento, 100% a "Entidades de crédito" — solo largo (9/14 nunca añade
+    # deuda a corto).
+    deudas_fin_largo_desglose_eur_año["entidades_credito"] += apalancamiento_extra_eur
 
     # Desglose de "otras deudas" (quinto lote de desglose de balance) — calculado, igual que el
     # de deudas financieras, DESPUÉS de la contención de endeudamiento, sobre el balance YA final
@@ -2871,10 +3138,27 @@ def _evolucionar_un_año(
         deterioro_ciclo_caja_activo=deterioro_ciclo_caja_activo,
         dependencia_clientes_activo=dependencia_pocos_clientes_activo,
     )
+    # Parte B (decisiones_plausibilidad.md #99): "fianzas_depositos" (largo y corto) crece muy
+    # atenuado respecto al crecimiento orgánico general (`FRACCION_ATENUACION_FIANZAS_DEPOSITOS`)
+    # en vez de seguir el % fijo del residuo — se pasa como override a `calcular_desglose_otras_
+    # deudas`, que ya sabe excluirla de su propio reparto proporcional y renormalizar el resto
+    # (mismo criterio que "Derivados"/aapp_pendiente, nunca sorteados dentro del perfil fijo).
+    fianzas_depositos_largo_eur = max(
+        0.0,
+        anterior.otras_deudas_largo_desglose_eur["fianzas_depositos"]
+        * (1 + FRACCION_ATENUACION_FIANZAS_DEPOSITOS * crecimiento_ventas),
+    )
+    fianzas_depositos_corto_eur = max(
+        0.0,
+        anterior.otras_deudas_corto_desglose_eur["fianzas_depositos"]
+        * (1 + FRACCION_ATENUACION_FIANZAS_DEPOSITOS * crecimiento_ventas),
+    )
     otras_deudas_largo_desglose_eur_año, otras_deudas_corto_desglose_eur_año = calcular_desglose_otras_deudas(
         anterior.otras_deudas_largo_perfil_pct, anterior.otras_deudas_corto_resto_perfil_pct,
         aapp_pendiente_corto_pct_año, otras_deudas_largo_residual_año_eur, otras_deudas_corto_residual_año_eur,
         acreedores_inmovilizado_largo_anterior_eur=anterior.otras_deudas_largo_desglose_eur.get("acreedores_inmovilizado", 0.0),
+        fianzas_depositos_largo_eur=fianzas_depositos_largo_eur,
+        fianzas_depositos_corto_eur=fianzas_depositos_corto_eur,
     )
 
     # Desglose de PyG en líneas oficiales del PGC (encargo 1/2 de este lote) — perfiles (%)
@@ -3005,14 +3289,9 @@ def _evolucionar_un_año(
         subvencion_importe_concedido_eur=subvencion_importe_concedido_eur,
         subvencion_transferencia_bruto_eur=subvencion_transferencia_bruto_eur,
         existencias_perfil_pct=anterior.existencias_perfil_pct,
-        # Desglose del TOTAL de existencias de ESTE año — mismo criterio que activo_no_corriente:
-        # perfil (%) constante, aplicado al agregado YA cuadrado de este año (incluye el efecto
-        # de cualquier arquetipo que toque `existencias`, p. ej. 5 "exceso de stock": el exceso
-        # se reparte automáticamente según el perfil fijo del sector, sin código especial).
-        existencias_desglose_eur={
-            componente: fraccion * balance_eur["existencias"]
-            for componente, fraccion in anterior.existencias_perfil_pct.items()
-        },
+        # Desglose del TOTAL de existencias de ESTE año — calculado más arriba
+        # (`existencias_desglose_eur_año`, decisiones_plausibilidad.md #99, Parte A).
+        existencias_desglose_eur=existencias_desglose_eur_año,
         periodificacion_activo_pct=anterior.periodificacion_activo_pct,
         periodificacion_pasivo_corto_pct=anterior.periodificacion_pasivo_corto_pct,
         periodificacion_pasivo_largo_pct=anterior.periodificacion_pasivo_largo_pct,
