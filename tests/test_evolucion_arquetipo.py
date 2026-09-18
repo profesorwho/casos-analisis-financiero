@@ -405,9 +405,19 @@ def test_reimplementacion_generica_reproduce_los_valores_de_referencia(catalogo,
     # 2024/2025 vuelven, dentro de la tolerancia, al valor de antes del encargo de bajas — un
     # primer intento de implementación con 0.03 SÍ generaba una baja en 2025 para este caso y
     # llegó a re-pinnearse a 0.746; se corrigió a la probabilidad realmente aprobada antes de
-    # comitear, ver decisiones_plausibilidad.md). Si este test vuelve a fallar SIN que se haya
-    # tocado deliberadamente la semilla del RNG, el mecanismo de continuidad de PyG o el de bajas
-    # anticipadas, sí es una regresión real del arquetipo 1.
+    # comitear, ver decisiones_plausibilidad.md).
+    #
+    # RE-PINNEADO de nuevo tras el encargo de capex implícito (decisiones_plausibilidad.md #94):
+    # la colección de activos amortizables ya no se queda fija salvo capex/adquisición/
+    # subvención EXPLÍCITOS — cada año evolucionado añade cohortes por el crecimiento orgánico
+    # de activo_no_corriente, lo que sube la amortización de 2024 respecto a antes del encargo
+    # (más colección real detrás) y, en cascada, baja resultado_ejercicio/PN de 2024 y 2025 →
+    # sube endeudamiento de 2025 (0,716 → 0,723; 2023 y 2024 sin cambio dentro de tolerancia,
+    # existencias de los 3 años sin cambio dentro de tolerancia — la contención de plausibilidad
+    # sobre existencias no llegó a activarse de forma distinta para este caso concreto). Si este
+    # test vuelve a fallar SIN que se haya tocado deliberadamente la semilla del RNG, el
+    # mecanismo de continuidad de PyG, el de bajas anticipadas o el de capex implícito, sí es una
+    # regresión real del arquetipo 1.
     evolucion = _generar(catalogo, arquetipos, "24.1", 5, "fuerte")
     ej = evolucion.ejercicios
     assert ej[2023].balance_eur["existencias"] == pytest.approx(2_344_937, abs=1)
@@ -415,7 +425,7 @@ def test_reimplementacion_generica_reproduce_los_valores_de_referencia(catalogo,
     assert ej[2025].balance_eur["existencias"] == pytest.approx(4_478_283, abs=1)
     assert ej[2023].endeudamiento == pytest.approx(0.600, abs=1e-3)
     assert ej[2024].endeudamiento == pytest.approx(0.669, abs=1e-3)
-    assert ej[2025].endeudamiento == pytest.approx(0.716, abs=1e-3)
+    assert ej[2025].endeudamiento == pytest.approx(0.723, abs=1e-3)
 
 
 def test_sectores_distintos_no_comparten_crecimiento_pleno_objetivo(catalogo, arquetipos):

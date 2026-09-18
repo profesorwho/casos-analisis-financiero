@@ -382,6 +382,29 @@ def generar_cohortes_capex(sector: str, segmento: str, semilla: int, año: int, 
     return _generar_sublotes(rng, "instalaciones_maquinaria", info, incremento_eur, año, nuevo=True)
 
 
+def _generar_cohortes_desde_perfil_completo(
+    sector: str, segmento: str, semilla: int, año: int, incremento_eur: float, categoria: str,
+    perfil_top: dict[str, float], perfil_material: dict[str, float], perfil_intangible: dict[str, float],
+    sufijo_entropia: str,
+) -> tuple[SubLoteActivo, ...]:
+    """Reparte `incremento_eur` con el perfil COMPLETO de la categoría (los mismos perfiles ya
+    generados para el caso, sin sortear uno nuevo) — cuerpo compartido de `generar_cohortes_
+    adquisicion` (18) y `generar_cohortes_capex_implicito` (crecimiento orgánico de
+    activo_no_corriente en años evolucionados, ver docstring de esa función). `año_ancla` = el
+    propio `año`, sin sorteo de fecha/ya-amortizado (activos recién incorporados)."""
+    if incremento_eur <= 0:
+        return ()
+    rng = np.random.default_rng([semilla, _entropia_amortizacion(sector, segmento, sufijo_entropia)])
+    material_eur = perfil_top["material"] * incremento_eur
+    intangible_eur = perfil_top["intangible"] * incremento_eur
+    inversiones_inmobiliarias_eur = perfil_top["inversiones_inmobiliarias"] * incremento_eur
+    # otros_financieros: nunca amortizable — su parte del incremento no genera sub-lotes.
+    return _generar_bucket_material_e_intangible(
+        rng, categoria, perfil_material, perfil_intangible,
+        material_eur, intangible_eur, inversiones_inmobiliarias_eur, año, nuevo=True,
+    )
+
+
 def generar_cohortes_adquisicion(
     sector: str, segmento: str, semilla: int, año: int, incremento_eur: float, categoria: str,
     perfil_top: dict[str, float], perfil_material: dict[str, float], perfil_intangible: dict[str, float],
@@ -390,16 +413,27 @@ def generar_cohortes_adquisicion(
     entero, con la mezcla de activo habitual del sector (los mismos perfiles ya generados para
     el caso, no un sorteo nuevo) — `año_ancla` = AÑO_ADQUISICION, sin sorteo de fecha/ya-
     amortizado (activos recién incorporados vía la operación)."""
-    if incremento_eur <= 0:
-        return ()
-    rng = np.random.default_rng([semilla, _entropia_amortizacion(sector, segmento, f"_adquisicion_{año}")])
-    material_eur = perfil_top["material"] * incremento_eur
-    intangible_eur = perfil_top["intangible"] * incremento_eur
-    inversiones_inmobiliarias_eur = perfil_top["inversiones_inmobiliarias"] * incremento_eur
-    # otros_financieros: nunca amortizable — su parte del incremento no genera sub-lotes.
-    return _generar_bucket_material_e_intangible(
-        rng, categoria, perfil_material, perfil_intangible,
-        material_eur, intangible_eur, inversiones_inmobiliarias_eur, año, nuevo=True,
+    return _generar_cohortes_desde_perfil_completo(
+        sector, segmento, semilla, año, incremento_eur, categoria,
+        perfil_top, perfil_material, perfil_intangible, f"_adquisicion_{año}",
+    )
+
+
+def generar_cohortes_capex_implicito(
+    sector: str, segmento: str, semilla: int, año: int, incremento_eur: float, categoria: str,
+    perfil_top: dict[str, float], perfil_material: dict[str, float], perfil_intangible: dict[str, float],
+) -> tuple[SubLoteActivo, ...]:
+    """Capex implícito (encargo "amortización acumulada real", ver decisiones_plausibilidad.md
+    #94): en años evolucionados (2024/2025), `activo_no_corriente` crece con un perfil ligado a
+    ventas ("orgánico") que hasta ahora quedaba TOTALMENTE desconectado de la colección de
+    activos — solo crecía con capex (17) / adquisición (18) / subvención EXPLÍCITOS. Esta
+    función genera las cohortes que faltaban para ese crecimiento orgánico, con el MISMO perfil
+    COMPLETO de la categoría ya generado para el caso (sin sortear uno nuevo) — mismo patrón que
+    `generar_cohortes_adquisicion` (18), entropía propia (`_capex_implicito_{año}`) para no
+    compartir stream de RNG con ningún otro mecanismo de cohortes."""
+    return _generar_cohortes_desde_perfil_completo(
+        sector, segmento, semilla, año, incremento_eur, categoria,
+        perfil_top, perfil_material, perfil_intangible, f"_capex_implicito_{año}",
     )
 
 

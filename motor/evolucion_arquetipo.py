@@ -492,6 +492,7 @@ from motor.amortizacion import (
     excluir_bajas,
     generar_cohortes_adquisicion,
     generar_cohortes_capex,
+    generar_cohortes_capex_implicito,
     resultado_bajas_eur,
     sortear_bajas_del_año,
     valor_en_libros_bajas_eur,
@@ -1182,6 +1183,15 @@ class EjercicioEmpresa:
     perfil_subtipos_material_pct: dict[str, float] = field(default_factory=dict)
     perfil_subtipos_intangible_pct: dict[str, float] = field(default_factory=dict)
     tipo_interes: float = 0.0  # ver empresa_base.EmpresaBase.tipo_interes — expuesto para el Δr de la cobertura
+    # Capex implícito (encargo "amortización acumulada real", ver decisiones_plausibilidad.md
+    # #94): cohorte nueva que conecta el crecimiento orgánico (proporcional a ventas, ajeno a
+    # capex-17/adquisición-18/bajas) de activo_no_corriente con la colección real de activos —
+    # sin esto, la colección solo crecía con capex/adquisición/subvención EXPLÍCITOS, mientras
+    # el Balance seguía creciendo también por el perfil ligado a ventas. 0.0 en el año base
+    # (2023, sin evolución) y en cualquier año evolucionado donde el capex implícito calculado
+    # saliera negativo (hipótesis de diseño: no se genera cohorte negativa, ver
+    # motor/evolucion_arquetipo._evolucionar_un_año).
+    capex_implicito_eur: float = 0.0
 
     # --- Bajas anticipadas de sub-lotes (línea 11 PGC, "Deterioro y resultado por enajenaciones
     # del inmovilizado", ver motor/amortizacion.py) — () en el año base y en cualquier año sin
@@ -2113,6 +2123,40 @@ def _evolucionar_un_año(
     # docstring de `excluir_bajas`.
     coleccion_activos_amortizables = excluir_bajas(coleccion_activos_amortizables, bajas_este_año)
 
+    # --- Capex implícito (encargo "amortización acumulada real", decisiones_plausibilidad.md
+    # #94): hasta aquí, la colección de activos solo crecía con capex (17) / adquisición (18) /
+    # subvención EXPLÍCITOS — el resto del crecimiento de activo_no_corriente (proporcional a
+    # ventas, el mismo "delta orgánico" que ya excluye motor/efe.py de B.6/7 al restar
+    # incremento_activo_adquisicion_eur y sumar baja_valor_en_libros_eur) quedaba sin ningún
+    # sub-lote real detrás. `capex_implicito_eur = delta_orgánico + amortización_real_del_año`
+    # (identidad habitual "capex bruto = Δ activo neto + amortización del ejercicio", aplicada
+    # aquí porque el activo_no_corriente de ESTE motor, aunque nunca se neta de amortización
+    # acumulada -ver motor/efe.py-, SÍ representa la magnitud NETA que exhibiría una empresa
+    # real — el capex bruto real necesario para producir ese crecimiento observado, dada la
+    # amortización YA cargada este año, es mayor que el delta orgánico en exactamente ese
+    # importe). Usa la amortización de la colección EXISTENTE (antes de esta cohorte, ya fijada
+    # arriba) — evita la circularidad de que la cohorte nueva influyera en su propio cálculo; su
+    # consecuencia es que la cuota de ESTE año de la propia cohorte nueva no se carga a la PyG
+    # de este año, solo desde el año siguiente (hipótesis de diseño, documentada explícitamente,
+    # no un olvido: ver decisiones_plausibilidad.md #94). No toca `activo_no_corriente_eur` (el
+    # Balance no cambia): solo dota de sub-lotes reales al crecimiento que ya existía como
+    # número. Reutiliza el MISMO perfil de categoría ya generado para el caso (material/
+    # intangible/inversiones_inmobiliarias + sub-tipos + terreno excluido), mismo patrón que
+    # `generar_cohortes_adquisicion` (18), sin sortear un perfil nuevo. Si sale negativo (nunca
+    # observado en el barrido de verificación, ver decisiones_plausibilidad.md #94), no se
+    # genera cohorte ese año (0.0) — caso límite documentado, no ocultado. ---
+    delta_activo_no_corriente_organico_eur = activo_no_corriente_proporcional_eur - (
+        anterior.balance_eur["activo_no_corriente"] - anterior_activo_grupo89_eur
+    )
+    capex_implicito_eur = max(0.0, delta_activo_no_corriente_organico_eur + amortizacion_eur_año)
+    if capex_implicito_eur > 0:
+        categoria_capex_implicito = categoria_de_sector(sector)
+        coleccion_activos_amortizables += generar_cohortes_capex_implicito(
+            sector, segmento, semilla, año, capex_implicito_eur, categoria_capex_implicito,
+            anterior.activo_no_corriente_perfil_pct, anterior.perfil_subtipos_material_pct,
+            anterior.perfil_subtipos_intangible_pct,
+        )
+
     # --- Efecto de las bajas sobre balance y caja (Restricciones del encargo): el valor en
     # libros de las bajas reduce `activo_no_corriente` (deja de existir como activo); el precio
     # de venta de las que fueron enajenación (0.0 si fue deterioro puro) entra como caja real —
@@ -2858,6 +2902,7 @@ def _evolucionar_un_año(
         perfil_subtipos_material_pct=anterior.perfil_subtipos_material_pct,
         perfil_subtipos_intangible_pct=anterior.perfil_subtipos_intangible_pct,
         tipo_interes=parcial_pyg.tipo_interes,
+        capex_implicito_eur=capex_implicito_eur,
         bajas_inmovilizado=bajas_este_año,
         baja_valor_en_libros_eur=baja_valor_en_libros_eur,
         baja_valor_venta_eur=baja_valor_venta_eur,

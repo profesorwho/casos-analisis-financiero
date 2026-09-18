@@ -508,7 +508,16 @@ def test_deterioro_ciclo_caja_realizable_sube_y_acreedores_baja(catalogo, arquet
             crecimiento_ventas = ej[año].ventas / ej[año_anterior].ventas - 1
             realizable_proporcional = ej[año_anterior].balance_eur["realizable"] * (1 + crecimiento_ventas)
             acreedores_proporcional = ej[año_anterior].balance_eur["acreedores_comerciales"] * (1 + crecimiento_ventas)
-            assert ej[año].balance_eur["realizable"] >= realizable_proporcional - 1e-6
+            # El suelo de contención (nunca por debajo de lo proporcional, ver docstring del
+            # módulo) se garantiza sobre `objetivos_circulante["realizable"]`, ANTES de que la
+            # deducción independiente por insolvencia de clientes (cuenta 490, probabilidad de
+            # fondo NO ligada a este arquetipo, ver motor/insolvencias.py) se reste para el
+            # balance final — hay que sumarla de vuelta aquí o el suelo puede parecer violado
+            # sin serlo (detectado tras el encargo de capex implícito, decisiones_
+            # plausibilidad.md #94: el cambio de amortización desplazó si este caso concreto
+            # entraba o no en contención, exponiendo una interacción que ya existía).
+            realizable_antes_de_insolvencia = ej[año].balance_eur["realizable"] + ej[año].insolvencia_deduccion_realizable_eur
+            assert realizable_antes_de_insolvencia >= realizable_proporcional - 1e-6
             assert ej[año].balance_eur["acreedores_comerciales"] <= acreedores_proporcional + 1e-6
 
 

@@ -137,12 +137,21 @@ def test_capex_y_adquisicion_generan_cohortes_nuevas(catalogo, arquetipos):
     )
     n_2023_adq = len(ev_adq.ejercicios[2023].coleccion_activos_amortizables)
     assert len(ev_adq.ejercicios[2024].coleccion_activos_amortizables) > n_2023_adq
-    # AÑO_ADQUISICION es fijo=2024 — 2025 no añade cohortes nuevas, pero SÍ puede quitar alguna
-    # por una baja anticipada de sub-lote (línea 11 PyG, ver motor/amortizacion.py): la colección
-    # de 2025 = la de 2024 menos las bajas de 2025, nunca más.
-    assert len(ev_adq.ejercicios[2025].coleccion_activos_amortizables) == len(
+    # AÑO_ADQUISICION es fijo=2024 — 2025 no añade cohortes propias de ESTE arquetipo, pero SÍ
+    # puede (a) quitar alguna por una baja anticipada de sub-lote (línea 11 PyG, ver
+    # motor/amortizacion.py) y (b) añadir cohortes de CAPEX IMPLÍCITO (encargo "amortización
+    # acumulada real", decisiones_plausibilidad.md #94, motor.amortizacion.
+    # generar_cohortes_capex_implicito) — el crecimiento orgánico de activo_no_corriente por
+    # ventas no se detiene solo porque el arquetipo 18 ya no actúa ese año. La colección de 2025
+    # = la de 2024 menos las bajas de 2025, más el capex implícito de 2025 si salió > 0 (siempre
+    # el caso en el barrido de verificación, ver decisiones_plausibilidad.md #94).
+    esperado_sin_capex_implicito_2025 = len(
         ev_adq.ejercicios[2024].coleccion_activos_amortizables
     ) - len(ev_adq.ejercicios[2025].bajas_inmovilizado)
+    if ev_adq.ejercicios[2025].capex_implicito_eur > 0:
+        assert len(ev_adq.ejercicios[2025].coleccion_activos_amortizables) > esperado_sin_capex_implicito_2025
+    else:
+        assert len(ev_adq.ejercicios[2025].coleccion_activos_amortizables) == esperado_sin_capex_implicito_2025
 
 
 def test_bienes_totalmente_amortizados_quedan_expuestos(catalogo, arquetipos):
