@@ -378,7 +378,10 @@ def test_capex_elevado_se_financia_con_deuda_a_largo_no_con_patrimonio_neto(cata
     # nada de patrimonio_neto por esta vía (a diferencia de "apalancamiento"). `baja_valor_en_
     # libros_eur` (línea 11 PyG, bajas anticipadas de sub-lote — ver motor/amortizacion.py) puede
     # restar de `activo_no_corriente` ese mismo año, sin relación con el capex: se añade de vuelta
-    # para aislar el efecto puro del capex, mismo criterio que ya usa motor/efe.py.
+    # para aislar el efecto puro del capex, mismo criterio que ya usa motor/efe.py. Desde
+    # decisiones_plausibilidad.md #98, `activo_no_corriente` también se neta de la amortización
+    # real del año — se añade de vuelta igual (mismo criterio que el ajuste de B.6/7 en
+    # motor/efe.py, `+ pyg_eur["amortizaciones"]`).
     for semilla in SEMILLAS:
         evolucion = _generar(catalogo, arquetipos, "capex_elevado", sector, semilla)
         ej = evolucion.ejercicios
@@ -386,7 +389,10 @@ def test_capex_elevado_se_financia_con_deuda_a_largo_no_con_patrimonio_neto(cata
             crecimiento_ventas = ej[año].ventas / ej[año_anterior].ventas - 1
             activo_proporcional = ej[año_anterior].balance_eur["activo_no_corriente"] * (1 + crecimiento_ventas)
             exceso_activo = (
-                ej[año].balance_eur["activo_no_corriente"] + ej[año].baja_valor_en_libros_eur - activo_proporcional
+                ej[año].balance_eur["activo_no_corriente"]
+                + ej[año].baja_valor_en_libros_eur
+                + ej[año].pyg_eur["amortizaciones"]
+                - activo_proporcional
             )
             deudas_largo_proporcional = ej[año_anterior].balance_eur["deudas_fin_largo"] * (1 + crecimiento_ventas)
             exceso_deuda_largo = ej[año].balance_eur["deudas_fin_largo"] - deudas_largo_proporcional

@@ -508,10 +508,24 @@ def test_residuo_excluye_provisiones_del_desglose_de_otras_deudas(catalogo, arqu
                 if ejercicio.provision_saldo_corto_eur > 1.0:
                     suma_lote5_corto = sum(ejercicio.otras_deudas_corto_desglose_eur.values())
                     assert suma_lote5_corto == pytest.approx(_otras_deudas_corto_target_eur(ejercicio), abs=0.01)
-                    assert suma_lote5_corto < ejercicio.balance_eur["otras_deudas_corto"] - 1.0, (
-                        "el desglose sumó el agregado bruto completo pese a haber provisión activa "
-                        "— re-etiquetando el mismo euro dos veces"
-                    )
+                    # La comprobación de "no re-etiquetar el mismo euro dos veces" solo tiene
+                    # sentido cuando el agregado bruto (`balance_eur["otras_deudas_corto"]`)
+                    # supera la provisión — si el parche de cuadre (`_construir_balance`, ver
+                    # motor/evolucion_arquetipo.py) lo deja en 0.0 vía su red de seguridad ("el
+                    # cuadre pediría dejar otras_deudas_corto en negativo, se trata como caja de
+                    # más en vez de deuda negativa"), la provisión también queda absorbida por esa
+                    # misma red de seguridad y `_otras_deudas_corto_target_eur` correctamente da
+                    # 0.0 (max(0, ...)) — no hay ningún euro re-contado, solo un agregado que ya
+                    # era 0.0 de partida. Este caso límite es más frecuente desde
+                    # decisiones_plausibilidad.md #98 (el agregado ya no lleva la inflación
+                    # artificial que antes absorbía la amortización, así que queda más cerca de 0
+                    # en sectores/semillas donde el plug de cuadre ya tiraba a la baja por otras
+                    # razones — ver el "paseo aleatorio" del PN ya documentado en #73/#75).
+                    if ejercicio.balance_eur["otras_deudas_corto"] > 1.0:
+                        assert suma_lote5_corto < ejercicio.balance_eur["otras_deudas_corto"] - 1.0, (
+                            "el desglose sumó el agregado bruto completo pese a haber provisión activa "
+                            "— re-etiquetando el mismo euro dos veces"
+                        )
                     comprobados += 1
     assert comprobados > 0, "ninguna provisión activa en el barrido — ampliar semillas"
 

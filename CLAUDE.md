@@ -197,16 +197,26 @@ sectores, 4 semillas, 2024 y 2025), 0 descuadres en ambos** — ver decisiones #
   `deudas_fin_largo` en vez de `otras_deudas_largo` (aproximación anterior, donde SÍ se excluía
   de `a3f`); mismo tratamiento de siempre (sin flujo de caja propio), solo cambió qué línea lo
   excluye — ver sección "Deudas financieras — cuarto lote" más abajo.
-- **Amortización (A.2.a) — sigue en 0,0 en el EFE, por una razón que YA NO es "no hay ningún
-  activo real detrás"** (eso se arregló, ver "Amortización derivada" abajo y decisiones #27-#32)
-  **sino que el `activo_no_corriente` del BALANCE todavía no se neta de la amortización
-  acumulada** — el gasto de PyG ya es real y deriva de una colección de activos, pero esa
-  colección hoy solo alimenta la PyG, no reduce el `activo_no_corriente` que ve el balance (eso
-  queda para el encargo que reabra `motor/efe.py`, deliberadamente aplazado, ver decisiones #26).
-  Mientras el balance no neta, añadir la amortización en A.2.a duplicaría el efecto que sigue
-  absorbiendo `otras_deudas_corto` — la conclusión práctica (0,0) no cambia todavía, pero la
-  RAZÓN sí: antes era "el motor no modela esto en absoluto", ahora es "el motor ya lo modela, pero
-  el balance no lo refleja aún".
+- **Amortización (A.2.a) — ACTIVADA desde decisiones_plausibilidad.md #98 (cierra #26/#94/#96),
+  ya NO siempre 0,0.** En años evolucionados (2024/2025 — el año base 2023 no cambia),
+  `activo_no_corriente` YA se neta de la amortización real de la colección de
+  `motor/amortizacion.py`: `activo_no_corriente(año) = activo_no_corriente(año−1) + capex_bruto(
+  año) − amortización_real(año)`, con `capex_bruto(año)` calculado con el mismo mecanismo de
+  siempre (perfil ligado a ventas + capex-17/adquisición-18/grupo89 explícitos), sin el término
+  de amortización que #94 le sumaba para cancelarla por construcción. `a2a_amortizacion =
+  pyg_eur["amortizaciones"]` del año actual; su contrapartida es un ajuste equivalente en B.6/7
+  (`+ pyg_eur["amortizaciones"]`, para recuperar el capex BRUTO real en vez del neto ya mermado
+  por la amortización) — ambos ajustes se cancelan exactamente en la variación neta de efectivo,
+  así que la reconciliación sigue exacta (verificado: 0 descuadres en 1.134 EFE con a2a activo y
+  con magnitud media ~4,5% del activo total, sin ninguna compensación artificial en
+  `otras_deudas_corto` por este motivo — ver #98). Efecto colateral cuantificado: `activo_no_
+  corriente` baja media -8,9%/-16,1% en 2024/2025 (barrido 27×2×6×3), con la mayoría de las
+  señales de plausibilidad de la sección 2.13 estables o mejorando (rotación de activo no
+  corriente y endeudamiento, los 2 ratios priorizados en la verificación, bajan ambos su tasa de
+  señal); varios ratios de liquidez a corto (`liquidez`, `tesoreria`, `disponibilidad_ratio`,
+  `calidad_deuda`) suben su tasa de señal (~+10pp) porque `otras_deudas_corto` (el parche de
+  cuadre) ya no necesita inflarse para absorber el efecto de la amortización — consecuencia
+  mecánica esperada, no una descalibración nueva.
 - **ECPN Documento B**: filas (saldo inicio, total ingresos y gastos reconocidos, operaciones con
   socios = la distribución de apalancamiento si la hay, otras variaciones = siempre 0, saldo
   final) × columnas (Capital, Reservas y resultados de ejercicios anteriores, Ajustes por cambios

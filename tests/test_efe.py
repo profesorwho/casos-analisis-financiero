@@ -85,17 +85,20 @@ def test_efe_reconcilia_combos_recomendados(catalogo, arquetipos, sector, nombre
             )
 
 
-def test_efe_amortizacion_siempre_cero(catalogo, arquetipos):
-    """Desviación deliberada del modelo de texto (ver docstring de motor/efe.py): este motor no
-    reduce activo_no_corriente por amortización acumulada, así que añadirla de vuelta en A.2.a
-    duplicaría el efecto ya absorbido por el parche de cuadre (A.3.e) y rompería la
-    reconciliación. Fijado como test de regresión explícito, no solo un comentario."""
+def test_efe_amortizacion_igual_a_la_amortizacion_real_del_año(catalogo, arquetipos):
+    """Desde decisiones_plausibilidad.md #98 (cierra #26/#94/#96): `activo_no_corriente` ya se
+    neta de la amortización real (motor/evolucion_arquetipo.py), así que A.2.a deja de estar
+    siempre en 0.0 — debe coincidir exactamente con `pyg_eur["amortizaciones"]` del año actual, y
+    seguir reconciliando (ver test_efe_reconcilia_*) sin necesitar compensación artificial en
+    A.3.e."""
     evolucion = generar_evolucion_arquetipo(
         "24.1", "grandes_medianas", VENTAS_OBJETIVO_2023, semilla=0, intensidad="fuerte",
         arquetipo_id="mejora_ebitda", catalogo=catalogo, arquetipos=arquetipos,
     )
-    efe = generar_efe(evolucion.ejercicios[2023], evolucion.ejercicios[2024], obligatorio=True)
-    assert efe.a2a_amortizacion == 0.0
+    for año in (2024, 2025):
+        efe = generar_efe(evolucion.ejercicios[año - 1], evolucion.ejercicios[año], obligatorio=True)
+        assert efe.a2a_amortizacion == pytest.approx(evolucion.ejercicios[año].pyg_eur["amortizaciones"])
+        assert efe.cuadra, f"año={año}: descuadre {efe.descuadre_eur:,.4f}€"
 
 
 def test_efe_lineas_sin_mecanismo_quedan_en_cero(catalogo, arquetipos):

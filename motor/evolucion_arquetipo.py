@@ -2134,31 +2134,30 @@ def _evolucionar_un_año(
     coleccion_activos_amortizables = excluir_bajas(coleccion_activos_amortizables, bajas_este_año)
 
     # --- Capex implícito (encargo "amortización acumulada real", decisiones_plausibilidad.md
-    # #94): hasta aquí, la colección de activos solo crecía con capex (17) / adquisición (18) /
-    # subvención EXPLÍCITOS — el resto del crecimiento de activo_no_corriente (proporcional a
-    # ventas, el mismo "delta orgánico" que ya excluye motor/efe.py de B.6/7 al restar
-    # incremento_activo_adquisicion_eur y sumar baja_valor_en_libros_eur) quedaba sin ningún
-    # sub-lote real detrás. `capex_implicito_eur = delta_orgánico + amortización_real_del_año`
-    # (identidad habitual "capex bruto = Δ activo neto + amortización del ejercicio", aplicada
-    # aquí porque el activo_no_corriente de ESTE motor, aunque nunca se neta de amortización
-    # acumulada -ver motor/efe.py-, SÍ representa la magnitud NETA que exhibiría una empresa
-    # real — el capex bruto real necesario para producir ese crecimiento observado, dada la
-    # amortización YA cargada este año, es mayor que el delta orgánico en exactamente ese
-    # importe). Usa la amortización de la colección EXISTENTE (antes de esta cohorte, ya fijada
-    # arriba) — evita la circularidad de que la cohorte nueva influyera en su propio cálculo; su
-    # consecuencia es que la cuota de ESTE año de la propia cohorte nueva no se carga a la PyG
-    # de este año, solo desde el año siguiente (hipótesis de diseño, documentada explícitamente,
-    # no un olvido: ver decisiones_plausibilidad.md #94). No toca `activo_no_corriente_eur` (el
-    # Balance no cambia): solo dota de sub-lotes reales al crecimiento que ya existía como
-    # número. Reutiliza el MISMO perfil de categoría ya generado para el caso (material/
-    # intangible/inversiones_inmobiliarias + sub-tipos + terreno excluido), mismo patrón que
-    # `generar_cohortes_adquisicion` (18), sin sortear un perfil nuevo. Si sale negativo (nunca
-    # observado en el barrido de verificación, ver decisiones_plausibilidad.md #94), no se
-    # genera cohorte ese año (0.0) — caso límite documentado, no ocultado. ---
+    # #94, REFORMULADO por el encargo que conecta activo_no_corriente con la amortización real
+    # — ver decisiones_plausibilidad.md #98): hasta aquí, la colección de activos solo crecía con
+    # capex (17) / adquisición (18) / subvención EXPLÍCITOS — el resto del crecimiento de
+    # activo_no_corriente (proporcional a ventas, el mismo "delta orgánico" que ya excluye
+    # motor/efe.py de B.6/7 al restar incremento_activo_adquisicion_eur y sumar
+    # baja_valor_en_libros_eur) quedaba sin ningún sub-lote real detrás. `capex_implicito_eur =
+    # delta_orgánico` (SIN sumar la amortización del año, a diferencia de la fórmula original de
+    # #94): desde este encargo `activo_no_corriente_eur` SÍ se neta de la amortización real más
+    # abajo, así que la cohorte nueva ya no necesita "pre-compensar" la cuota de este año — basta
+    # con dotar de sub-lotes reales al crecimiento orgánico bruto, sin el término extra que antes
+    # garantizaba (por construcción algebraica, ver #98) que el balance nunca se moviera con la
+    # amortización. Usa la amortización de la colección EXISTENTE (antes de esta cohorte, ya
+    # fijada arriba) solo para el propio cálculo de `amortizacion_eur_año` que resta de
+    # `activo_no_corriente_eur` más abajo — evita la circularidad de que la cohorte nueva
+    # influyera en su propio cálculo; su consecuencia es que la cuota de ESTE año de la propia
+    # cohorte nueva no se carga a la PyG de este año, solo desde el año siguiente (hipótesis de
+    # diseño ya documentada en #94, sin cambios). Reutiliza el MISMO perfil de categoría ya
+    # generado para el caso (material/intangible/inversiones_inmobiliarias + sub-tipos + terreno
+    # excluido), mismo patrón que `generar_cohortes_adquisicion` (18), sin sortear un perfil
+    # nuevo. Si sale negativo, no se genera cohorte ese año (0.0) — caso límite documentado. ---
     delta_activo_no_corriente_organico_eur = activo_no_corriente_proporcional_eur - (
         anterior.balance_eur["activo_no_corriente"] - anterior_activo_grupo89_eur
     )
-    capex_implicito_eur = max(0.0, delta_activo_no_corriente_organico_eur + amortizacion_eur_año)
+    capex_implicito_eur = max(0.0, delta_activo_no_corriente_organico_eur)
     if capex_implicito_eur > 0:
         categoria_capex_implicito = categoria_de_sector(sector)
         coleccion_activos_amortizables += generar_cohortes_capex_implicito(
@@ -2178,7 +2177,24 @@ def _evolucionar_un_año(
     baja_valor_en_libros_eur = valor_en_libros_bajas_eur(bajas_este_año)
     baja_valor_venta_eur = valor_venta_bajas_eur(bajas_este_año)
     deterioro_enajenacion_inmovilizado_eur = resultado_bajas_eur(bajas_este_año)
-    activo_no_corriente_eur = max(0.0, activo_no_corriente_eur - baja_valor_en_libros_eur)
+    # --- Amortización real neta contra el Balance (encargo que cierra #26/#94/#96, ver
+    # decisiones_plausibilidad.md #98): hasta este encargo, `activo_no_corriente` NUNCA se
+    # reducía por la amortización de la colección real (ver motor/efe.py, docstring anterior de
+    # la decisión #26) — el crecimiento orgánico (`capex_implicito_eur`, arriba) se dimensionaba
+    # justo para cancelar ese efecto y dejar el Balance invariante frente a la amortización, por
+    # construcción algebraica (delta_orgánico + amortización, #94). Desde este encargo, SOLO en
+    # años evolucionados (2024/2025 — el año base 2023 se genera en motor/empresa_base.py, ajeno
+    # a esta función): `activo_no_corriente(año) = activo_no_corriente(año−1) + capex_bruto(año)
+    # − amortización_real(año)`, con `capex_bruto(año)` = el mismo mecanismo de siempre (perfil
+    # ligado a ventas + capex-17/adquisición-18/grupo89 explícitos, ya calculado arriba en
+    # `activo_no_corriente_eur`, SIN el término de amortización que #94 le sumaba). Como esta
+    # función es recursiva (`anterior` es el propio `EjercicioEmpresa` del año recién calculado,
+    # ver el bucle en `generar_evolucion_combinada`), restar la amortización aquí basta para que
+    # el efecto se acumule año a año sin ningún cálculo adicional — 2025 parte ya del
+    # `activo_no_corriente` de 2024 neto de su propia amortización. `max(0.0, ...)` es la misma
+    # salvaguarda estructural que ya protege la resta de bajas, por si la amortización superara
+    # alguna vez lo que queda de activo (no observado en la verificación de este encargo).
+    activo_no_corriente_eur = max(0.0, activo_no_corriente_eur - baja_valor_en_libros_eur - amortizacion_eur_año)
     disponible_proporcional_eur += baja_valor_venta_eur
 
     # --- PyG: primitivas no financieras + tipo de interés, sorteadas UNA sola vez. Las que el

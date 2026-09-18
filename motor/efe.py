@@ -9,26 +9,28 @@ Modelo oficial verificado externamente (no de memoria) contra una fuente que cit
 E) Variación neta, línea por línea. Ver CLAUDE.md, sección "EFE y ECPN", para el mapeo completo
 de mecanismos del motor a líneas de este modelo, revisado por el usuario antes de implementar.
 
-**Corrección importante sobre la amortización (A.2.a), respecto a lo propuesto inicialmente**:
-el modelo oficial exige añadir de vuelta la amortización en A.2.a (es un gasto no monetario en
-una empresa real, cuya contrapartida es una reducción del valor en libros del inmovilizado). En
-ESTE motor, sin embargo, `activo_no_corriente` NUNCA se reduce por amortización (no hay
-amortización acumulada modelada contra el activo — ver decisiones_plausibilidad.md) — así que la
-amortización, en términos de la identidad del balance de este motor, se comporta EXACTAMENTE
-como un gasto en efectivo cualquiera: la reducción de PN que causa se absorbe automáticamente
-por el "parche" de cuadre (`otras_deudas_corto`, ya mapeado a A.3.e), NO por ninguna reducción de
-activo. Añadirla de vuelta en A.2.a sin más duplicaría ese efecto (se contaría una vez vía A.3.e
-y otra vez vía A.2.a) y rompería la reconciliación en exactamente el importe de la amortización
-del año — verificado numéricamente con un caso mínimo antes de fijar esto. Por eso `a2a_amortizacion`
-se deja siempre en 0.0 aquí, una desviación deliberada del modelo de texto, documentada
-explícitamente, no un olvido. Los demás ajustes de A.2 (ingresos/gastos financieros) SÍ se
-incluyen tal cual porque se cancelan exactamente dentro del propio EFE (A.2.g/h se deshacen en
-A.4.a/c), sin depender de si el balance tiene o no una partida propia detrás.
+**`a2a_amortizacion` ACTIVADO (encargo que cierra #26/#94/#96, ver decisiones_plausibilidad.md
+#98) — historial de la decisión, no borrado, porque explica por qué el motor tardó tres encargos
+en llegar aquí**: originalmente (decisión #26) se dejó siempre en 0.0 porque `activo_no_corriente`
+nunca se reducía por amortización acumulada — sumarla en A.2.a habría duplicado el efecto que el
+"parche" de cuadre (`otras_deudas_corto`, A.3.e) ya absorbía en silencio. Esa premisa dejó de ser
+cierta con el encargo #98 (`motor/evolucion_arquetipo.py`, bloque "Amortización real neta contra
+el Balance"): en años evolucionados, `activo_no_corriente` YA se reduce por la amortización real
+de la colección de `motor/amortizacion.py`. Ahora `a2a_amortizacion = actual.pyg_eur[
+"amortizaciones"]` (el mismo gasto no monetario ya restado en A.1) — y, en paralelo, el delta
+"orgánico" de B.6/7 (más abajo) se ajusta para reflejar el capex BRUTO del año (antes de
+amortización), no el neto ya mermado por ella: sin ese ajuste, la reconciliación de `disponible`
+se rompería en el importe exacto de la amortización, igual que se habría roto en la decisión #26
+si se hubiera sumado sin más en aquel momento. Los dos ajustes (A.2.a +amortización, B.6/7
+−amortización adicional de salida) se cancelan exactamente en la variación neta de efectivo — la
+amortización sigue sin ser un flujo de caja, solo cambia de qué línea "no monetaria" se reclasifica
+la reversión, del parche genérico de A.3.e a las líneas oficiales del modelo de texto. Los demás
+ajustes de A.2 (ingresos/gastos financieros) siguen incluidos tal cual porque se cancelan
+exactamente dentro del propio EFE (A.2.g/h se deshacen en A.4.a/c), sin depender de si el balance
+tiene o no una partida propia detrás.
 
-**Bajas anticipadas de sub-lotes (línea 11 PyG, "Deterioro y resultado por enajenaciones del
-inmovilizado" — ver motor/amortizacion.py): PRIMER mecanismo que SÍ reduce `activo_no_corriente`
-del balance por un evento ligado a la colección de activos** (a diferencia de la amortización
-normal, que NUNCA lo hace — ver arriba). `a2e_deterioro_enajenacion_inmovilizado` revierte
+**Bajas anticipadas de sub-lotes (línea 11 PGC, "Deterioro y resultado por enajenaciones del
+inmovilizado" — ver motor/amortizacion.py)**: `a2e_deterioro_enajenacion_inmovilizado` revierte
 ÍNTEGRO el resultado no monetario de la línea 11 ya incluido en A.1 (el valor en libros dado de
 baja nunca es caja, y la plus/minusvalía sobre él tampoco); el único movimiento de caja real (el
 precio de venta, si hubo enajenación) aparece en B) como `b6_enajenacion_inmovilizado`, un cobro
@@ -54,7 +56,7 @@ class EstadoFlujosEfectivo:
 
     # A) Flujos de efectivo de las actividades de explotación
     a1_resultado_antes_impuestos: float
-    a2a_amortizacion: float  # SIEMPRE 0.0 en este motor — ver docstring del módulo
+    a2a_amortizacion: float  # = pyg_eur["amortizaciones"] del año actual — ver docstring del módulo (decisiones_plausibilidad.md #98)
     a2e_deterioro_enajenacion_inmovilizado: float  # revierte la línea 11 de PyG (no monetaria en A.1) — ver motor/amortizacion.py
     a2g_ingresos_financieros: float
     a2h_gastos_financieros: float
@@ -104,7 +106,10 @@ class EstadoFlujosEfectivo:
 def generar_efe(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligatorio: bool) -> EstadoFlujosEfectivo:
     """EFE del ejercicio `actual` frente al `anterior` (p. ej. 2023→2024 o 2024→2025)."""
     a1 = actual.pyg_eur["bai"]
-    a2a = 0.0  # ver docstring del módulo
+    # A.2.a ("Amortización del inmovilizado") — activado desde decisiones_plausibilidad.md #98:
+    # ver docstring del módulo. Añade de vuelta, en A), el gasto no monetario ya restado en A.1;
+    # su contrapartida (capex bruto vs. neto) se ajusta más abajo en B.6/7.
+    a2a = actual.pyg_eur["amortizaciones"]
     # A.2.e ("Resultados por bajas y enajenaciones del inmovilizado") — revierte ÍNTEGRO el
     # resultado no monetario de la línea 11 de PyG ya incluido en A.1 (BAI): el valor en libros
     # dado de baja no es una salida de caja de este año, y la plus/minusvalía sobre él tampoco lo
@@ -179,11 +184,19 @@ def generar_efe(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligatori
     # vuelta aquí (el `- actual.incremento...` y el `+ actual.baja_valor_en_libros_eur` se anulan
     # exactamente entre el balance de este año y el del anterior, dejando el delta puramente
     # orgánico) y su cobro real (si hubo enajenación) se muestra aparte en `b6_enajenacion_
-    # inmovilizado` más abajo.
+    # inmovilizado` más abajo. **Se añade también `+ actual.pyg_eur["amortizaciones"]`** (desde
+    # decisiones_plausibilidad.md #98): `activo_no_corriente` ya se neta de la amortización real
+    # del año (motor/evolucion_arquetipo.py, bloque "Amortización real neta contra el Balance"),
+    # así que el delta puro del balance es CAPEX BRUTO − amortización — sumar la amortización de
+    # vuelta recupera el capex bruto real (efectivo de verdad invertido en inmovilizado), que es
+    # lo que B.6/7 debe mostrar como pago de inversión; su contrapartida es A.2.a (arriba), y
+    # ambos ajustes se cancelan exactamente en la variación neta de efectivo (la amortización
+    # nunca es caja, solo cambia de línea).
     delta_activo_no_corriente_organico = (
         (actual.balance_eur["activo_no_corriente"] - grupo89_activo_no_corriente_actual)
         - actual.incremento_activo_adquisicion_eur
         + actual.baja_valor_en_libros_eur
+        + actual.pyg_eur["amortizaciones"]
         - (anterior.balance_eur["activo_no_corriente"] - grupo89_activo_no_corriente_anterior)
     )
     perfil = actual.activo_no_corriente_perfil_pct
