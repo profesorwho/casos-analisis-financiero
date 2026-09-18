@@ -291,15 +291,27 @@ def test_riesgo_liquidez_tesoreria_cae_o_deuda_corto_compensa(catalogo, arquetip
             assert tesoreria_cae or deuda_corto_sube, f"semilla {semilla}, {año}: ni cae la caja ni sube la deuda CP"
 
 
+SEMILLAS_RIESGO_LIQUIDEZ_RESULTADO = range(32)
+
+
 @pytest.mark.parametrize("sector", SECTORES)
 def test_riesgo_liquidez_el_resultado_suele_ser_positivo(catalogo, arquetipos, sector):
-    # "Beneficio sano pese a la tensión de caja": no se garantiza matemáticamente (la PyG sigue
-    # siendo ruido normal de sector), pero para la mayoría de semillas debería salir positivo
-    # si el sector en sí es saneado (huber de margen positivo) — comprobación de sanidad, no
-    # una propiedad estructural estricta.
+    # "Beneficio sano pese a la tensión de caja": no se garantiza matemáticamente (el arquetipo
+    # no toca ninguna primitiva de la PyG, solo `disponible` — ver #17 de decisiones_plausibilidad
+    # sobre por qué resultado_ejercicio no es una huella propia de este mecanismo), pero para la
+    # mayoría de semillas debería salir positivo si el sector en sí es saneado (huber de margen
+    # positivo) — comprobación de sanidad, no una propiedad estructural estricta.
+    #
+    # Usa su propio rango de semillas, más ancho que el SEMILLAS (8) del resto del archivo: con
+    # solo 8 semillas (16 observaciones) el ruido de muestra por sí solo tumba el test por debajo
+    # de 0.5 en ~1 de cada 7 barridos incluso para sectores cuya tasa real ronda 0.64-0.68 (ver
+    # hallazgo #97 de decisiones_plausibilidad.md) — no es indicio de una tasa real por debajo del
+    # umbral. 32 semillas (64 observaciones) es el punto donde ese ruido deja de cruzar 0.5 en la
+    # práctica, verificado empíricamente, sin necesidad de tocar el umbral en sí ni la intensidad
+    # del arquetipo.
     positivos = 0
     total = 0
-    for semilla in SEMILLAS:
+    for semilla in SEMILLAS_RIESGO_LIQUIDEZ_RESULTADO:
         evolucion = _generar(catalogo, arquetipos, "riesgo_liquidez_pese_beneficio", sector, semilla, intensidad="moderado")
         for año in (2024, 2025):
             total += 1
