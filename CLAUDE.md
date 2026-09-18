@@ -408,6 +408,10 @@ hallazgos.
   69.2 10,1x→3,9x, 70.2 7,8x→3,3x — mismo orden de magnitud que otros sectores capital-intensivos
   ya aceptados (construcción 41.2 en 4,1x); 62 sin cambio (1,0x, nunca tuvo el problema).
 
+### `otros_financieros` no se amortiza (decisiones #100)
+
+`otros_financieros` (inversiones financieras) nunca está en la colección amortizable, pero desde #98 la amortización real y las bajas se restaban del agregado de las 4 categorías del perfil de `activo_no_corriente`, encogiéndola pro-rata. Ahora, en años evolucionados, `otros_financieros_eur = anterior × (1 + crecimiento_ventas)` (cálculo independiente, sin capex-17/adquisición-18/subvención) y amortización/bajas se restan solo del subconjunto amortizable. **El TOTAL de `activo_no_corriente` no cambia** (identidad algebraica, verificado: diferencia máx. 3e-8 € en 17.496 casos) — solo la composición: ningún ratio agregado, plausibilidad ni año base se mueve, y material+intangible+inmobiliarias caen algo más (−1,7 %/−3,8 % de media en 2024/2025). Pendiente conocido (no corregido): `motor/efe.py` reparte B.6/7 por categoría con el perfil fijo, no con el Δ real del desglose (total y cuadre exactos).
+
 ## Bajas anticipadas de sub-lotes (línea 11 PyG, `motor/amortizacion.py`)
 
 Modela la línea oficial "11. Deterioro y resultado por enajenaciones del inmovilizado" del PyG,

@@ -97,6 +97,25 @@ def test_capital_social_constante_y_reservas_reconcilian_en_evolucion(catalogo, 
             )
 
 
+@pytest.mark.parametrize("codigo", ["69.2", "62", "24.1", "68"])
+def test_otros_financieros_no_se_amortiza_y_crece_con_ventas(catalogo, arquetipos, codigo):
+    """decisiones #100: `otros_financieros` (inversiones financieras) nunca se amortiza — crece
+    solo con su propio crecimiento de ventas (mismo % en 2024 y 2025 bajo un arquetipo de
+    crecimiento constante) en vez de encogerse pro-rata con la amortización del agregado, y el
+    TOTAL de activo no corriente no cambia (solo la composición): las 4 partes siguen sumándolo."""
+    evolucion = generar_evolucion_arquetipo(
+        codigo, "pequeñas", 8_000_000.0, semilla=2, intensidad="moderado",
+        arquetipo_id="aumento_clientes", catalogo=catalogo, arquetipos=arquetipos,
+    )
+    of = [evolucion.ejercicios[a].activo_no_corriente_desglose_eur["otros_financieros"] for a in (2023, 2024, 2025)]
+    assert of[1] > of[0] and of[2] > of[1], "otros_financieros no debe encogerse (nunca se amortiza)"
+    assert of[1] / of[0] == pytest.approx(of[2] / of[1], rel=1e-9)
+    for ejercicio in evolucion.ejercicios.values():
+        assert sum(ejercicio.activo_no_corriente_desglose_eur.values()) == pytest.approx(
+            ejercicio.balance_eur["activo_no_corriente"], abs=0.01
+        )
+
+
 def test_reservas_no_absurdamente_negativas_en_barrido_amplio(catalogo, arquetipos):
     """Comprobación cuantificada pedida explícitamente: negativo es contablemente posible
     (pérdidas acumuladas), pero no debería ser el resultado típico. Umbral de referencia: menos

@@ -542,7 +542,7 @@ from motor.insolvencias import (
     sortear_insolvencia_baseline,
 )
 from motor.empresa_base import _completar_pyg_con_deuda, _generar_pyg_hasta_baii  # reutiliza la cascada de PyG
-from motor.ruido import _generar_partida, activar_modo_generacion, desactivar_modo_generacion
+from motor.ruido import _generar_partida, _renormalizar_a_total, activar_modo_generacion, desactivar_modo_generacion
 
 AÑOS = (2023, 2024, 2025)
 AÑO_BASE = 2023
@@ -2197,24 +2197,41 @@ def _evolucionar_un_año(
     baja_valor_en_libros_eur = valor_en_libros_bajas_eur(bajas_este_año)
     baja_valor_venta_eur = valor_venta_bajas_eur(bajas_este_año)
     deterioro_enajenacion_inmovilizado_eur = resultado_bajas_eur(bajas_este_año)
-    # --- Amortización real neta contra el Balance (encargo que cierra #26/#94/#96, ver
-    # decisiones_plausibilidad.md #98): hasta este encargo, `activo_no_corriente` NUNCA se
-    # reducía por la amortización de la colección real (ver motor/efe.py, docstring anterior de
-    # la decisión #26) — el crecimiento orgánico (`capex_implicito_eur`, arriba) se dimensionaba
-    # justo para cancelar ese efecto y dejar el Balance invariante frente a la amortización, por
-    # construcción algebraica (delta_orgánico + amortización, #94). Desde este encargo, SOLO en
-    # años evolucionados (2024/2025 — el año base 2023 se genera en motor/empresa_base.py, ajeno
-    # a esta función): `activo_no_corriente(año) = activo_no_corriente(año−1) + capex_bruto(año)
-    # − amortización_real(año)`, con `capex_bruto(año)` = el mismo mecanismo de siempre (perfil
-    # ligado a ventas + capex-17/adquisición-18/grupo89 explícitos, ya calculado arriba en
-    # `activo_no_corriente_eur`, SIN el término de amortización que #94 le sumaba). Como esta
-    # función es recursiva (`anterior` es el propio `EjercicioEmpresa` del año recién calculado,
-    # ver el bucle en `generar_evolucion_combinada`), restar la amortización aquí basta para que
-    # el efecto se acumule año a año sin ningún cálculo adicional — 2025 parte ya del
-    # `activo_no_corriente` de 2024 neto de su propia amortización. `max(0.0, ...)` es la misma
-    # salvaguarda estructural que ya protege la resta de bajas, por si la amortización superara
-    # alguna vez lo que queda de activo (no observado en la verificación de este encargo).
-    activo_no_corriente_eur = max(0.0, activo_no_corriente_eur - baja_valor_en_libros_eur - amortizacion_eur_año)
+    # --- Amortización real neta SOLO contra el subconjunto amortizable del Balance (encargo que
+    # cierra #26/#94/#96/#98, ver decisiones_plausibilidad.md #100): hasta este encargo,
+    # `activo_no_corriente_eur` era un ÚNICO escalar agregado de las 4 categorías del perfil
+    # (material/intangible/inversiones_inmobiliarias/otros_financieros, `activo_no_corriente_
+    # perfil_pct`) y la resta de amortización/bajas de más abajo se aplicaba sobre ese agregado
+    # completo — pese a que `otros_financieros` (inversiones financieras: acciones,
+    # participaciones, préstamos a terceros) está explícitamente excluida de la colección
+    # amortizable (motor/amortizacion.py nunca le genera sub-lotes, «otros_financieros: nunca
+    # amortizable») y no se amortiza bajo ninguna normativa contable/fiscal (solo puede sufrir
+    # deterioro, un concepto distinto, fuera de alcance aquí). Consecuencia del bug: `otros_
+    # financieros` se encogía cada año en la misma proporción que el resto, sin ningún motivo
+    # económico. Corrección: `otros_financieros_eur` se calcula de forma TOTALMENTE
+    # independiente — crece solo con su propia parte proporcional del crecimiento orgánico
+    # (mismo peso relativo que ya tenía, aplicado sobre su propio saldo del año anterior, nunca
+    # sobre el agregado), sin que la amortización ni las bajas de sub-lotes le resten nunca nada;
+    # no recibe tampoco una porción de capex(17)/adquisición(18)/subvención EXPLÍCITOS (esos
+    # arquetipos son inversión en inmovilizado material/intangible concreto, no en activos
+    # financieros) — mismo criterio de "no inventar un mecanismo nuevo" ya aplicado en el resto
+    # del módulo: basta con que crezca proporcional a ventas, igual que el resto de masas de este
+    # bloque (ver `activo_no_corriente_proporcional_eur` unas líneas más arriba, mismo patrón).
+    # El resto (`activo_no_corriente_eur`, ya con capex/adquisición/proporcional incorporados,
+    # calculado arriba) sigue representando SOLO el subconjunto amortizable una vez se le resta
+    # `otros_financieros_eur` — es sobre ESE subconjunto donde amortización real y bajas siguen
+    # restando exactamente como en #98 (mismo `max(0.0, ...)` de salvaguarda estructural). El
+    # total pasa a ser la suma de ambas partes, calculadas por separado — y por construcción
+    # algebraica es IDÉNTICO al de antes (`anc − baja − amortización`, mientras el `max(0.0, ...)`
+    # no se active; verificado en 17.496 casos: diferencia máxima 3e-8 €): lo que cambia es solo
+    # la COMPOSICIÓN — `otros_financieros` deja de encogerse pro-rata con la amortización y la
+    # amortización cae íntegra sobre material/intangible/inversiones inmobiliarias. Ningún ratio
+    # agregado (rotación de activo, endeudamiento…) se mueve — ver decisiones #100.
+    otros_financieros_eur = anterior.activo_no_corriente_desglose_eur["otros_financieros"] * (1 + crecimiento_ventas)
+    activo_no_corriente_amortizable_eur = max(
+        0.0, activo_no_corriente_eur - otros_financieros_eur - baja_valor_en_libros_eur - amortizacion_eur_año
+    )
+    activo_no_corriente_eur = activo_no_corriente_amortizable_eur + otros_financieros_eur
     disponible_proporcional_eur += baja_valor_venta_eur
 
     # --- PyG: primitivas no financieras + tipo de interés, sorteadas UNA sola vez. Las que el
@@ -2943,12 +2960,25 @@ def _evolucionar_un_año(
         # (resta las mismas 3 cantidades, más `incremento_activo_adquisicion_eur`, directamente del
         # delta de `balance_eur["activo_no_corriente"]` entre dos años, con el perfil aplicado a
         # ESE delta) — nunca lee este diccionario, así que este cambio no le afecta.
+        # `otros_financieros` YA NO sale de este reparto porcentual (encargo #100, ver bloque
+        # "Amortización real neta SOLO contra el subconjunto amortizable" más arriba): sale de su
+        # propio cálculo independiente (`otros_financieros_eur`, ya resuelto arriba). El reparto
+        # porcentual fijo se renormaliza para sumar 1.0 SOLO entre las 3 categorías amortizables
+        # (material/intangible/inversiones_inmobiliarias) y se aplica sobre el residuo amortizable
+        # (el mismo total de antes, menos `otros_financieros_eur`) — la suma de las 4 claves sigue
+        # cuadrando exactamente con el mismo total de siempre (invariante cubierto por
+        # `test_desagregacion_pn_y_activo.py::test_capital_social_constante_y_reservas_reconcilian_en_evolucion`).
         activo_no_corriente_desglose_eur={
-            componente: fraccion * (
+            **_renormalizar_a_total(
+                {
+                    componente: fraccion
+                    for componente, fraccion in anterior.activo_no_corriente_perfil_pct.items()
+                    if componente != "otros_financieros"
+                },
                 balance_eur["activo_no_corriente"] - inversion_grupo_largo_eur - activos_por_impuesto_diferido_eur
-                - max(0.0, cobertura_valor_swap_eur)
-            )
-            for componente, fraccion in anterior.activo_no_corriente_perfil_pct.items()
+                - max(0.0, cobertura_valor_swap_eur) - otros_financieros_eur,
+            ),
+            "otros_financieros": otros_financieros_eur,
         },
         incremento_activo_adquisicion_eur=incremento_activo_adquisicion_eur,
         coleccion_activos_amortizables=coleccion_activos_amortizables,
