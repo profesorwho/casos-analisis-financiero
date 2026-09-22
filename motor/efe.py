@@ -38,6 +38,27 @@ positivo — nunca en A). El valor en libros de la baja se excluye del delta "or
 alimenta `b6b7_intangible/material/inversiones_inmobiliarias/otros_activos_financieros` (mismo
 criterio que ya excluye el salto de adquisición del arquetipo 18, `b6a`): una baja no es una
 compra/venta "normal" repartible por el perfil fijo del caso.
+
+**Atribución por categoría de B.6/7 CORREGIDA (decisiones_plausibilidad.md #102, cierra el
+hallazgo secundario de #100)** — historial, no borrado: hasta este encargo, las 4 líneas de
+B.6/7 se derivaban repartiendo el delta AGREGADO de `activo_no_corriente` con el perfil % FIJO
+de 4 categorías (`activo_no_corriente_perfil_pct`, constante desde 2023). Eso era correcto
+mientras las 4 categorías se movían todas juntas (antes de #94/#96/#100) pero dejó de serlo
+cuando cada una ganó su propia dinámica real: material/intangible/inversiones_inmobiliarias
+siguen el capex-amortización real (#98) compartiendo un único "pool" amortizable, mientras
+`otros_financieros` (#100) crece de forma TOTALMENTE independiente, ajena a capex/amortización/
+bajas. Repartir el agregado (que mezclaba ambas dinámicas) con el perfil de 4 categorías
+desalineaba cada línea individual del Balance ya corregido (hasta 764.000€ de diferencia en el
+peor caso del barrido; caso documentado en #100, sector 69.2/semilla 2/2025: -367.298€ en el
+EFE frente a +397.069€ real) — el subtotal B.8 y el cuadre general seguían exactos por
+construcción algebraica, el problema era solo de atribución. Ahora `b6b7_otros_activos_
+financieros` es el delta real DIRECTO (sin ajuste, nunca participa en adquisición/capex/
+amortización/bajas); material/intangible/inversiones_inmobiliarias se derivan del delta real del
+POOL amortizable (mismas exclusiones de adquisición/baja/amortización que antes) repartido con
+el peso relativo `perfil[c]/(perfil.material+perfil.intangible+perfil.inversiones_
+inmobiliarias)` — el MISMO peso que `motor/evolucion_arquetipo.py` usa para construir ese
+desglose cada año, no un dato independiente. Verificado algebraicamente y en barrido (27×2×6×4
+combos) que B.8 no cambia ni un céntimo — es una repartición distinta del mismo total.
 """
 
 from __future__ import annotations
@@ -160,50 +181,59 @@ def generar_efe(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligatori
 
     a5 = a1 + a2a + a2e + a2g + a2h + a2k + a3a + a3b + a3c + a3d + a3e + a3f + a4a + a4b + a4c + a4d + a4e
 
-    # B) Inversión — desglose por perfil (material/intangible/inversiones_inmobiliarias/otros
-    # financieros), constante para el caso, aplicado al cambio ORGÁNICO de activo_no_corriente
-    # (excluyendo el salto de adquisición del año actual, si lo hay, que se muestra aparte en
-    # B.6.a). Ver docstring de EjercicioEmpresa.activo_no_corriente_desglose_eur.
-    # Excluye, igual que A.3.f, el grupo89 alojado dentro de `activo_no_corriente` (el derivado
-    # de la cobertura si es activo + su impuesto diferido) — sin flujo de caja detrás, ver más
-    # arriba.
-    # También excluye `inversion_grupo_largo_eur` (arquetipo 20, "préstamo a matriz"): es un
-    # movimiento de inversión propio, con su propia línea B.6.c más abajo (mismo criterio de
-    # exclusión que la adquisición del arquetipo 18, que tampoco se reparte por el perfil
-    # genérico material/intangible/inversiones_inmobiliarias/otros_financieros).
-    grupo89_activo_no_corriente_actual = (
-        actual.activos_por_impuesto_diferido_eur + max(0.0, actual.cobertura_valor_swap_eur) + actual.inversion_grupo_largo_eur
+    # B) Inversión — desglose por categoría (material/intangible/inversiones_inmobiliarias/otros
+    # financieros) a partir del DELTA REAL de cada categoría en `activo_no_corriente_desglose_eur`
+    # (mismo patrón que `a3a_existencias`/`a3b_deudores`/`a3d_acreedores`), NO del perfil % fijo
+    # aplicado al agregado — corrección de atribución (ver decisiones_plausibilidad.md, entrada
+    # de este encargo): desde #100, `otros_financieros` crece de forma TOTALMENTE independiente
+    # (proporcional a su propio saldo del año anterior, ajeno a capex/amortización/bajas) mientras
+    # material/intangible/inversiones_inmobiliarias comparten un único "pool" amortizable que SÍ
+    # seguía el capex-amortización real desde #98 — repartir el delta AGREGADO con el perfil fijo
+    # de 4 categorías (que incluye el peso de otros_financieros) desalineaba cada línea individual
+    # del importe real que el Balance ya mostraba para esa categoría concreta, aunque el subtotal
+    # B.8 siguiera cuadrando por construcción. `otros_financieros` no participa nunca en
+    # adquisición/capex/amortización/bajas (motor/amortizacion.py: "nunca amortizable"; motor/
+    # evolucion_arquetipo.py: crece con su propia fórmula, `otros_financieros_eur = anterior × (1
+    # + crecimiento_ventas)`) — su delta real en el Balance ES, directamente, el flujo de
+    # inversión orgánico de esa categoría, sin ningún ajuste adicional.
+    delta_otros_financieros = (
+        actual.activo_no_corriente_desglose_eur["otros_financieros"]
+        - anterior.activo_no_corriente_desglose_eur["otros_financieros"]
     )
-    grupo89_activo_no_corriente_anterior = (
-        anterior.activos_por_impuesto_diferido_eur + max(0.0, anterior.cobertura_valor_swap_eur) + anterior.inversion_grupo_largo_eur
+    b_otros_financieros = -delta_otros_financieros
+
+    # Las otras 3 categorías SÍ comparten un único "pool" amortizable (`activo_no_corriente_
+    # amortizable_eur`, motor/evolucion_arquetipo.py) que sigue el capex-amortización real —
+    # adquisición (18) se pliega ahí entera (nunca en otros_financieros, ver arriba) y se excluye
+    # aquí con el mismo criterio que el agregado de antes (`- actual.incremento...`), igual que
+    # las bajas (`+ actual.baja_valor_en_libros_eur`) y la amortización real (`+ actual.pyg_eur[
+    # "amortizaciones"]`, para recuperar el capex BRUTO — ver decisiones_plausibilidad.md #98,
+    # cancelado exactamente contra A.2.a). El resultado (`delta_amortizable_organico`) se reparte
+    # entre las 3 categorías con el MISMO peso relativo fijo que usa `motor/evolucion_arquetipo.py`
+    # para construir `activo_no_corriente_desglose_eur` cada año (`activo_no_corriente_perfil_pct`
+    # renormalizado a estas 3 claves, ya que su reparto real en el Balance ES ese peso relativo
+    # aplicado al pool — no un dato independiente que haya que re-derivar).
+    material_actual = actual.activo_no_corriente_desglose_eur["material"]
+    intangible_actual = actual.activo_no_corriente_desglose_eur["intangible"]
+    inversiones_inmobiliarias_actual = actual.activo_no_corriente_desglose_eur["inversiones_inmobiliarias"]
+    amortizable_actual = material_actual + intangible_actual + inversiones_inmobiliarias_actual
+    amortizable_anterior = (
+        anterior.activo_no_corriente_desglose_eur["material"]
+        + anterior.activo_no_corriente_desglose_eur["intangible"]
+        + anterior.activo_no_corriente_desglose_eur["inversiones_inmobiliarias"]
     )
-    # Excluye, igual que la adquisición (18), el valor en libros de las bajas anticipadas de
-    # sub-lotes de ESTE año (`baja_valor_en_libros_eur` — motor/amortizacion.py): esa reducción
-    # de `activo_no_corriente` no es una compra/venta "normal" que deba repartirse por el perfil
-    # genérico material/intangible/inversiones_inmobiliarias/otros_financieros — se añade de
-    # vuelta aquí (el `- actual.incremento...` y el `+ actual.baja_valor_en_libros_eur` se anulan
-    # exactamente entre el balance de este año y el del anterior, dejando el delta puramente
-    # orgánico) y su cobro real (si hubo enajenación) se muestra aparte en `b6_enajenacion_
-    # inmovilizado` más abajo. **Se añade también `+ actual.pyg_eur["amortizaciones"]`** (desde
-    # decisiones_plausibilidad.md #98): `activo_no_corriente` ya se neta de la amortización real
-    # del año (motor/evolucion_arquetipo.py, bloque "Amortización real neta contra el Balance"),
-    # así que el delta puro del balance es CAPEX BRUTO − amortización — sumar la amortización de
-    # vuelta recupera el capex bruto real (efectivo de verdad invertido en inmovilizado), que es
-    # lo que B.6/7 debe mostrar como pago de inversión; su contrapartida es A.2.a (arriba), y
-    # ambos ajustes se cancelan exactamente en la variación neta de efectivo (la amortización
-    # nunca es caja, solo cambia de línea).
-    delta_activo_no_corriente_organico = (
-        (actual.balance_eur["activo_no_corriente"] - grupo89_activo_no_corriente_actual)
+    delta_amortizable_organico = (
+        amortizable_actual
         - actual.incremento_activo_adquisicion_eur
         + actual.baja_valor_en_libros_eur
         + actual.pyg_eur["amortizaciones"]
-        - (anterior.balance_eur["activo_no_corriente"] - grupo89_activo_no_corriente_anterior)
+        - amortizable_anterior
     )
     perfil = actual.activo_no_corriente_perfil_pct
-    b_intangible = -perfil["intangible"] * delta_activo_no_corriente_organico
-    b_material = -perfil["material"] * delta_activo_no_corriente_organico
-    b_inversiones_inmobiliarias = -perfil["inversiones_inmobiliarias"] * delta_activo_no_corriente_organico
-    b_otros_financieros = -perfil["otros_financieros"] * delta_activo_no_corriente_organico
+    peso_amortizable_total = perfil["material"] + perfil["intangible"] + perfil["inversiones_inmobiliarias"]
+    b_intangible = -(perfil["intangible"] / peso_amortizable_total) * delta_amortizable_organico
+    b_material = -(perfil["material"] / peso_amortizable_total) * delta_amortizable_organico
+    b_inversiones_inmobiliarias = -(perfil["inversiones_inmobiliarias"] / peso_amortizable_total) * delta_amortizable_organico
     b_adquisicion = -actual.incremento_activo_adquisicion_eur
     b_enajenacion_inmovilizado = actual.baja_valor_venta_eur
     b_prestamo_grupo = -(actual.inversion_grupo_largo_eur - anterior.inversion_grupo_largo_eur)

@@ -173,8 +173,19 @@ sectores, 4 semillas, 2024 y 2025), 0 descuadres en ambos** — ver decisiones #
   DOS líneas de financiación que se cancelan, C.10 (deuda nueva, ya incluida en la variación neta
   de arriba) + C.11.a "Dividendos" (=`-apalancamiento_extra_eur`, la distribución que esa deuda
   financia); `reclasificacion_deuda` (8/16) → NINGUNA línea, correctamente invisible (no mueve
-  deuda total, no es un flujo real); perfil de `activo_no_corriente` → B.6/7 por componente,
-  aplicado al cambio ORGÁNICO (excluyendo el salto de adquisición del año); adquisición (18) →
+  deuda total, no es un flujo real); `activo_no_corriente` → B.6/7 por componente — **desde
+  decisiones_plausibilidad.md #102 (cierra el hallazgo secundario de #100), a partir del DELTA
+  REAL de cada categoría en `activo_no_corriente_desglose_eur` (mismo patrón que a3a/a3b/a3d), NO
+  del perfil % fijo de 4 categorías aplicado al agregado**: `otros_financieros` (independiente
+  desde #100, ajena a capex/amortización/bajas) usa su delta real DIRECTO, sin ajuste; material/
+  intangible/inversiones_inmobiliarias comparten el pool amortizable (sí sigue el capex-
+  amortización real desde #98) y se reparten con el peso relativo fijo `perfil[c]/(perfil.
+  material+perfil.intangible+perfil.inversiones_inmobiliarias)` — el mismo peso que usa `motor/
+  evolucion_arquetipo.py` para construir ese desglose, aplicado al delta ORGÁNICO del pool
+  (excluyendo el salto de adquisición del año, sumando de vuelta baja/amortización, igual que
+  antes). El perfil de 4 categorías desalineaba cada línea individual (hasta 764.000€ en el peor
+  caso del barrido) aunque B.8 y el cuadre ya cuadraran exactos por construcción — repartición
+  interna, no un cambio de magnitud; adquisición (18) →
   B.6.a "Empresas del grupo y asociadas", aparte. **Bajas anticipadas de sub-lote (línea 11 PyG,
   "Deterioro y resultado por enajenaciones del inmovilizado" — ver sección "Bajas anticipadas de
   sub-lotes" más abajo) → A.2.e (revierte el resultado no monetario) + B.6 "Enajenación de
