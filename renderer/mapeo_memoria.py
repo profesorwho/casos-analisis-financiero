@@ -11,6 +11,7 @@ from reportlab.lib import colors
 from reportlab.lib.units import cm
 
 from render_pdf import fmt_eur
+from motor.coberturas_subvenciones import TIPO_IMPOSITIVO_GENERAL, pasivo_por_impuesto_diferido_eur
 
 styles = getSampleStyleSheet()
 titulo_nota = ParagraphStyle("TituloNota", parent=styles["Heading2"], fontSize=12, spaceBefore=14, spaceAfter=4)
@@ -227,7 +228,7 @@ def nota_7_pasivos_financieros(ejercicios, notas_narrativas):
     return flow
 
 
-def nota_8_fondos_propios():
+def nota_8_fondos_propios(ejercicios):
     texto = (
         "No se han producido ampliaciones ni reducciones de capital social en el ejercicio. La "
         "Sociedad no mantiene acciones o participaciones propias. El capital social está "
@@ -236,7 +237,34 @@ def nota_8_fondos_propios():
         "movimiento de reservas se detalla en el Estado de Cambios en el Patrimonio Neto y en la "
         "nota 3."
     )
-    return [Paragraph(texto, cuerpo)]
+    flow = [Paragraph(texto, cuerpo)]
+
+    hay_subvencion = any(
+        ejercicios[a].subvencion_saldo_130_bruto_eur > 0 or ejercicios[a].subvencion_importe_concedido_eur > 0
+        for a in (2024, 2025)
+    )
+    if hay_subvencion:
+        flow.append(Paragraph("<b>Subvenciones, donaciones y legados recibidos</b>", cuerpo))
+        filas = [["", "2024", "2025"]]
+        for etiqueta, extractor in (
+            ("Saldo inicial (bruto)", lambda e, año: ejercicios[año - 1].subvencion_saldo_130_bruto_eur),
+            ("Importe concedido en el ejercicio", lambda e, año: e.subvencion_importe_concedido_eur),
+            ("Imputado a resultados del ejercicio", lambda e, año: -e.subvencion_transferencia_bruto_eur),
+            ("Saldo final (bruto)", lambda e, año: e.subvencion_saldo_130_bruto_eur),
+            ("Efecto impositivo (pasivo por impuesto diferido)", lambda e, año: pasivo_por_impuesto_diferido_eur(e.subvencion_saldo_130_bruto_eur)),
+            ("Saldo final (neto, ver Balance A-3)", lambda e, año: e.subvenciones_pn_eur),
+        ):
+            filas.append([etiqueta] + [fmt_eur(extractor(ejercicios[a], a)) for a in (2024, 2025)])
+        flow.append(_tabla_simple(filas, anchos=[9 * cm, 3 * cm, 3 * cm], encabezado=True))
+        flow.append(Paragraph(
+            "El saldo bruto se presenta neto de su efecto impositivo (pasivo por impuesto "
+            f"diferido, tipo general del {TIPO_IMPOSITIVO_GENERAL:.0%} — art. 29 de la Ley "
+            "27/2014, del Impuesto sobre Sociedades) en el epígrafe A-3 del Patrimonio Neto del "
+            "Balance, según lo dispuesto en la norma de registro y valoración 18ª del PGC. El "
+            "importe concedido corresponde a subvenciones de capital vinculadas a inversiones en "
+            "inmovilizado, imputadas a resultados en proporción a su amortización.", aviso
+        ))
+    return flow
 
 
 def nota_9_situacion_fiscal(ejercicios):
@@ -259,10 +287,34 @@ def nota_9_situacion_fiscal(ejercicios):
         ]
         flow.append(_tabla_simple(filas))
         flow.append(Spacer(1, 0.15 * cm))
-    flow.append(Paragraph(
-        "No existen diferencias significativas entre el resultado contable y la base imponible "
-        "del Impuesto sobre Sociedades en los ejercicios presentados.", cuerpo
-    ))
+
+    piezas = []
+    if any(ejercicios[a].cobertura_saldo_1340_bruto_eur != 0 for a in (2024, 2025)):
+        piezas.append("la cobertura de flujos de efectivo contratada (ver nota 7)")
+    if any(ejercicios[a].subvencion_saldo_130_bruto_eur > 0 for a in (2024, 2025)):
+        piezas.append("la subvención de capital concedida (ver nota 8)")
+
+    if piezas:
+        diferido_24 = ejercicios[2024].pasivos_por_impuesto_diferido_eur
+        diferido_25 = ejercicios[2025].pasivos_por_impuesto_diferido_eur
+        flow.append(Paragraph(
+            f"Existe una diferencia temporaria entre el resultado contable y la base imponible "
+            f"derivada de {' y '.join(piezas)}, registrada directamente en el patrimonio neto "
+            "sin pasar por la cuenta de pérdidas y ganancias. El efecto fiscal asociado, "
+            f"calculado al tipo general del {TIPO_IMPOSITIVO_GENERAL:.0%} (art. 29 de la Ley "
+            "27/2014, del Impuesto sobre Sociedades — no al tipo efectivo de la tabla anterior, "
+            "que solo se aplica al resultado del ejercicio), se reconoce como pasivo por "
+            f"impuesto diferido: {fmt_eur(diferido_24)} (2024) y {fmt_eur(diferido_25)} (2025), "
+            "mostrado en el epígrafe B.IV del Pasivo No Corriente del Balance. Al margen de esta "
+            "diferencia temporaria, no existen otras diferencias significativas entre el "
+            "resultado contable y la base imponible del Impuesto sobre Sociedades en los "
+            "ejercicios presentados.", cuerpo
+        ))
+    else:
+        flow.append(Paragraph(
+            "No existen diferencias significativas entre el resultado contable y la base imponible "
+            "del Impuesto sobre Sociedades en los ejercicios presentados.", cuerpo
+        ))
     return flow
 
 
@@ -327,7 +379,7 @@ def generar_memoria(evolucion, ejercicios, modelo, nombre_empresa, sector_nombre
         5: lambda: nota_5_inmovilizado(evolucion, ejercicios, notas_narrativas),
         6: lambda: nota_6_activos_financieros(ejercicios, modelo),
         7: lambda: nota_7_pasivos_financieros(ejercicios, notas_narrativas),
-        8: lambda: nota_8_fondos_propios(),
+        8: lambda: nota_8_fondos_propios(ejercicios),
         9: lambda: nota_9_situacion_fiscal(ejercicios),
         10: lambda: nota_10_partes_vinculadas(ejercicios, notas_narrativas),
         11: lambda: nota_11_otra_informacion(ejercicios, plantilla_estimada, notas_narrativas),
