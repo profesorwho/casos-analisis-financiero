@@ -178,7 +178,7 @@ def nota_5_inmovilizado(evolucion, ejercicios, notas_narrativas):
     return flow
 
 
-def nota_6_activos_financieros(ejercicios):
+def nota_6_activos_financieros(ejercicios, modelo):
     filas = [["", "2023", "2024", "2025"],
              ["Inversiones financieras a largo plazo"] + [fmt_eur(ejercicios[a].activo_no_corriente_desglose_eur.get("otros_financieros", 0.0)) for a in (2023, 2024, 2025)]]
     flow = [_tabla_simple(filas, anchos=[6 * cm, 2.7 * cm, 2.7 * cm, 2.7 * cm])]
@@ -194,11 +194,16 @@ def nota_6_activos_financieros(ejercicios):
             f"{fmt_eur(inversion_grupo)} (ver nota 10) — se trata de un derecho de crédito, no de "
             f"una participación en el capital de dicha sociedad.", cuerpo
         ))
+    referencia_legal = (
+        "(indicación 2ª del art. 260 LSC, de contenido obligatorio en el modelo Abreviado por "
+        "remisión del art. 261 LSC)."
+        if modelo == "abreviado" else
+        "(indicación 2ª del art. 260 LSC)."
+    )
     flow.append(Paragraph(
         "La Sociedad no posee, de forma directa o indirecta, un porcentaje igual o superior al "
         "20% del capital de ninguna otra sociedad, ni ejerce sobre ellas una influencia "
-        "significativa (indicación 2ª del art. 260 LSC, de contenido obligatorio en el modelo "
-        "Abreviado por remisión del art. 261 LSC).", cuerpo
+        f"significativa {referencia_legal}", cuerpo
     ))
     return flow
 
@@ -320,7 +325,7 @@ def generar_memoria(evolucion, ejercicios, modelo, nombre_empresa, sector_nombre
         3: lambda: nota_3_aplicacion_resultados(ejercicios, modelo, capital_social_eur),
         4: lambda: nota_4_normas_registro(),
         5: lambda: nota_5_inmovilizado(evolucion, ejercicios, notas_narrativas),
-        6: lambda: nota_6_activos_financieros(ejercicios),
+        6: lambda: nota_6_activos_financieros(ejercicios, modelo),
         7: lambda: nota_7_pasivos_financieros(ejercicios, notas_narrativas),
         8: lambda: nota_8_fondos_propios(),
         9: lambda: nota_9_situacion_fiscal(ejercicios),
