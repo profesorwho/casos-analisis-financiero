@@ -60,7 +60,7 @@ def mapear_balance_activo(ejercicios: dict, modelo: str) -> list[LineaEstado]:
         "clientes": "Clientes por ventas y prestaciones de servicios",
         "clientes_empresas_grupo": "Clientes, empresas del grupo y asociadas",
         "deudores_varios": "Deudores varios", "personal": "Personal",
-        "activos_impuesto_corriente": "Activos por impuesto corriente",
+        "hacienda_publica_deudora": "Activos por impuesto corriente",
         "otros_creditos_aapp": "Otros créditos con las Administraciones Públicas",
         "accionistas_desembolsos_exigidos": "Accionistas (socios) por desembolsos exigidos",
     }
@@ -151,7 +151,7 @@ def mapear_balance_pn_pasivo(ejercicios: dict, modelo: str) -> list[LineaEstado]
               _v(ejercicios, lambda e: e.balance_eur["acreedores_comerciales"]), negrita=True))
     etq_acree = {"proveedores": "Proveedores", "proveedores_empresas_grupo": "Proveedores, empresas del grupo",
                  "acreedores_varios": "Acreedores varios", "personal": "Personal",
-                 "pasivos_impuesto_corriente": "Pasivos por impuesto corriente",
+                 "hacienda_publica_acreedora": "Pasivos por impuesto corriente",
                  "otras_deudas_aapp": "Otras deudas con las Administraciones Públicas",
                  "anticipos_clientes": "Anticipos de clientes"}
     for i, (clave, etq) in enumerate(etq_acree.items(), start=1):
