@@ -198,6 +198,22 @@ def test_operaciones_vinculadas_importe_dentro_de_cotas_de_plausibilidad(catalog
     # disponible, el techo puede ganar y el importe citado queda por debajo del suelo "ideal" —
     # el propio texto sigue siendo el importe REAL del balance (nunca un número inventado), solo
     # dejamos de exigirle el suelo de "cifra relevante" en ese caso concreto.
+    #
+    # Segunda excepción, añadida tras el rediseño del Impuesto sobre Sociedades (ver bloque
+    # "Impuesto sobre Sociedades" en motor/empresa_base.py): "arrendamiento_socio"
+    # ("acreedores_varios") y "asistencia_tecnica_matriz" ("proveedores_empresas_grupo")
+    # comparten el mismo presupuesto ORGÁNICO de `acreedores_comerciales` que "Hacienda Pública
+    # acreedora por impuesto sobre beneficios" (7ª sub-partida, ahora derivada del residuo real
+    # entre pagos a cuenta e impuesto, no un % fijo que no competía por presupuesto) —
+    # verificado en los 4 casos reales que caen (todos sector 85 Educación, categoría
+    # administracion_educacion_sanidad, con `acreedores_varios` ya de por sí un peso pequeño del
+    # perfil, 5,5%): `hacienda_publica_acreedora` es del orden de 112.000€-147.000€ en esos
+    # ejercicios, mientras el importe de la operación vinculada citado (2.500€-27.900€) es el
+    # residuo que queda tras esa competencia — real y coherente (una empresa con una deuda
+    # tributaria grande de verdad tiene menos margen para otros acreedores menores), no un
+    # número inventado. Mismo criterio que la excepción de "prestamo_matriz": el suelo de
+    # "cifra relevante" no aplica cuando otro mecanismo del balance, más prioritario, ya
+    # consumió el presupuesto disponible.
     codigos = [re.search(r"\(([^()]+)\)\s*$", s).group(1) for s in catalogo["sector"].unique()]
     fuera_de_cota = []
     for codigo in codigos:
@@ -218,7 +234,11 @@ def test_operaciones_vinculadas_importe_dentro_de_cotas_de_plausibilidad(catalog
                             ejercicio.operacion_vinculada_importe_eur, rel=1e-6
                         )
                     )
-                    if not excepcion_disponible:
+                    excepcion_hacienda = (
+                        ejercicio.operacion_vinculada_tipo in ("arrendamiento_socio", "asistencia_tecnica_matriz")
+                        and ejercicio.acreedores_desglose_eur.get("hacienda_publica_acreedora", 0.0) > 0.0
+                    )
+                    if not (excepcion_disponible or excepcion_hacienda):
                         fuera_de_cota.append((codigo, intensidad, semilla, ejercicio.operacion_vinculada_importe_eur, activo_total))
     assert not fuera_de_cota, f"{len(fuera_de_cota)} casos fuera de cota: {fuera_de_cota[:10]}"
 

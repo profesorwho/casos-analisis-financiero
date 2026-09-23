@@ -353,6 +353,57 @@ MISMA posición en la secuencia de `rng` (no desplaza ningún otro sorteo de la 
   re-pinnearon) para validar contra la fuente nueva — con la vieja referencia habían quedado
   vacíos de contenido real (el techo/suelo absoluto dominaba la cota, no el huber contaminado).
 
+## Impuesto sobre Sociedades sobre BAI + cuenta corriente con Hacienda Pública (`motor/empresa_base.py`, `motor/evolucion_arquetipo.py`)
+
+Sustituye `impuesto_beneficios_pct` como primitiva más de PyG proporcional a ingresos (mismo
+bucle que `consumos_explotacion`/`gastos_personal`/`otros_gastos_explot`) — diagnóstico de
+partida confirmado: empresas en pérdidas con impuesto positivo, tipos efectivos saltando entre
+años sin relación con el BAI real. Sin documentación de Fase 1 que justificara el diseño
+original — simplificación heredada, no una decisión deliberada. Ver decisiones_plausibilidad.md
+#103 para el detalle completo de investigación/verificación.
+
+- **Tipo efectivo, no importe, sorteado en `_generar_pyg_hasta_baii`** (mismo mecanismo típico/
+  atípico y de continuidad por memoria que `tipo_interes`, MISMA posición en la secuencia de
+  `rng` que antes ocupaba `impuesto_beneficios_pct`): `TIPO_NOMINAL_IS_POR_AÑO_SEGMENTO[año]
+  [segmento]` + ruido (`DISPERSION_TIPO_IMPUESTO_IS_PP=2,0pp`, suelo 0%/techo 30%). Tipo nominal
+  verificado externamente (AEAT/BOE): general 25% sin cambios 2023-2025; ERD (<10M€, correlaciona
+  con "pequeñas", ventas_objetivo 5M€) 25% en 2023/2024, 24% desde 2025 (primer escalón de la
+  reducción progresiva a 20% en 2029, Ley 7/2024); microempresas/nueva creación descartados
+  explícitamente (ni "pequeñas" ni "grandes_medianas" caen en esos umbrales, el motor no rastrea
+  antigüedad). `_completar_pyg_con_deuda` calcula `impuesto_beneficios_eur = max(0, bai_eur) x
+  tipo_impuesto_efectivo` — 0 en años con BAI≤0 (simplificación deliberada, no se modela
+  compensación de bases imponibles negativas, mecanismo separado del de coberturas/subvenciones).
+- **Recalculado DESPUÉS del ajuste post-hoc de grupo89/provisiones/insolvencia en `_evaluar`**,
+  pero de forma PARCIAL (hallazgo real durante la implementación, no en el diseño inicial):
+  provisiones/insolvencia SÍ entran en la nueva base imponible (gasto/exceso ordinario
+  deducible); grupo89 (cobertura/subvención) NO — su efecto impositivo de origen ya se liquidó
+  aparte (subgrupo 83, `delta_pn_grupo89_eur`, que se revierte exactamente al reciclar el bruto a
+  PyG) — retasarlo aquí sería doble imposición. Recalcular sobre el BAI PRE-ajuste (primera
+  versión) producía BAI final≤0 con impuesto>0 en 72/8.006 ejercicios de un barrido de estrés —
+  corregido, 0 tras la versión final.
+- **`activos/pasivos_impuesto_corriente`** (7ª sub-partida oficial de deudores/acreedores,
+  segundo lote de desglose de balance) — YA NO % fijo de la masa: "Hacienda Pública deudora/
+  acreedora por impuesto sobre beneficios", derivada cada año del residuo entre pagos a cuenta
+  (art. 40.2 LIS, verificado en sede.agenciatributaria.gob.es: 3 pagos del 18% sobre la cuota
+  íntegra del año anterior, total 54%) y el impuesto real de ese año — positivo→"clientes"
+  (deudores), negativo→"proveedores" (acreedores). Carve-out desde el presupuesto orgánico ya
+  existente (NUNCA aditivo sobre `realizable`/`acreedores_comerciales` — 0 cambios de agregado, 0
+  líneas nuevas de EFE, mismo patrón que provisiones), con techo defensivo. Año base 2023: sin
+  "año −1" real, usa el propio impuesto de 2023 como proxy (siempre posición acreedora, nunca
+  deudora, por construcción de la proxy).
+- **Verificación (barrido 27 sectores × 2 segmentos × 6 semillas × 10 arquetipos, incluidos
+  "coberturas"/"capex_elevado" para forzar grupo89 activo)**: 0/8.006 ejercicios BAI≤0 con
+  impuesto>0; tipo efectivo medio 24,9% (mediana 24,8%, p5-p95 22,9%-27,1%) en años con BAI>0; 0
+  descuadres de balance/EFE/ECPN en 6.480 EFE/ECPN evaluados. Resultado del ejercicio típico:
+  impuesto MENOR en 53,8% de los casos (mediana del delta −7.338€), resultado_ejercicio MAYOR en
+  54,5% (mediana +7.086€) — confirma el diagnóstico "el impuesto va a bajar en la mayoría de los
+  casos", con variación por año (2023 58,8% menor, 2024 54,7%, 2025 47,8% — la continuidad
+  compuesta ya diverge del efecto simple año a año en 2025). Re-pins: 1 test de referencia
+  (endeudamiento 2024/2025, cascada legítima por el desplazamiento de rng) y 1 test de cotas de
+  plausibilidad (4 casos, sector 85, excepción extendida por competencia de presupuesto entre
+  Hacienda acreedora y sub-partidas de operaciones vinculadas) — ver decisiones_plausibilidad.md
+  #103 para el detalle completo.
+
 ## Amortización derivada de una colección real de activos (`motor/amortizacion.py`)
 
 Arreglo de RAÍZ, no un parche del síntoma detectado en el EFE (`a2a_amortizacion` siempre a 0€

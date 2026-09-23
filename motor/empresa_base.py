@@ -1,4 +1,4 @@
-"""Motor mínimo: genera el balance y la PyG base de una empresa a partir del catálogo
+﻿"""Motor mínimo: genera el balance y la PyG base de una empresa a partir del catálogo
 sectorial, con variabilidad realista entre empresas de un mismo sector.
 
 Sin arquetipos, sin serie de tres años, sin EFE: un único ejercicio, coherente y cuadrado.
@@ -131,6 +131,76 @@ DISPERSION_TIPO_INTERES_PP = 0.0050
 SUELO_TIPO_INTERES = 0.015  # 1,5%: floor defensivo — un tipo por debajo del Euríbor+prima mínima no tiene sentido económico
 TECHO_TIPO_INTERES = 0.12  # 12%: techo defensivo para una empresa en dificultades genuinas — ya no un valor que se alcance rutinariamente (antes 40%, con la fuente contaminada)
 
+# --------------------------------------------------------------------------------------------
+# Impuesto sobre Sociedades — tipo efectivo sobre BAI (no % de ingresos, ver diagnóstico abajo)
+# + cuenta corriente con Hacienda Pública (pagos a cuenta vs. impuesto real, ver motor.
+# evolucion_arquetipo, bloque "hacienda_publica_deudora"/"...acreedora" del segundo lote de
+# desglose de balance). Sustituye el sorteo de `impuesto_beneficios_pct` como una primitiva más
+# de PyG proporcional a ingresos (mismo bucle que consumos_explotacion/gastos_personal/otros_
+# gastos_explot) — diagnóstico de partida confirmado (empresas en pérdidas con impuesto positivo,
+# tipo efectivo saltando entre años sin relación con el BAI real). Investigación de Fase 1
+# (docs/, `git log`, docstrings de `motor/*.py`) NO encontró ninguna justificación específica
+# para tratar el impuesto como una partida más de PyG — simplificación heredada del diseño
+# original sin razón documentada, no una decisión deliberada a preservar. Ver docs/decisiones_
+# plausibilidad.md (hallazgo "Impuesto de Sociedades sobre BAI").
+# --------------------------------------------------------------------------------------------
+
+# Tipo nominal del Impuesto sobre Sociedades (Ley 27/2014, art. 29, con la disposición
+# transitoria 44ª introducida por la Ley 7/2024) — verificado externamente (AEAT/BOE, búsqueda
+# cruzada septiembre 2026, no de memoria):
+# - Tipo GENERAL: 25%, sin cambios en 2023-2025 (la Ley 7/2024 solo reduce el tipo de las
+#   entidades de reducida dimensión y las microempresas, no el general).
+# - Entidades de Reducida Dimensión (ERD, cifra de negocio <10M€ — el tramo con el que
+#   correlaciona el segmento "pequeñas" de este motor, ventas_objetivo=5M€, ver CLAUDE.md sección
+#   "Clasificación legal"): 25% en 2023/2024 (el tipo reducido ERD llevaba derogado desde la
+#   reforma de 2015 hasta que la Ley 7/2024 lo reintrodujo), 24% desde 2025 (primer escalón de la
+#   reducción progresiva 25%->20% para 2029: 2025=24%, 2026=23%, 2027=22%, 2028=21%, 2029=20% en
+#   adelante — este motor solo genera 2023-2025, así que solo el primer escalón es relevante).
+# - Microempresas (cifra de negocio <1M€, tipo 21%-23% según el año) y entidades de nueva
+#   creación (15% los 2 primeros ejercicios con base positiva) NO se modelan aparte: ni
+#   "pequeñas" (ventas_objetivo 5M€) ni "grandes_medianas" (15M€) caen en el umbral de
+#   microempresa, y el motor no rastrea la antigüedad de la empresa — introducir esos 2 tipos
+#   sería una hipótesis nueva sin ninguna variable del caso que la ancle (mismo criterio que
+#   `motor/coberturas_subvenciones.py` ya aplicó para no introducir un tipo reducido sin
+#   mecanismo que lo dispare, ver TIPO_IMPOSITIVO_GENERAL en ese módulo).
+TIPO_NOMINAL_IS_POR_AÑO_SEGMENTO: dict[int, dict[str, float]] = {
+    2023: {"pequeñas": 0.25, "grandes_medianas": 0.25},
+    2024: {"pequeñas": 0.25, "grandes_medianas": 0.25},
+    2025: {"pequeñas": 0.24, "grandes_medianas": 0.25},
+}
+
+# Dispersión entre empresas del mismo caso — mismo mecanismo de ruido mixto típico/atípico que
+# el resto del motor, representando deducciones/bonificaciones reales (doble imposición interna,
+# I+D+i, reserva de capitalización/nivelación...) que separan el tipo EFECTIVO del nominal en
+# distinta medida según la empresa. Sin MAD de catálogo que la ancle (ACCID no publica tipo
+# efectivo) — dispersión de DISEÑO, deliberadamente MODESTA: los datos AEAT de tipo efectivo
+# agregado (5,7%-19,3% sobre resultado contable según metodología; 5,11% grandes empresas vs.
+# 12,24% pymes según AEDAF/infoLibre, ejercicio 2019) están dominados por grandes grupos con
+# planificación fiscal internacional (consolidación fiscal, deducciones por doble imposición
+# internacional) ajena al perfil de PYME doméstica que genera este motor — usarlos como ancla
+# de dispersión inventaría una cola de elusión fiscal agresiva que el catálogo ACCID (pensado
+# para PYMEs de los 27 sectores) no sustenta. 2,0pp de dispersión típica (85% de los casos dentro
+# de ±3,0pp del nominal) es una hipótesis de diseño acotada a esa cautela.
+DISPERSION_TIPO_IMPUESTO_IS_PP = 0.020
+SUELO_TIPO_IMPUESTO_IS = 0.0  # una empresa con deducciones/bonificaciones suficientes puede no pagar nada ese año — nunca negativo (no se modela crédito fiscal a devolver aquí)
+TECHO_TIPO_IMPUESTO_IS = 0.30  # margen sobre el nominal más alto (25%) para gastos no deducibles atípicos
+
+# Pagos fraccionados a cuenta (modelo 202, art. 40 LIS) — modalidad del art. 40.2 (RÉGIMEN
+# GENERAL, aplicable POR DEFECTO salvo que la empresa ejerza la opción expresa del art. 40.3,
+# que este motor no modela): 3 pagos (abril/octubre/diciembre) del 18% cada uno sobre la CUOTA
+# ÍNTEGRA del último período impositivo con plazo de declaración ya vencido — verificado en
+# sede.agenciatributaria.gob.es, "Pagos fraccionados en el Impuesto sobre Sociedades" y manual
+# práctico Sociedades cap. 15 (septiembre 2026). Total: 3 x 18% = 54% de la cuota del año
+# ANTERIOR — esto es lo que alimenta `activos/pasivos_impuesto_corriente` (segundo lote de
+# desglose de balance, motor.evolucion_arquetipo): el residuo entre lo pagado a cuenta y el
+# impuesto real del ejercicio es la cuenta corriente con Hacienda, a favor (deudora, activo) o
+# en contra (acreedora, pasivo) de la empresa. En el año base (2023, sin "año -1" real generado
+# por este motor) se usa el propio impuesto de 2023 como proxy del año anterior —
+# simplificación documentada, sin alternativa mejor sin inventar un ejercicio 2022 completo; da
+# sistemáticamente una posición "Hacienda acreedora" de (1-0,54)=46% del impuesto de 2023 (nunca
+# "deudora" en el año base, por construcción de la propia proxy).
+FRACCION_PAGOS_A_CUENTA_IS = 0.54
+
 # Nombre de salida -> nombre de variable en el catálogo (prefijo "balance.")
 MASAS_BALANCE = {
     "activo_no_corriente": "activo_no_corriente",
@@ -151,6 +221,11 @@ MASAS_BALANCE = {
 # Partidas primitivas de la PyG (ruido) -> nombre de variable en el catálogo (prefijo "pyg.").
 # "gastos_financieros" NO está aquí: se calcula (deuda financiera media x tipo de interés),
 # no se sortea como % independiente — ver _generar_pyg_hasta_baii/_completar_pyg_con_deuda.
+# "impuesto_beneficios" TAMPOCO está aquí desde el rediseño del Impuesto sobre Sociedades (ver
+# bloque "Impuesto sobre Sociedades" más arriba): se calcula (tipo efectivo x BAI, nunca negativo
+# en años con BAI<=0), no se sortea como % de ingresos — ver _generar_pyg_hasta_baii (sortea el
+# TIPO efectivo, no el importe) / _completar_pyg_con_deuda (aplica el tipo sobre el BAI ya
+# calculado). Mismo patrón que "amortizaciones" desde que dejó de sortearse como % independiente.
 PRIMITIVAS_PYG = {
     "cifra_negocios": "cifra_negocios_pct",
     "otros_ingresos_explot": "otros_ingresos_explot_pct",
@@ -160,13 +235,12 @@ PRIMITIVAS_PYG = {
     "amortizaciones": "amortizaciones_pct",
     "resultado_extraordinario": "resultado_extraordinario_pct",
     "ingresos_financieros": "ingresos_financieros_pct",
-    "impuesto_beneficios": "impuesto_beneficios_pct",
 }
 
 # Primitivas de PyG que no pueden ser negativas (importes de ingreso/gasto en sí mismos).
-# resultado_extraordinario e impuesto_beneficios sí pueden serlo (crédito fiscal, extraordinario
-# negativo): el propio catálogo tiene valores Huber negativos para ambas en algunos sectores.
-PRIMITIVAS_PYG_NO_NEGATIVAS = frozenset(PRIMITIVAS_PYG) - {"resultado_extraordinario", "impuesto_beneficios"}
+# resultado_extraordinario sí puede serlo (extraordinario negativo): el propio catálogo tiene
+# valores Huber negativos en algunos sectores.
+PRIMITIVAS_PYG_NO_NEGATIVAS = frozenset(PRIMITIVAS_PYG) - {"resultado_extraordinario"}
 
 SUBTOTALES_PYG = ("ingresos_explotacion", "margen_bruto", "valor_añadido", "baii", "bai", "resultado_ejercicio")
 
@@ -426,11 +500,19 @@ SUELO_PERIODIFICACION_PCT = 0.002
 TECHO_PERIODIFICACION_PCT = 0.15
 
 # --------------------------------------------------------------------------------------------
-# Segundo lote de desglose de balance: "Deudores comerciales y otras cuentas a cobrar" (7
-# sub-partidas oficiales, carve-out de `realizable`) y "Acreedores comerciales y otras cuentas a
-# pagar" (7 sub-partidas oficiales, carve-out de `acreedores_comerciales`) — HIPÓTESIS DE DISEÑO,
-# el catálogo ACCID nunca desglosó ninguna de las dos masas más allá del agregado. Mismo patrón
-# de ruido mixto/renormalizado que el resto de perfiles de este bloque.
+# Segundo lote de desglose de balance: "Deudores comerciales y otras cuentas a cobrar" (6
+# sub-partidas oficiales de perfil FIJO, carve-out de `realizable`) y "Acreedores comerciales y
+# otras cuentas a pagar" (6 sub-partidas oficiales de perfil FIJO, carve-out de
+# `acreedores_comerciales`) — HIPÓTESIS DE DISEÑO, el catálogo ACCID nunca desglosó ninguna de
+# las dos masas más allá del agregado. Mismo patrón de ruido mixto/renormalizado que el resto de
+# perfiles de este bloque. "Hacienda Pública deudora/acreedora por impuesto sobre beneficios"
+# (7ª sub-partida oficial de cada masa) YA NO forma parte de este perfil fijo desde el rediseño
+# del Impuesto sobre Sociedades — antes era un % constante de la masa (`activos_impuesto_
+# corriente`/`pasivos_impuesto_corriente`), sin relación con el impuesto real del ejercicio; ahora
+# se DERIVA cada año en `motor/evolucion_arquetipo.py` (residuo entre pagos a cuenta reales y el
+# impuesto real, carve-out desde "clientes"/"proveedores" con el mismo helper `_reparto_organico_
+# con_exceso_dirigido` que ya usan "accionistas_desembolsos_exigidos"/"personal" — ver bloque
+# "Impuesto sobre Sociedades" arriba y CLAUDE.md, sección homónima).
 #
 # Deudores — perfil ÚNICO, no por sector/categoría (a diferencia de existencias en el lote 1):
 # verificado contra el dato real (`ratios.cobro_dias` del catálogo, comparado con los "días
@@ -449,7 +531,6 @@ PERFIL_DEUDORES_BASE: dict[str, float] = {
     "clientes": 0.88,
     "deudores_varios": 0.055,
     "personal": 0.02,
-    "activos_impuesto_corriente": 0.025,
     "otros_creditos_aapp": 0.018,
     "accionistas_desembolsos_exigidos": 0.002,
     "clientes_empresas_grupo": 0.0,
@@ -475,47 +556,47 @@ PERFIL_DEUDORES_BASE: dict[str, float] = {
 PERFIL_ACREEDORES_POR_CATEGORIA: dict[str, dict[str, float]] = {
     "industria": {
         "proveedores": 0.82, "personal": 0.035, "acreedores_varios": 0.05,
-        "pasivos_impuesto_corriente": 0.03, "otras_deudas_aapp": 0.03, "anticipos_clientes": 0.035,
+        "otras_deudas_aapp": 0.03, "anticipos_clientes": 0.035,
         "proveedores_empresas_grupo": 0.0,
     },
     "servicios_industriales": {
         "proveedores": 0.72, "personal": 0.06, "acreedores_varios": 0.06,
-        "pasivos_impuesto_corriente": 0.035, "otras_deudas_aapp": 0.035, "anticipos_clientes": 0.09,
+        "otras_deudas_aapp": 0.035, "anticipos_clientes": 0.09,
         "proveedores_empresas_grupo": 0.0,
     },
     "servicios_profesionales": {
         "proveedores": 0.55, "personal": 0.16, "acreedores_varios": 0.09,
-        "pasivos_impuesto_corriente": 0.05, "otras_deudas_aapp": 0.045, "anticipos_clientes": 0.105,
+        "otras_deudas_aapp": 0.045, "anticipos_clientes": 0.105,
         "proveedores_empresas_grupo": 0.0,
     },
     "servicios_tic": {
         "proveedores": 0.52, "personal": 0.15, "acreedores_varios": 0.08,
-        "pasivos_impuesto_corriente": 0.045, "otras_deudas_aapp": 0.04, "anticipos_clientes": 0.165,
+        "otras_deudas_aapp": 0.04, "anticipos_clientes": 0.165,
         "proveedores_empresas_grupo": 0.0,
     },
     "transporte_logistica": {
         "proveedores": 0.75, "personal": 0.08, "acreedores_varios": 0.05,
-        "pasivos_impuesto_corriente": 0.03, "otras_deudas_aapp": 0.03, "anticipos_clientes": 0.06,
+        "otras_deudas_aapp": 0.03, "anticipos_clientes": 0.06,
         "proveedores_empresas_grupo": 0.0,
     },
     "comercio_hosteleria": {
         "proveedores": 0.80, "personal": 0.065, "acreedores_varios": 0.045,
-        "pasivos_impuesto_corriente": 0.03, "otras_deudas_aapp": 0.03, "anticipos_clientes": 0.03,
+        "otras_deudas_aapp": 0.03, "anticipos_clientes": 0.03,
         "proveedores_empresas_grupo": 0.0,
     },
     "construccion": {
         "proveedores": 0.68, "personal": 0.05, "acreedores_varios": 0.05,
-        "pasivos_impuesto_corriente": 0.03, "otras_deudas_aapp": 0.03, "anticipos_clientes": 0.16,
+        "otras_deudas_aapp": 0.03, "anticipos_clientes": 0.16,
         "proveedores_empresas_grupo": 0.0,
     },
     "administracion_educacion_sanidad": {
         "proveedores": 0.58, "personal": 0.14, "acreedores_varios": 0.055,
-        "pasivos_impuesto_corriente": 0.035, "otras_deudas_aapp": 0.04, "anticipos_clientes": 0.15,
+        "otras_deudas_aapp": 0.04, "anticipos_clientes": 0.15,
         "proveedores_empresas_grupo": 0.0,
     },
     "inmobiliario": {
         "proveedores": 0.65, "personal": 0.05, "acreedores_varios": 0.06,
-        "pasivos_impuesto_corriente": 0.035, "otras_deudas_aapp": 0.035, "anticipos_clientes": 0.17,
+        "otras_deudas_aapp": 0.035, "anticipos_clientes": 0.17,
         "proveedores_empresas_grupo": 0.0,
     },
 }
@@ -1336,6 +1417,10 @@ class EmpresaBase:
     # local a esa función) — expuesto para el Δr de la cobertura de tipos de interés (arquetipo
     # 21, motor/coberturas_subvenciones.py): no es un sorteo nuevo, solo se deja de descartar.
     tipo_interes: float = 0.0
+    # Tipo efectivo del Impuesto sobre Sociedades del ejercicio (ya sorteado dentro de
+    # _generar_pyg_hasta_baii, mismo patrón que tipo_interes) — expuesto para la continuidad por
+    # memoria del ejercicio siguiente (ver bloque "Impuesto sobre Sociedades").
+    tipo_impuesto_efectivo: float = 0.0
     # Primer lote de desglose de balance (existencias + periodificaciones) — mismo patrón que
     # activo_no_corriente: perfil (%) fijo desde 2023, desglose (€) recalculado cada año sobre
     # la masa agregada YA cuadrada de ese año. Las periodificaciones son fracciones ESCALARES
@@ -1498,8 +1583,8 @@ class _PygParcial:
     resultado_extraordinario_eur: float
     baii_eur: float
     ingresos_financieros_eur: float
-    impuesto_beneficios_eur: float
     tipo_interes: float
+    tipo_impuesto_efectivo: float  # ver bloque "Impuesto sobre Sociedades" — el IMPORTE (impuesto_beneficios_eur) se calcula en _completar_pyg_con_deuda, sobre el BAI ya resuelto, no aquí
     modos: dict[str, str]
 
 
@@ -1513,6 +1598,7 @@ def _generar_pyg_hasta_baii(
     deterioro_enajenacion_inmovilizado_eur: float = 0.0,
     anterior_pyg_pct: dict[str, float] | None = None,
     anterior_tipo_interes: float | None = None,
+    anterior_tipo_impuesto_efectivo: float | None = None,
 ) -> _PygParcial:
     """Sortea las primitivas de la PyG que no dependen de deuda, y el tipo de interés del
     ejercicio (mismo mecanismo típico/atípico que el resto de partidas, pero YA NO anclado a
@@ -1553,6 +1639,11 @@ def _generar_pyg_hasta_baii(
     docstring de `_generar_partida_con_memoria` en motor/ruido.py). No afecta en absoluto a las
     primitivas SÍ forzadas por un arquetipo (siguen su propio mecanismo, `_mover_ratio_continuo`,
     completamente aparte de este).
+
+    `anterior_tipo_impuesto_efectivo`: mismo patrón que `anterior_tipo_interes` — continuidad del
+    TIPO efectivo del Impuesto sobre Sociedades (no del importe, que depende del BAI de cada año,
+    calculado más tarde en `_completar_pyg_con_deuda`). `None` en el año base (sorteo limpio
+    contra el tipo nominal del año/segmento, ver `TIPO_NOMINAL_IS_POR_AÑO_SEGMENTO`).
     """
     primitivas_forzadas = primitivas_forzadas or {}
     brutos: dict[str, float] = {}
@@ -1598,6 +1689,29 @@ def _generar_pyg_hasta_baii(
         )
     modos["pyg.tipo_interes"] = modo_tipo_interes
 
+    # Impuesto sobre Sociedades — se sortea el TIPO efectivo (no el importe, que depende del BAI
+    # de este año, todavía no calculado aquí: la deuda financiera media, necesaria para
+    # `gastos_financieros`, no se conoce hasta `_completar_pyg_con_deuda`). Mismo mecanismo de
+    # ruido mixto típico/atípico y de continuidad por memoria que `tipo_interes` — ver bloque de
+    # constantes "Impuesto sobre Sociedades" más arriba.
+    segmento = fila["segmento"]
+    centro_tipo_impuesto = TIPO_NOMINAL_IS_POR_AÑO_SEGMENTO[año][segmento]
+    if anterior_tipo_impuesto_efectivo is not None:
+        tipo_impuesto_efectivo, modo_tipo_impuesto = _generar_partida_con_memoria(
+            rng, anterior_tipo_impuesto_efectivo, centro_tipo_impuesto, DISPERSION_TIPO_IMPUESTO_IS_PP,
+            PESO_MEMORIA_PYG_ANUAL, FACTOR_REDUCCION_RUIDO_PYG_ANUAL,
+            suelo=SUELO_TIPO_IMPUESTO_IS, techo=TECHO_TIPO_IMPUESTO_IS,
+        )
+    else:
+        tipo_impuesto_efectivo, modo_tipo_impuesto = _generar_partida(
+            rng,
+            centro_tipo_impuesto,
+            DISPERSION_TIPO_IMPUESTO_IS_PP,
+            suelo=SUELO_TIPO_IMPUESTO_IS,
+            techo=TECHO_TIPO_IMPUESTO_IS,
+        )
+    modos["pyg.tipo_impuesto_efectivo"] = modo_tipo_impuesto
+
     cifra_negocios_eur = ventas_objetivo
     otros_ingresos_explot_eur = cifra_negocios_eur * (
         brutos["otros_ingresos_explot"] / brutos["cifra_negocios"]
@@ -1612,7 +1726,6 @@ def _generar_pyg_hasta_baii(
     )
     resultado_extraordinario_eur = brutos["resultado_extraordinario"] / 100 * ingresos_explotacion_eur
     ingresos_financieros_eur = brutos["ingresos_financieros"] / 100 * ingresos_explotacion_eur
-    impuesto_beneficios_eur = brutos["impuesto_beneficios"] / 100 * ingresos_explotacion_eur
 
     margen_bruto_eur = ingresos_explotacion_eur - consumos_explotacion_eur
     valor_añadido_eur = margen_bruto_eur - otros_gastos_explot_eur
@@ -1639,8 +1752,8 @@ def _generar_pyg_hasta_baii(
         resultado_extraordinario_eur=resultado_extraordinario_eur,
         baii_eur=baii_eur,
         ingresos_financieros_eur=ingresos_financieros_eur,
-        impuesto_beneficios_eur=impuesto_beneficios_eur,
         tipo_interes=tipo_interes,
+        tipo_impuesto_efectivo=tipo_impuesto_efectivo,
         modos=modos,
     )
 
@@ -1648,12 +1761,22 @@ def _generar_pyg_hasta_baii(
 def _completar_pyg_con_deuda(
     parcial: _PygParcial, deuda_financiera_media_eur: float
 ) -> tuple[dict[str, float], dict[str, float]]:
-    """Termina la cascada (BAI y resultado del ejercicio) usando la deuda financiera media
-    (largo + corto plazo, promedio inicio/fin del ejercicio) para calcular gastos financieros
-    = deuda financiera media x tipo de interés del sector."""
+    """Termina la cascada (BAI, impuesto sobre beneficios y resultado del ejercicio) usando la
+    deuda financiera media (largo + corto plazo, promedio inicio/fin del ejercicio) para calcular
+    gastos financieros = deuda financiera media x tipo de interés del sector.
+
+    Impuesto sobre Sociedades — YA NO % de ingresos (ver bloque de constantes "Impuesto sobre
+    Sociedades" en `motor/empresa_base.py` y CLAUDE.md, sección homónima): tipo EFECTIVO (ya
+    sorteado en `_generar_pyg_hasta_baii`, con continuidad año a año) aplicado sobre el BAI de
+    ESTE año, que aquí SÍ está ya resuelto (a diferencia del punto en que se sorteó el tipo).
+    Años con BAI<=0: impuesto = 0.0 (ni negativo ni positivo) — simplificación deliberada, no se
+    modela compensación de bases imponibles negativas ni un activo por pérdidas a compensar (eso
+    ya tiene su propio mecanismo separado y fuera de alcance aquí: activos por impuesto diferido
+    de coberturas/subvenciones, `motor/coberturas_subvenciones.py`)."""
     gastos_financieros_eur = deuda_financiera_media_eur * parcial.tipo_interes
     bai_eur = parcial.baii_eur + parcial.ingresos_financieros_eur - gastos_financieros_eur
-    resultado_ejercicio_eur = bai_eur - parcial.impuesto_beneficios_eur
+    impuesto_beneficios_eur = max(0.0, bai_eur) * parcial.tipo_impuesto_efectivo
+    resultado_ejercicio_eur = bai_eur - impuesto_beneficios_eur
 
     pyg_eur = {
         "cifra_negocios": parcial.cifra_negocios_eur,
@@ -1671,7 +1794,7 @@ def _completar_pyg_con_deuda(
         "ingresos_financieros": parcial.ingresos_financieros_eur,
         "gastos_financieros": gastos_financieros_eur,
         "bai": bai_eur,
-        "impuesto_beneficios": parcial.impuesto_beneficios_eur,
+        "impuesto_beneficios": impuesto_beneficios_eur,
         "resultado_ejercicio": resultado_ejercicio_eur,
     }
     pyg_pct = {k: v / parcial.ingresos_explotacion_eur * 100 for k, v in pyg_eur.items()}
@@ -1869,6 +1992,30 @@ def _generar_empresa_base_interno(
     parcial_pyg = _generar_pyg_hasta_baii(rng, fila, ventas_objetivo, _AÑO_BASE_AMORTIZACION, amortizaciones_eur=amortizacion_eur_2023)
     pyg_pct, pyg_eur = _completar_pyg_con_deuda(parcial_pyg, deuda_financiera_eur)
 
+    # "Hacienda Pública, deudora/acreedora por impuesto sobre beneficios" (7ª sub-partida oficial
+    # de deudores/acreedores comerciales, ver bloque "Impuesto sobre Sociedades" y el docstring
+    # de PERFIL_DEUDORES_BASE/PERFIL_ACREEDORES_POR_CATEGORIA más arriba) — residuo entre los
+    # pagos a cuenta (art. 40 LIS) y el impuesto real del ejercicio. En el año base (2023, sin
+    # "año -1" real generado por este motor) se usa el propio impuesto de 2023 como proxy del año
+    # anterior (ver FRACCION_PAGOS_A_CUENTA_IS) — da sistemáticamente una posición "Hacienda
+    # acreedora" (nunca "deudora") en el año base, por construcción de la propia proxy. Carve-out
+    # desde "clientes"/"proveedores" (nunca aditivo sobre el total ya cuadrado de `realizable`/
+    # `acreedores_comerciales`), con techo defensivo si el residuo dejara esa sub-partida en
+    # negativo — mismo patrón que el resto de este lote.
+    impuesto_beneficios_2023_eur = pyg_eur["impuesto_beneficios"]
+    pagos_a_cuenta_is_eur = FRACCION_PAGOS_A_CUENTA_IS * max(0.0, impuesto_beneficios_2023_eur)
+    hacienda_neta_is_eur = pagos_a_cuenta_is_eur - impuesto_beneficios_2023_eur
+    hacienda_publica_deudora_eur = min(
+        max(0.0, hacienda_neta_is_eur), max(0.0, deudores_desglose_eur["clientes"]),
+    )
+    hacienda_publica_acreedora_eur = min(
+        max(0.0, -hacienda_neta_is_eur), max(0.0, acreedores_desglose_eur["proveedores"]),
+    )
+    deudores_desglose_eur["clientes"] -= hacienda_publica_deudora_eur
+    deudores_desglose_eur["hacienda_publica_deudora"] = hacienda_publica_deudora_eur
+    acreedores_desglose_eur["proveedores"] -= hacienda_publica_acreedora_eur
+    acreedores_desglose_eur["hacienda_publica_acreedora"] = hacienda_publica_acreedora_eur
+
     # Desglose de PyG en líneas oficiales del PGC — RNG PROPIO E INDEPENDIENTE, mismo criterio
     # que el resto de perfiles de este bloque: no desplaza ningún sorteo ya existente. En el año
     # base ni provisiones ni insolvencia se dotan nunca (año_dotacion siempre 2024/2025) ni el
@@ -1956,6 +2103,7 @@ def _generar_empresa_base_interno(
         perfil_subtipos_material_pct=perfil_subtipos_material,
         perfil_subtipos_intangible_pct=perfil_subtipos_intangible,
         tipo_interes=parcial_pyg.tipo_interes,
+        tipo_impuesto_efectivo=parcial_pyg.tipo_impuesto_efectivo,
         existencias_perfil_pct=perfil_existencias,
         existencias_desglose_eur=existencias_desglose_eur,
         periodificacion_activo_pct=periodificacion_activo_pct,

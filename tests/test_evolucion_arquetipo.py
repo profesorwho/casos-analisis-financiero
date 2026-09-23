@@ -479,17 +479,30 @@ def test_reimplementacion_generica_reproduce_los_valores_de_referencia(catalogo,
     # denominador del ratio, y en cascada vía menos colección real acumulada al no
     # "sobre-compensarse" con la amortización): 2023 sin cambio (0,600 — año base intacto);
     # 2024 0,667→**0,655** (exacto: 0,6547338571153959); 2025 0,717→**0,695** (exacto:
-    # 0,6947805144687025). Si este test vuelve a fallar SIN que se haya tocado deliberadamente la
-    # semilla del RNG o el mecanismo de amortización/activo_no_corriente, sí es una regresión real
-    # del arquetipo 1.
+    # 0,6947805144687025).
+    #
+    # RE-PINNEADO de nuevo tras el rediseño del Impuesto sobre Sociedades (tipo efectivo sobre
+    # BAI, no % de ingresos — ver bloque "Impuesto sobre Sociedades" en motor/empresa_base.py y
+    # CLAUDE.md, sección homónima): "impuesto_beneficios" dejó de sortearse como primitiva
+    # independiente y en su lugar se sortea el TIPO efectivo (misma posición en la secuencia de
+    # `rng`, pero un sorteo NUEVO — antes no existía) — desplaza el resto de la secuencia y, por
+    # cascada (impuesto distinto → resultado_ejercicio/PN distinto → endeudamiento distinto →
+    # contención distinta), cambia el endeudamiento de 2024/2025. Existencias SIN CAMBIO en los 3
+    # años (2.344.937€/3.744.065€/4.478.283€, dentro de 1€ — la contención de plausibilidad sobre
+    # existencias no llegó a activarse de forma distinta para este caso concreto). Endeudamiento:
+    # 2023 sin cambio (0,600 — año base intacto, la contención del año base no depende del
+    # impuesto); 2024 0,655→**0,651** (exacto: 0,6514123892887427); 2025 0,695→**0,689** (exacto:
+    # 0,6893975608178441). Si este test vuelve a fallar SIN que se haya tocado deliberadamente la
+    # semilla del RNG, el mecanismo de amortización/activo_no_corriente o el del Impuesto sobre
+    # Sociedades, sí es una regresión real del arquetipo 1.
     evolucion = _generar(catalogo, arquetipos, "24.1", 5, "fuerte")
     ej = evolucion.ejercicios
     assert ej[2023].balance_eur["existencias"] == pytest.approx(2_344_937, abs=1)
     assert ej[2024].balance_eur["existencias"] == pytest.approx(3_744_065, abs=1)
     assert ej[2025].balance_eur["existencias"] == pytest.approx(4_478_283, abs=1)
     assert ej[2023].endeudamiento == pytest.approx(0.600, abs=1e-3)
-    assert ej[2024].endeudamiento == pytest.approx(0.655, abs=1e-3)
-    assert ej[2025].endeudamiento == pytest.approx(0.695, abs=1e-3)
+    assert ej[2024].endeudamiento == pytest.approx(0.651, abs=1e-3)
+    assert ej[2025].endeudamiento == pytest.approx(0.689, abs=1e-3)
 
 
 def test_sectores_distintos_no_comparten_crecimiento_pleno_objetivo(catalogo, arquetipos):

@@ -24,6 +24,7 @@ probabilidad de fondo — a diferencia de provisiones).
 
 import re
 
+import numpy as np
 import pytest
 
 from motor.arquetipos import cargar_arquetipos
@@ -35,6 +36,8 @@ from motor.empresa_base import (
     PERFIL_DEUDORES_BASE,
     categoria_de_sector,
     generar_empresa_base,
+    generar_perfil_acreedores,
+    generar_perfil_deudores,
 )
 from motor.evolucion_arquetipo import (
     COMPONENTE_DESGLOSE_POR_TIPO,
@@ -129,10 +132,33 @@ def test_todos_los_27_sectores_tienen_perfil_de_deudores_y_acreedores(catalogo):
     assert set(PERFIL_ACREEDORES_POR_CATEGORIA) == set(CATEGORIA_SECTOR.values())
 
 
-def test_perfil_deudores_base_y_todos_los_perfiles_de_acreedores_suman_100_por_ciento():
-    assert sum(PERFIL_DEUDORES_BASE.values()) == pytest.approx(1.0, abs=1e-9)
+def test_perfil_deudores_base_y_todos_los_perfiles_de_acreedores_suman_menos_de_100_por_ciento():
+    """Desde el rediseño del Impuesto sobre Sociedades (ver bloque "Impuesto sobre Sociedades" en
+    motor/empresa_base.py), "Hacienda Pública deudora/acreedora por impuesto sobre beneficios" —
+    la 7ª sub-partida oficial de cada masa — YA NO forma parte de este perfil fijo (antes un % de
+    diseño de la masa, ahora derivada cada año del residuo real entre pagos a cuenta e impuesto
+    real, en motor/evolucion_arquetipo.py). Los perfiles fijos de las 6 sub-partidas restantes
+    suman, por diseño, MENOS de 1.0 — el hueco (el peso que antes ocupaba la sub-partida de
+    Hacienda) lo cubre el carve-out independiente. `_renormalizar_a_total` (motor/ruido.py) es lo
+    que garantiza que la SALIDA en tiempo de ejecución (`generar_perfil_deudores`/
+    `generar_perfil_acreedores`) sí sume 1.0 exacto — verificado abajo."""
+    assert 0.0 < sum(PERFIL_DEUDORES_BASE.values()) < 1.0
     for perfil in PERFIL_ACREEDORES_POR_CATEGORIA.values():
-        assert sum(perfil.values()) == pytest.approx(1.0, abs=1e-9)
+        assert 0.0 < sum(perfil.values()) < 1.0
+
+
+def test_generar_perfil_deudores_y_acreedores_renormaliza_a_100_por_ciento_en_tiempo_de_ejecucion(catalogo):
+    """Complemento del test anterior: aunque las constantes de diseño ya no sumen 1.0 (excluyen
+    la sub-partida de Hacienda), la salida real de `generar_perfil_deudores`/
+    `generar_perfil_acreedores` (las 6 sub-partidas que SÍ sortean con ruido) sigue sumando 1.0
+    exacto — `_renormalizar_a_total` absorbe el hueco, mismo patrón que `otros_financieros` en
+    `activo_no_corriente_desglose_eur`."""
+    rng = np.random.default_rng(123)
+    perfil_deudores, _ = generar_perfil_deudores(rng)
+    assert sum(perfil_deudores.values()) == pytest.approx(1.0, abs=1e-9)
+    for categoria in PERFIL_ACREEDORES_POR_CATEGORIA:
+        perfil_acreedores, _ = generar_perfil_acreedores(rng, categoria)
+        assert sum(perfil_acreedores.values()) == pytest.approx(1.0, abs=1e-9)
 
 
 # --------------------------------------------------------------------------------------------

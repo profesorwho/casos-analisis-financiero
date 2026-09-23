@@ -541,7 +541,11 @@ from motor.insolvencias import (
     sortear_importe_insolvencia_eur,
     sortear_insolvencia_baseline,
 )
-from motor.empresa_base import _completar_pyg_con_deuda, _generar_pyg_hasta_baii  # reutiliza la cascada de PyG
+from motor.empresa_base import (  # reutiliza la cascada de PyG y el tipo de pagos a cuenta del IS
+    FRACCION_PAGOS_A_CUENTA_IS,
+    _completar_pyg_con_deuda,
+    _generar_pyg_hasta_baii,
+)
 from motor.ruido import _generar_partida, _renormalizar_a_total, activar_modo_generacion, desactivar_modo_generacion
 
 AÑOS = (2023, 2024, 2025)
@@ -1336,6 +1340,7 @@ class EjercicioEmpresa:
     perfil_subtipos_material_pct: dict[str, float] = field(default_factory=dict)
     perfil_subtipos_intangible_pct: dict[str, float] = field(default_factory=dict)
     tipo_interes: float = 0.0  # ver empresa_base.EmpresaBase.tipo_interes — expuesto para el Δr de la cobertura
+    tipo_impuesto_efectivo: float = 0.0  # ver empresa_base.EmpresaBase.tipo_impuesto_efectivo — continuidad del Impuesto sobre Sociedades año a año
     # Capex implícito (encargo "amortización acumulada real", ver decisiones_plausibilidad.md
     # #94): cohorte nueva que conecta el crecimiento orgánico (proporcional a ventas, ajeno a
     # capex-17/adquisición-18/bajas) de activo_no_corriente con la colección real de activos —
@@ -1623,6 +1628,7 @@ def _ejercicio_desde_empresa_base(empresa: EmpresaBase) -> EjercicioEmpresa:
         perfil_subtipos_material_pct=dict(empresa.perfil_subtipos_material_pct),
         perfil_subtipos_intangible_pct=dict(empresa.perfil_subtipos_intangible_pct),
         tipo_interes=empresa.tipo_interes,
+        tipo_impuesto_efectivo=empresa.tipo_impuesto_efectivo,
         existencias_perfil_pct=dict(empresa.existencias_perfil_pct),
         existencias_desglose_eur=dict(empresa.existencias_desglose_eur),
         periodificacion_activo_pct=empresa.periodificacion_activo_pct,
@@ -2412,6 +2418,7 @@ def _evolucionar_un_año(
         rng_pyg, fila, ventas, año, primitivas_forzadas=primitivas_forzadas, amortizaciones_eur=amortizacion_eur_año,
         deterioro_enajenacion_inmovilizado_eur=deterioro_enajenacion_inmovilizado_eur,
         anterior_pyg_pct=anterior.pyg_pct, anterior_tipo_interes=anterior.tipo_interes,
+        anterior_tipo_impuesto_efectivo=anterior.tipo_impuesto_efectivo,
     )
     for ea in efectos_pyg_base_dinamica:
         efecto = ea.efecto
@@ -2703,19 +2710,33 @@ def _evolucionar_un_año(
         pyg_pct, pyg_eur = _completar_pyg_con_deuda(parcial_pyg, deuda_financiera_media_eur)
 
         # Ajuste de grupo89 (cobertura/subvención), provisiones (dotación/exceso, tercer lote) e
-        # insolvencia de clientes (dotación/exceso, cuenta 490) — importe BRUTO completo,
-        # desacoplado del `impuesto_beneficios` ya sorteado (que no debe gravar dos veces estas
-        # partidas ni dejarlas sin gravar del todo): ver docstring de motor.coberturas_
-        # subvenciones (punto 1 del diseño de cuadre), motor.provisiones y motor.insolvencias.
-        # Se aplica DESPUÉS de `_completar_pyg_con_deuda` para no alterar la base sobre la que se
-        # sorteó `impuesto_beneficios_pct`. El exceso de provisión/insolvencia se pliega en
-        # `otros_ingresos_explot` (línea "Excesos de provisiones" del modelo oficial, no
-        # desglosada como línea propia en `pyg_eur` — mismo criterio de simplificación ya usado
-        # para la imputación de subvenciones, ver arriba: el importe distinto SÍ queda expuesto
-        # aparte, en `EjercicioEmpresa.provision_exceso_eur`/`.insolvencia_exceso_eur`); la
-        # dotación de provisión resta de `gastos_personal` u `otros_gastos_explot` según su
-        # categoría; la de insolvencia resta siempre de `otros_gastos_explot` (cuenta 490, nunca
-        # gasto de personal).
+        # insolvencia de clientes (dotación/exceso, cuenta 490) — importe BRUTO completo. Se
+        # aplica DESPUÉS de `_completar_pyg_con_deuda` porque estas 4 piezas (grupo89, provisión,
+        # insolvencia) dependen de balances/parámetros que solo se conocen tras resolver el
+        # escenario. El exceso de provisión/insolvencia se pliega en `otros_ingresos_explot`
+        # (línea "Excesos de provisiones" del modelo oficial, no desglosada como línea propia en
+        # `pyg_eur` — mismo criterio de simplificación ya usado para la imputación de
+        # subvenciones, ver arriba: el importe distinto SÍ queda expuesto aparte, en
+        # `EjercicioEmpresa.provision_exceso_eur`/`.insolvencia_exceso_eur`); la dotación de
+        # provisión resta de `gastos_personal` u `otros_gastos_explot` según su categoría; la de
+        # insolvencia resta siempre de `otros_gastos_explot` (cuenta 490, nunca gasto de
+        # personal).
+        #
+        # Impuesto sobre Sociedades — parcialmente desacoplado de este ajuste, distinto para cada
+        # una de las 3 piezas (a diferencia del diseño anterior, donde `impuesto_beneficios_pct`
+        # era un % de ingresos ajeno al BAI y por tanto TODO el ajuste se desacoplaba por igual):
+        # provisiones/insolvencia SÍ deben recalcular el impuesto (gasto/exceso fiscalmente
+        # ordinario, sin ningún mecanismo de impuesto diferido propio) — grupo89 (cobertura/
+        # subvención) NO (su efecto impositivo de origen YA se liquidó aparte, subgrupo 83,
+        # `presentacion_neta_eur`/`delta_pn_grupo89_eur` más abajo: el activo/pasivo por impuesto
+        # diferido reconocido cuando se originó la reserva de PN se REVIERTE exactamente cuando el
+        # bruto se recicla a PyG — volver a gravarlo aquí al tipo ordinario sería una doble
+        # imposición sobre el mismo euro). Recalcular el impuesto sobre el BAI final SIN el ajuste
+        # de grupo89 (pero SÍ con el de provisión/insolvencia) y sumar el delta de grupo89 BRUTO
+        # sin tocar, igual que el diseño original, cierra el hallazgo de BAI<=0 con impuesto>0
+        # (verificado en un barrido de estrés — 27 sectores x 2 segmentos x 6 semillas x 7
+        # arquetipos, ver docs/decisiones_plausibilidad.md — 72 ejercicios con esa inconsistencia
+        # antes de esta corrección, 0 después).
         ajuste_otros_gastos_explot_total_provision_eur = (
             ajuste_otros_gastos_explot_provision_eur + ajuste_otros_gastos_explot_insolvencia_eur
         )
@@ -2727,6 +2748,7 @@ def _evolucionar_un_año(
             or ajuste_otros_ingresos_explot_provision_eur != 0.0
             or ajuste_otros_ingresos_explot_insolvencia_eur != 0.0
         ):
+            bai_antes_ajuste_eur = pyg_eur["bai"]
             pyg_eur = dict(pyg_eur)
             ajuste_otros_ingresos_explot_total_eur = (
                 ajuste_otros_ingresos_explot_grupo89_eur
@@ -2745,9 +2767,19 @@ def _evolucionar_un_año(
             baii_delta_eur = valor_añadido_delta_eur - ajuste_gastos_personal_provision_eur
             pyg_eur["baii"] += baii_delta_eur
             pyg_eur["gastos_financieros"] -= ajuste_gastos_financieros_grupo89_eur
-            bai_delta_eur = baii_delta_eur + ajuste_gastos_financieros_grupo89_eur
+            bai_delta_grupo89_eur = ajuste_otros_ingresos_explot_grupo89_eur + ajuste_gastos_financieros_grupo89_eur
+            bai_delta_prov_insolvencia_eur = (
+                ajuste_otros_ingresos_explot_provision_eur
+                + ajuste_otros_ingresos_explot_insolvencia_eur
+                - ajuste_otros_gastos_explot_total_provision_eur
+                - ajuste_gastos_personal_provision_eur
+            )
+            bai_delta_eur = bai_delta_grupo89_eur + bai_delta_prov_insolvencia_eur
             pyg_eur["bai"] += bai_delta_eur
-            pyg_eur["resultado_ejercicio"] += bai_delta_eur
+            base_imponible_ordinaria_eur = bai_antes_ajuste_eur + bai_delta_prov_insolvencia_eur
+            impuesto_ordinario_eur = max(0.0, base_imponible_ordinaria_eur) * parcial_pyg.tipo_impuesto_efectivo
+            pyg_eur["impuesto_beneficios"] = impuesto_ordinario_eur
+            pyg_eur["resultado_ejercicio"] = pyg_eur["bai"] - impuesto_ordinario_eur
             pyg_pct = {k: v / pyg_eur["ingresos_explotacion"] * 100 for k, v in pyg_eur.items()}
 
         # Payout de dividendos (sección "Retención de beneficios/distribución a PN" —
@@ -2975,13 +3007,29 @@ def _evolucionar_un_año(
         anterior.deudores_desglose_eur["accionistas_desembolsos_exigidos"]
         * (1 - FRACCION_AMORTIZACION_ANUAL_DESEMBOLSOS_EXIGIDOS),
     )
+    # "Hacienda Pública, deudora/acreedora por impuesto sobre beneficios" (7ª sub-partida oficial
+    # de deudores/acreedores, ver bloque "Impuesto sobre Sociedades" y el docstring de
+    # PERFIL_DEUDORES_BASE/PERFIL_ACREEDORES_POR_CATEGORIA en motor/empresa_base.py) — residuo
+    # entre los pagos a cuenta (art. 40 LIS, 54% de la cuota del año ANTERIOR, ya real aquí) y el
+    # impuesto real de ESTE año. Carve-out desde el presupuesto orgánico de "clientes"/
+    # "proveedores" (nunca aditivo sobre el total ya cuadrado de `realizable`/`acreedores_
+    # comerciales`) — mismo patrón "Parte B" que accionistas_desembolsos_exigidos/personal, con
+    # techo defensivo (min contra el presupuesto disponible) si el residuo lo dejara en negativo.
+    impuesto_beneficios_año_eur = pyg_eur["impuesto_beneficios"]
+    pagos_a_cuenta_is_eur = FRACCION_PAGOS_A_CUENTA_IS * max(0.0, anterior.pyg_eur["impuesto_beneficios"])
+    hacienda_neta_is_eur = pagos_a_cuenta_is_eur - impuesto_beneficios_año_eur
+    hacienda_publica_deudora_eur = min(
+        max(0.0, hacienda_neta_is_eur),
+        max(0.0, organico_residual_deudores_eur - accionistas_desembolsos_exigidos_eur),
+    )
     deudores_desglose_eur_año = _reparto_organico_con_exceso_dirigido(
         {c: f for c, f in anterior.deudores_perfil_pct.items() if c != "accionistas_desembolsos_exigidos"},
-        organico_residual_deudores_eur - accionistas_desembolsos_exigidos_eur,
+        organico_residual_deudores_eur - accionistas_desembolsos_exigidos_eur - hacienda_publica_deudora_eur,
         exceso_clientes_eur,
         "clientes",
     )
     deudores_desglose_eur_año["accionistas_desembolsos_exigidos"] = accionistas_desembolsos_exigidos_eur
+    deudores_desglose_eur_año["hacienda_publica_deudora"] = hacienda_publica_deudora_eur
 
     exceso_proveedores_eur = acreedores_comerciales_eur - acreedores_comerciales_proporcional_eur
     organico_acreedores_eur = acreedores_comerciales_proporcional_eur  # = total - exceso, por construcción
@@ -2997,13 +3045,18 @@ def _evolucionar_un_año(
     personal_acreedor_eur = max(
         0.0, anterior.acreedores_desglose_eur["personal"] * (1 + crecimiento_gastos_personal)
     )
+    hacienda_publica_acreedora_eur = min(
+        max(0.0, -hacienda_neta_is_eur),
+        max(0.0, organico_acreedores_eur - personal_acreedor_eur),
+    )
     acreedores_desglose_eur_año = _reparto_organico_con_exceso_dirigido(
         {c: f for c, f in anterior.acreedores_perfil_pct.items() if c != "personal"},
-        organico_acreedores_eur - personal_acreedor_eur,
+        organico_acreedores_eur - personal_acreedor_eur - hacienda_publica_acreedora_eur,
         exceso_proveedores_eur,
         "proveedores",
     )
     acreedores_desglose_eur_año["personal"] = personal_acreedor_eur
+    acreedores_desglose_eur_año["hacienda_publica_acreedora"] = hacienda_publica_acreedora_eur
     magnitud_operacion_vinculada_eur = _magnitud_operacion_vinculada(
         ventas, balance_eur, parametros_operacion_vinculada.tipo_operacion
     ) if parametros_operacion_vinculada.activa else 0.0
@@ -3269,6 +3322,7 @@ def _evolucionar_un_año(
         perfil_subtipos_material_pct=anterior.perfil_subtipos_material_pct,
         perfil_subtipos_intangible_pct=anterior.perfil_subtipos_intangible_pct,
         tipo_interes=parcial_pyg.tipo_interes,
+        tipo_impuesto_efectivo=parcial_pyg.tipo_impuesto_efectivo,
         capex_implicito_eur=capex_implicito_eur,
         bajas_inmovilizado=bajas_este_año,
         baja_valor_en_libros_eur=baja_valor_en_libros_eur,
