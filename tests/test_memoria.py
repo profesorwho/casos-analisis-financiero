@@ -18,6 +18,7 @@ from motor.memoria import (
     PLANTILLAS_ACTIVO_MANTENIDO_VENTA,
     PLANTILLAS_COBERTURAS,
     PLANTILLAS_DEPENDENCIA_CLIENTES,
+    PLANTILLAS_DEPENDENCIA_CLIENTES_UN_CLIENTE,
     RANGOS_CONCENTRACION_CLIENTES,
     SUELO_NOCIONAL_COBERTURA_EUR,
     _NOTAS_COMODIN,
@@ -90,7 +91,27 @@ def _ejercicio_operaciones_vinculadas(catalogo, arquetipos, sector, intensidad, 
     return evolucion.ejercicios[2025]
 
 
+# "dependencia_pocos_clientes" (#107): con n_clientes=1 el texto usa una variante gramatical
+# distinta (`PLANTILLAS_DEPENDENCIA_CLIENTES_UN_CLIENTE`, sin cifra ni plural) cuyo prefijo antes
+# del primer "{" no coincide con el de la plantilla plural — "El principal cliente..." (índice 0
+# singular) incluso coincidiría por error con el prefijo corto "El " de la plantilla 2 si se
+# intentara así. Se usa en su lugar un fragmento fijo, IDÉNTICO en ambas variantes de cada
+# plantilla (verificado al escribirlas: la cláusula final de cada una no cambia entre singular y
+# plural), como marcador único e inequívoco por índice.
+_MARCADORES_DEPENDENCIA_CLIENTES = [
+    "expone el resultado",
+    "diversificación comercial",
+    "viene manteniéndose",
+    "contratos de suministro",
+    "riesgo de concentración comercial",
+]
+
+
 def _indice_plantilla(arquetipo_id: str, texto: str) -> int:
+    if arquetipo_id == "dependencia_pocos_clientes":
+        coincidencias = [i for i, m in enumerate(_MARCADORES_DEPENDENCIA_CLIENTES) if m in texto]
+        assert len(coincidencias) == 1, f"{arquetipo_id}: {len(coincidencias)} marcadores coinciden con: {texto[:60]}"
+        return coincidencias[0]
     coincidencias = [i for i, p in enumerate(PREFIJOS[arquetipo_id]) if texto.startswith(p)]
     assert len(coincidencias) == 1, f"{arquetipo_id}: {len(coincidencias)} prefijos coinciden con: {texto[:60]}"
     return coincidencias[0]
@@ -151,7 +172,10 @@ def test_dependencia_clientes_respeta_los_rangos_por_intensidad(catalogo, arquet
         for semilla in SEMILLAS:
             ejercicio = _ejercicio(catalogo, arquetipos, sector, intensidad, semilla)
             nota = generar_nota_dependencia_clientes(sector, "grandes_medianas", intensidad, semilla, ejercicio)
-            n_clientes = int(re.search(r"(\d+) (?:principales clientes|clientes)", nota.texto).group(1))
+            coincidencia_n = re.search(r"(\d+) (?:principales clientes|clientes)", nota.texto)
+            # n_clientes=1 (#107): la variante singular no lleva cifra ("un único cliente"/"el
+            # principal cliente") — si no hay coincidencia numérica, solo puede ser ese caso.
+            n_clientes = int(coincidencia_n.group(1)) if coincidencia_n else 1
             pct = int(re.search(r"(\d+)%", nota.texto).group(1))
             assert rango["clientes"][0] <= n_clientes <= rango["clientes"][1]
             assert rango["pct"][0] <= pct <= rango["pct"][1]
@@ -346,3 +370,65 @@ def test_arquetipo_e_intensidad_con_tres_arquetipos_incluido_uno_de_memoria_pura
     assert partes_intensidad == {
         "aumento_clientes": "fuerte", "mejora_margen": "leve", "informacion_relevante_memoria": "moderado",
     }
+
+
+# --------------------------------------------------------------------------------------------
+# #107 — concordancia gramatical con n_clientes=1 ("Los 1 principales clientes ... concentran"
+# antes de la corrección). Formatea las plantillas DIRECTAMENTE (sin pasar por el RNG) para
+# cubrir n=1..4 completo, con independencia de qué valores de n alcanza cada intensidad real
+# (RANGOS_CONCENTRACION_CLIENTES solo llega a n=1 con "fuerte" y a n=4 con "leve").
+# --------------------------------------------------------------------------------------------
+
+_FRASES_PROHIBIDAS_N1 = ("1 clientes", "1 principales", "Los 1")
+
+# Por plantilla (mismo orden que PLANTILLAS_DEPENDENCIA_CLIENTES): fragmento que debe aparecer
+# en singular (n=1) y su equivalente en plural (n>=2), para comprobar la concordancia de verbo
+# y determinante, no solo la del sustantivo.
+_CONCORDANCIA_POR_PLANTILLA = [
+    ("El principal cliente", "Los {n} principales clientes"),
+    ("corresponde a un único cliente", "corresponde a {n} clientes"),
+    ("procede de un único cliente", "procede de {n} clientes"),
+    ("de un único cliente, que representa", "de {n} clientes, que en conjunto representan"),
+    ("a un único cliente principal", "a {n} clientes principales"),
+]
+
+
+@pytest.mark.parametrize("indice", range(5))
+def test_dependencia_clientes_n1_no_contiene_frases_agramaticales_ni_cifra(indice):
+    texto = PLANTILLAS_DEPENDENCIA_CLIENTES_UN_CLIENTE[indice].format(pct=70)
+    for frase in _FRASES_PROHIBIDAS_N1:
+        assert frase not in texto, f"plantilla {indice}: contiene '{frase}': {texto}"
+    assert re.search(r"\bcliente\b", texto), f"plantilla {indice}: no menciona 'cliente' en singular: {texto}"
+    singular_esperado, _ = _CONCORDANCIA_POR_PLANTILLA[indice]
+    assert singular_esperado in texto, f"plantilla {indice}: concordancia singular incorrecta: {texto}"
+
+
+@pytest.mark.parametrize("n", [2, 3, 4])
+@pytest.mark.parametrize("indice", range(5))
+def test_dependencia_clientes_n_mayor_igual_2_no_contiene_frases_agramaticales(indice, n):
+    texto = PLANTILLAS_DEPENDENCIA_CLIENTES[indice].format(n_clientes=n, pct=70)
+    for frase in _FRASES_PROHIBIDAS_N1:
+        assert frase not in texto, f"plantilla {indice}, n={n}: contiene '{frase}': {texto}"
+    _, plural_esperado = _CONCORDANCIA_POR_PLANTILLA[indice]
+    assert plural_esperado.format(n=n) in texto, f"plantilla {indice}, n={n}: concordancia plural incorrecta: {texto}"
+
+
+def test_dependencia_clientes_n1_textos_literales():
+    # Los 5 textos generados con n_clientes=1 (pct=70 fijo, arbitrario) — para inspección directa.
+    textos = [p.format(pct=70) for p in PLANTILLAS_DEPENDENCIA_CLIENTES_UN_CLIENTE]
+    assert len(textos) == 5
+    for t in textos:
+        assert "1 cliente" not in t and "Los 1" not in t
+
+
+def test_dependencia_clientes_caso_referencia_semilla_15(catalogo, arquetipos):
+    # Caso citado en el encargo #107 (28/grandes_medianas/ventas 15M/semilla 15/fuerte): n=1,
+    # plantilla 2 ("El {pct}% ... procede de ..."). Re-pin esperado: SOLO el texto cambia (de
+    # "1 clientes" a la forma singular), ni el % ni la plantilla elegida.
+    ejercicio = _ejercicio(catalogo, arquetipos, "28", "fuerte", 15)
+    nota = generar_nota_dependencia_clientes("28", "grandes_medianas", "fuerte", 15, ejercicio)
+    assert nota.texto == (
+        "El 73% de la cifra de negocio del ejercicio procede de un único cliente, "
+        "circunstancia que la Dirección atribuye a la naturaleza del sector de actividad y "
+        "que viene manteniéndose en ejercicios anteriores."
+    )

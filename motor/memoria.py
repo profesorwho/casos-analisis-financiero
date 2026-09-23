@@ -129,6 +129,29 @@ PLANTILLAS_DEPENDENCIA_CLIENTES = (
     "de seguimiento del riesgo de concentración comercial.",
 )
 
+# Variante gramaticalmente correcta de cada plantilla anterior para n_clientes=1 (#107) — MISMO
+# índice, mismo orden, mismo tono y contenido, solo con determinante/adjetivo/sustantivo/verbo en
+# singular en vez de "Los 1 principales clientes ... concentran"/"1 clientes". Nunca se sortea
+# ni se elige un índice distinto por usar esta variante: `generar_nota_dependencia_clientes`
+# selecciona el índice UNA sola vez (con el mismo consumo de `rng` de siempre) y solo decide,
+# ya con el índice fijado, sobre qué tupla de las dos formatear.
+PLANTILLAS_DEPENDENCIA_CLIENTES_UN_CLIENTE = (
+    "El principal cliente de la sociedad concentra el {pct}% de la cifra de negocio del "
+    "ejercicio, lo que expone el resultado a la evolución comercial de una única contraparte.",
+    "La cartera de clientes presenta un grado de concentración relevante: el {pct}% de las "
+    "ventas del ejercicio corresponde a un único cliente, sin que exista a la fecha de "
+    "formulación de las cuentas un plan formalizado de diversificación comercial.",
+    "El {pct}% de la cifra de negocio del ejercicio procede de un único cliente, "
+    "circunstancia que la Dirección atribuye a la naturaleza del sector de actividad y que "
+    "viene manteniéndose en ejercicios anteriores.",
+    "La sociedad mantiene una dependencia comercial significativa de un único cliente, "
+    "que representa el {pct}% de las ventas del ejercicio, sin que existan "
+    "contratos de suministro a largo plazo que garanticen la continuidad de la relación.",
+    "Del total de la cifra de negocio del ejercicio, el {pct}% corresponde a un único "
+    "cliente principal, superando el umbral que la Dirección considera relevante a efectos "
+    "de seguimiento del riesgo de concentración comercial.",
+)
+
 
 def generar_nota_dependencia_clientes(
     sector: str,
@@ -151,7 +174,12 @@ def generar_nota_dependencia_clientes(
     pct = round(rng.uniform(*rango["pct"]))
     etiquetas_por_indice = [("clientes", "concentracion")] * len(PLANTILLAS_DEPENDENCIA_CLIENTES)
     indice = _elegir_indice_evitando_colision(rng, etiquetas_por_indice, etiquetas_ya_usadas)
-    texto = PLANTILLAS_DEPENDENCIA_CLIENTES[indice].format(n_clientes=n_clientes, pct=pct)
+    if n_clientes == 1:
+        # Mismo índice, ninguna tirada de rng adicional — solo cambia QUÉ tupla de texto se
+        # formatea, para no escribir "1 clientes"/"Los 1 principales" (#107).
+        texto = PLANTILLAS_DEPENDENCIA_CLIENTES_UN_CLIENTE[indice].format(pct=pct)
+    else:
+        texto = PLANTILLAS_DEPENDENCIA_CLIENTES[indice].format(n_clientes=n_clientes, pct=pct)
     return NotaMemoria(
         arquetipo_id="dependencia_pocos_clientes", numero=7, texto=texto, etiquetas=("clientes", "concentracion")
     )
