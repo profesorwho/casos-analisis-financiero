@@ -90,7 +90,13 @@ def construir_ecpn_documento_b(titulo: str, subtitulo: str, tabla_por_año: dict
         for etiqueta, fila_ecpn in filas_fila_ecpn:
             fila = [Paragraph(etiqueta, celda_estilo)] + [fmt_eur(getattr(fila_ecpn, clave)) for clave, _ in COLUMNAS_ECPN]
             filas.append(fila)
-        anchos = [4.2 * cm] + [2.37 * cm] * len(COLUMNAS_ECPN)
+        # Mismo ancho de página útil que el resto de tablas (A4 - 1,3cm de margen a cada lado,
+        # ver SimpleDocTemplate en generar_pdf): 18,4cm. Antes: 4,2 + 2,37×7 = 20,79cm, 2,39cm
+        # por encima del margen — la tabla se salía de la caja de texto (margen derecho real
+        # ~3pt en vez de los ~43pt del resto de tablas del documento, #106.2).
+        ancho_label = 4.2 * cm
+        ancho_valor = (18.4 * cm - ancho_label) / len(COLUMNAS_ECPN)
+        anchos = [ancho_label] + [ancho_valor] * len(COLUMNAS_ECPN)
         tabla = Table(filas, colWidths=anchos, repeatRows=1)
         estilo = [
             ("FONTSIZE", (0, 0), (-1, -1), 7),
@@ -98,6 +104,7 @@ def construir_ecpn_documento_b(titulo: str, subtitulo: str, tabla_por_año: dict
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c3e50")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
             ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
             ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
             ("LINEABOVE", (0, -1), (-1, -1), 0.5, colors.HexColor("#bdc3c7")),
