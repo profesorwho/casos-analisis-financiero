@@ -12,10 +12,11 @@ Documentación relacionada:
 ## Estructura del repositorio
 
 ```
-motor/    Lógica de generación (Python) — motor de datos económico-financiero
-data/     Catálogos fuente (copia de trabajo de los CSV de docs/)
-tests/    Tests del motor
-docs/     Especificación y catálogos originales
+motor/     Lógica de generación (Python) — motor de datos económico-financiero
+data/      Catálogos fuente (copia de trabajo de los CSV de docs/)
+tests/     Tests del motor
+docs/      Especificación y catálogos originales
+renderer/  Renderizador de PDF (Balance/PyG/EFE/ECPN/Memoria) a partir de un caso ya generado
 ```
 
 ## Entorno de desarrollo
@@ -23,6 +24,22 @@ docs/     Especificación y catálogos originales
 ```bash
 pip install -e ".[dev]"
 ```
+
+## Renderizador de PDF (`renderer/`)
+
+Genera las cuentas anuales completas (Balance, PyG, EFE, ECPN, Memoria) de un caso ya producido
+por el motor como un PDF con formato PGC. Es una capa de presentación pura: no genera datos, solo
+lee un `EvolucionArquetipo`/`EjercicioEmpresa` ya calculado y lo maqueta con reportlab.
+
+```bash
+pip install -e ".[renderer]"
+python renderer/generar_caso_completo.py
+```
+
+El PDF se escribe en `renderer/output/` (no versionado). Los scripts `generar_caso_completo.py`
+(caso completo con memoria), `generar_pdf_caso.py` y `generar_casos_pedidos.py` son ejecutables
+directamente y sirven de ejemplo de uso; `generar_caso1_ajustado.py`/`generar_caso2_mecanizado*.py`
+son casos manuales de exploración (cifras codificadas a mano, sin pasar por el motor).
 
 ## Estado actual
 
