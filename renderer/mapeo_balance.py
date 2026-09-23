@@ -42,6 +42,11 @@ def mapear_balance_activo(ejercicios: dict, modelo: str) -> list[LineaEstado]:
     # B) ACTIVO CORRIENTE
     L.append(LineaEstado("B", "ACTIVO CORRIENTE", 0,
               _v(ejercicios, lambda e: e.balance_eur["activo_corriente"]), negrita=True))
+    if modelo == "normal":
+        # El motor no modela activos no corrientes mantenidos para la venta — se muestra a 0,
+        # misma convención que "IV Inversiones en empresas del grupo... a largo plazo" (activo
+        # no corriente) cuando el arquetipo 20 no está activo (#106.5).
+        L.append(LineaEstado("I", "Activos no corrientes mantenidos para la venta", 1, _v(ejercicios, lambda e: 0.0)))
     L.append(LineaEstado("II", "Existencias", 1,
               _v(ejercicios, lambda e: e.balance_eur["existencias"]), negrita=(modelo == "normal")))
     if modelo == "normal":
@@ -70,6 +75,12 @@ def mapear_balance_activo(ejercicios: dict, modelo: str) -> list[LineaEstado]:
                   _v(ejercicios, lambda e, c=clave: e.deudores_desglose_eur.get(c, 0.0)),
                   nota=nota("realizable.clientes_empresas_grupo") if clave == "clientes_empresas_grupo" else None))
 
+    if modelo == "normal":
+        # El motor solo modela "préstamo a matriz" (arquetipo 20) como Inversiones en empresas
+        # del grupo a LARGO plazo (activo no corriente) — no hay masa a corto plazo equivalente
+        # ni inversiones financieras a corto plazo fuera de `disponible`; se muestran a 0 (#106.5).
+        L.append(LineaEstado("IV", "Inversiones en empresas del grupo y asociadas a corto plazo", 1, _v(ejercicios, lambda e: 0.0)))
+        L.append(LineaEstado("V", "Inversiones financieras a corto plazo", 1, _v(ejercicios, lambda e: 0.0)))
     L.append(LineaEstado("VI", "Periodificaciones a corto plazo", 1,
               _v(ejercicios, lambda e: e.periodificacion_activo_eur)))
     L.append(LineaEstado("VII", "Efectivo y otros activos líquidos equivalentes", 1,
@@ -147,6 +158,11 @@ def mapear_balance_pn_pasivo(ejercicios: dict, modelo: str) -> list[LineaEstado]
     if modelo == "normal":
         for i, (clave, etq) in enumerate(etq_dfin.items(), start=1):
             L.append(LineaEstado(str(i), etq, 2, _v(ejercicios, lambda e, c=clave: e.deudas_fin_corto_desglose_eur.get(c, 0.0))))
+        # El motor solo modela "financiación recibida de grupo" (arquetipo 20) como deuda a
+        # LARGO plazo — no hay masa a corto plazo equivalente; se muestra a 0, misma convención
+        # que "III Deudas con empresas del grupo... a largo plazo" cuando no está activa (#106.5).
+        L.append(LineaEstado("IV", "Deudas con empresas del grupo y asociadas a corto plazo", 1,
+                  _v(ejercicios, lambda e: 0.0), nota=nota("pasivo_corriente.deuda_grupo_corto")))
     L.append(LineaEstado("V", "Acreedores comerciales y otras cuentas a pagar", 1,
               _v(ejercicios, lambda e: e.balance_eur["acreedores_comerciales"]), negrita=True))
     etq_acree = {"proveedores": "Proveedores", "proveedores_empresas_grupo": "Proveedores, empresas del grupo",
