@@ -903,6 +903,17 @@ dato de catálogo, ni siquiera indirecto, que sugiera una dirección de variaci�
   magnitud media también sube de ~9,9% a ~12,9% del residuo cuando activa. Las tasas con 4 y con 7
   salen idénticas porque ambos boosts usan el mismo valor (+10pp, multiplicador 1,3x), no por error.
 
+## Calendario de vencimientos y movimientos de la deuda (`motor/calendario_deuda.py`)
+
+Módulo NUEVO y PURO de derivación (encargo #112) sobre un caso ya generado — clasifica cada clase
+de pasivo financiero (cuarto lote) y de "otras deudas" (quinto lote) en tramos de vencimiento (1 a
+5 años y más de 5, exigido por el PGC en Nota 9.3.2.1.b del modelo Normal Y en el apartado 6.a del
+modelo Abreviado — ver decisiones_plausibilidad.md #112) y deriva el cuadro de movimientos (saldo
+inicial/amortizaciones/disposiciones/saldo final) de la deuda financiera CON coste en 2024/2025,
+conciliado exactamente con `c10_variacion_neta_deuda_financiera` del EFE. No sortea nada sobre el
+`rng` principal del caso (rng independiente, hash estable) ni modifica ninguna dataclass existente
+— alimenta la Nota 7 del renderizador (`renderer/mapeo_memoria.py`).
+
 ## Reparto de sub-partidas: exceso dirigido y cuentas de movimiento casi nulo (decisiones #99, `motor/evolucion_arquetipo.py`)
 
 Corrige que el perfil % fijo de los lotes 1/2/4/5 inflara TODAS las sub-partidas cuando un arquetipo inflaba una masa. **Parte A**: `_reparto_organico_con_exceso_dirigido` reparte el valor orgánico con el % fijo y manda el exceso (con efecto − orgánico) al 100 % a la sub-partida objetivo — realizable→`clientes` (1/3/4/6), acreedores→`proveedores` (4), existencias→`materias_primas`+`productos_curso`+`productos_terminados`+`comerciales` por los pesos del perfil del caso (5; `EXISTENCIAS_OBJETIVO_EXCESO_STOCK`), apalancamiento→`entidades_credito` (9/14; la reclasificación 8/16 ya iba ahí por el residual); techo defensivo a reparto proporcional si forzar dejara el objetivo en negativo. **Parte B**: `accionistas_desembolsos_exigidos` ×2/3 al año, `obligaciones` plana, `arrendamiento_financiero` lineal a 5 años, `fianzas_depositos` con el 30 % del crecimiento de ventas (recortada al residuo disponible), `personal` acreedor sigue `gastos_personal`. `fianzas_depositos` queda recortada por el techo defensivo en ~30-35 % de las observaciones — causa raíz investigada y cerrada en decisiones_plausibilidad.md #104 (comportamiento correcto: el tope solo activa en el plazo CORTO, nunca en largo, porque solo `otras_deudas_corto` absorbe el plug de cuadre que encoge la masa cuando el PN crece más rápido que el resto del balance — #77-84 — mientras `fianzas_depositos` crece ajena a ese plug; no concentrado en ningún sector/arquetipo). La reclasificación 8/16 con absorción 0 % en `entidades_credito` (4-51 observaciones según el barrido) también está cerrada en #104: la sub-partida ya estaba en 0 € antes de reclasificar, comportamiento correcto. Sin re-pins.
