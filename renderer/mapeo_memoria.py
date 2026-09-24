@@ -335,12 +335,27 @@ def nota_9_situacion_fiscal(ejercicios):
             "mostrado en el epígrafe B.IV del Pasivo No Corriente del Balance.", cuerpo
         ))
     if hay_activo_diferido:
-        flow.append(Paragraph(
-            f"Existe además una diferencia temporaria derivada de {' y '.join(piezas_activo)} "
-            f"que, por signo contrario a la anterior, se reconoce como activo por impuesto "
-            f"diferido: {fmt_eur(diferido_activo[2024])} (2024) y {fmt_eur(diferido_activo[2025])} "
-            "(2025), mostrado en el epígrafe A.VI del Activo No Corriente del Balance.", cuerpo
-        ))
+        if hay_pasivo_diferido:
+            # Ya hay un párrafo "anterior" (pasivo diferido) al que referirse — mismo texto de
+            # siempre, con el matiz de signo contrario.
+            texto_activo = (
+                f"Existe además una diferencia temporaria derivada de {' y '.join(piezas_activo)} "
+                f"que, por signo contrario a la anterior, se reconoce como activo por impuesto "
+                f"diferido: {fmt_eur(diferido_activo[2024])} (2024) y {fmt_eur(diferido_activo[2025])} "
+                "(2025), mostrado en el epígrafe A.VI del Activo No Corriente del Balance."
+            )
+        else:
+            # Sin pasivo diferido no hay ningún párrafo "anterior" al que referirse (#111,
+            # defecto 1) — mismo texto que el párrafo de pasivo diferido de arriba, en espejo.
+            texto_activo = (
+                f"Existe una diferencia temporaria entre el resultado contable y la base imponible "
+                f"derivada de {' y '.join(piezas_activo)}, registrada directamente en el patrimonio "
+                f"neto sin pasar por la cuenta de pérdidas y ganancias. El efecto fiscal asociado, "
+                f"{tipo_txt}, se reconoce como activo por impuesto diferido: "
+                f"{fmt_eur(diferido_activo[2024])} (2024) y {fmt_eur(diferido_activo[2025])} (2025), "
+                "mostrado en el epígrafe A.VI del Activo No Corriente del Balance."
+            )
+        flow.append(Paragraph(texto_activo, cuerpo))
     flow.append(Paragraph(
         "Al margen de estas diferencias temporarias, no existen otras diferencias significativas "
         "entre el resultado contable y la base imponible del Impuesto sobre Sociedades en los "
