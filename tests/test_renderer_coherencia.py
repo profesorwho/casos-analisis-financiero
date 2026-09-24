@@ -19,6 +19,10 @@ clave `activos_impuesto_corriente`/`pasivos_impuesto_corriente` en `deudores_des
 `acreedores_desglose_eur`, pero el motor expone `hacienda_publica_deudora`/
 `hacienda_publica_acreedora` — la sub-línea salía siempre a 0 y "III Deudores.../V Acreedores..."
 no sumaban su propio subtotal.
+
+La lógica de comprobación vive en `renderer/invariantes.py` (movida ahí en #110 para que
+`generar_caso_completo` pueda reutilizarla como guarda en tiempo de generación, sin duplicar
+código) — este test solo la importa y la ejercita sobre un barrido de casos concretos.
 """
 import sys
 from pathlib import Path
@@ -33,10 +37,8 @@ from motor.catalogo import cargar_y_validar_catalogo  # noqa: E402
 from motor.memoria import generar_caso_combinado  # noqa: E402
 
 from clasificacion import clasificar_caso  # noqa: E402
-from mapeo_balance import mapear_balance_activo, mapear_balance_pn_pasivo  # noqa: E402
-from mapeo_pyg import mapear_pyg  # noqa: E402
+from invariantes import verificar_invariantes_balance_pyg  # noqa: E402
 
-AÑOS = (2023, 2024, 2025)
 ARQUETIPOS_INTENSIDADES = {"aumento_clientes": "fuerte", "dependencia_pocos_clientes": "fuerte"}
 
 CASOS = [
@@ -45,30 +47,6 @@ CASOS = [
     pytest.param("10.1", "pequeñas", 5_000_000.0, 1, "abreviado", id="10.1-pequeñas-sem1"),
     pytest.param("47.1", "grandes_medianas", 15_000_000.0, 3, "normal", id="47.1-grandes_medianas-sem3"),
 ]
-
-
-def _sub_lineas_suman_subtotal(lineas, nivel_min_padre=0):
-    """Para cada línea en negrita (nivel >= nivel_min_padre), suma sus hijos inmediatos (nivel+1,
-    hasta la siguiente línea de nivel <= el suyo) y compara contra su propio valor, año a año.
-    Devuelve la lista de discrepancias (vacía si todo cuadra)."""
-    discrepancias = []
-    for i, linea in enumerate(lineas):
-        if not linea.negrita or linea.nivel < nivel_min_padre:
-            continue
-        hijos = []
-        j = i + 1
-        while j < len(lineas) and lineas[j].nivel > linea.nivel:
-            if lineas[j].nivel == linea.nivel + 1:
-                hijos.append(lineas[j])
-            j += 1
-        if not hijos:
-            continue
-        for año in AÑOS:
-            suma = sum(h.valores.get(año, 0.0) for h in hijos)
-            padre = linea.valores.get(año, 0.0)
-            if abs(suma - padre) > 1.0:
-                discrepancias.append((linea.codigo, linea.etiqueta, año, padre, suma))
-    return discrepancias
 
 
 @pytest.mark.parametrize("sector, segmento, ventas_objetivo, semilla, modelo_esperado", CASOS)
@@ -83,11 +61,8 @@ def test_balance_y_pyg_sub_lineas_suman_su_subtotal(sector, segmento, ventas_obj
     modelo = clasificar_caso(evolucion, sector, segmento, catalogo)
     assert modelo == modelo_esperado, f"Clasificación legal inesperada: {modelo} != {modelo_esperado}"
 
-    discrepancias = []
-    discrepancias += _sub_lineas_suman_subtotal(mapear_balance_activo(ejercicios, modelo))
-    discrepancias += _sub_lineas_suman_subtotal(mapear_balance_pn_pasivo(ejercicios, modelo))
-    discrepancias += _sub_lineas_suman_subtotal(mapear_pyg(ejercicios, modelo), nivel_min_padre=2)
+    violaciones = verificar_invariantes_balance_pyg(ejercicios, modelo)
 
-    assert not discrepancias, (
-        f"Sub-líneas que no suman su subtotal en {sector}/{segmento}/sem{semilla}/{modelo}: {discrepancias}"
+    assert not violaciones, (
+        f"Sub-líneas que no suman su subtotal en {sector}/{segmento}/sem{semilla}/{modelo}: {violaciones}"
     )

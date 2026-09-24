@@ -1,4 +1,5 @@
 import sys
+import warnings
 from pathlib import Path
 
 _RENDERER_DIR = Path(__file__).resolve().parent
@@ -18,13 +19,41 @@ from mapeo_pyg import mapear_pyg
 from mapeo_efe import mapear_efe
 from mapeo_ecpn import mapear_eigr, mapear_ecpn_documento_b
 from mapeo_memoria import generar_memoria
+from invariantes import InvarianteSubtotalWarning, verificar_invariantes_lineas
 from render_pdf import construir_tabla_estado, construir_ecpn_documento_b, generar_pdf
 
 SECTOR_NOMBRES = {"28": "Fabricación de maquinaria y equipo"}
 
 
+def _verificar_invariantes_o_avisar(bloques_balance_pyg, sector, segmento, semilla, estricto):
+    """Guarda de invariantes "sub-líneas == subtotal" (#106, movida a `renderer/invariantes.py`
+    en #110) — un caso con violación NO es necesariamente un error de cálculo (ver
+    decisiones_plausibilidad.md #109: el plug de cuadre puede vaciar `otras_deudas_corto` cuando
+    aloja una provisión a corto, dejando "II Provisiones a corto plazo" sin sitio en su propio
+    subtotal — el motor no se toca, es un límite ya documentado), pero no debe generarse en
+    SILENCIO. Con `estricto=True` se convierte en excepción; por defecto, solo avisa (el PDF se
+    genera igual)."""
+    violaciones = verificar_invariantes_lineas(bloques_balance_pyg)
+    if not violaciones:
+        return
+    lineas_aviso = [
+        f"  - {v.bloque} / {v.codigo} {v.etiqueta} / ejercicio {v.año}: "
+        f"suma sub-líneas {v.suma:,.2f}€ != subtotal {v.subtotal:,.2f}€ "
+        f"(diferencia {v.diferencia:,.2f}€)"
+        for v in violaciones
+    ]
+    mensaje = (
+        f"Sub-líneas que no suman su subtotal en {sector}/{segmento}/sem{semilla}:\n"
+        + "\n".join(lineas_aviso)
+    )
+    if estricto:
+        raise InvarianteSubtotalWarning(mensaje)
+    print(f"AVISO: {mensaje}")
+    warnings.warn(mensaje, InvarianteSubtotalWarning, stacklevel=2)
+
+
 def generar_caso_completo(sector, segmento, ventas_objetivo, semilla, arquetipos_intensidades,
-                           nombre_empresa, ruta_salida):
+                           nombre_empresa, ruta_salida, estricto: bool = False):
     catalogo = cargar_y_validar_catalogo()
     arquetipos = cargar_arquetipos()
     evolucion = generar_caso_combinado(sector, segmento, ventas_objetivo, semilla, arquetipos_intensidades,
@@ -53,13 +82,29 @@ def generar_caso_completo(sector, segmento, ventas_objetivo, semilla, arquetipos
     columnas_3, etq_3 = [2023, 2024, 2025], ["2023", "2024", "2025"]
     columnas_2, etq_2 = [2024, 2025], ["2024", "2025"]
 
+    lineas_balance_activo = mapear_balance_activo(ejercicios, modelo)
+    lineas_balance_pn_pasivo = mapear_balance_pn_pasivo(ejercicios, modelo)
+    lineas_pyg = mapear_pyg(ejercicios, modelo)
+
+    # Guarda de invariantes (#110, ver decisiones_plausibilidad.md #109/#110): comprobación PURA
+    # sobre las líneas YA construidas del Balance/PyG — nunca cambia su contenido ni el del PDF,
+    # solo avisa (o, con estricto=True, lanza excepción) si alguna no cuadra con su subtotal.
+    _verificar_invariantes_o_avisar(
+        (
+            ("Balance — Activo", lineas_balance_activo, 0),
+            ("Balance — Patrimonio Neto y Pasivo", lineas_balance_pn_pasivo, 0),
+            ("Cuenta de Pérdidas y Ganancias", lineas_pyg, 2),
+        ),
+        sector, segmento, semilla, estricto,
+    )
+
     secciones = []
     secciones.append(construir_tabla_estado("Balance — Activo", f"Modelo {modelo.capitalize()} · Importes en euros",
-                       mapear_balance_activo(ejercicios, modelo), columnas_3, etq_3))
+                       lineas_balance_activo, columnas_3, etq_3))
     secciones.append(construir_tabla_estado("Balance — Patrimonio Neto y Pasivo", f"Modelo {modelo.capitalize()} · Importes en euros",
-                       mapear_balance_pn_pasivo(ejercicios, modelo), columnas_3, etq_3))
+                       lineas_balance_pn_pasivo, columnas_3, etq_3))
     secciones.append(construir_tabla_estado("Cuenta de Pérdidas y Ganancias", f"Modelo {modelo.capitalize()} · Importes en euros",
-                       mapear_pyg(ejercicios, modelo), columnas_3, etq_3))
+                       lineas_pyg, columnas_3, etq_3))
     nota_no_exigido = " · Incluido con fines didácticos, no exigido en Abreviado" if modelo == "abreviado" else ""
     secciones.append(construir_tabla_estado("Estado de Flujos de Efectivo", f"Modelo {modelo.capitalize()} · Importes en euros{nota_no_exigido}",
                        mapear_efe(efes), columnas_2, etq_2))
