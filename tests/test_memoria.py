@@ -174,8 +174,17 @@ def test_dependencia_clientes_respeta_los_rangos_por_intensidad(catalogo, arquet
             nota = generar_nota_dependencia_clientes(sector, "grandes_medianas", intensidad, semilla, ejercicio)
             coincidencia_n = re.search(r"(\d+) (?:principales clientes|clientes)", nota.texto)
             # n_clientes=1 (#107): la variante singular no lleva cifra ("un único cliente"/"el
-            # principal cliente") — si no hay coincidencia numérica, solo puede ser ese caso.
-            n_clientes = int(coincidencia_n.group(1)) if coincidencia_n else 1
+            # principal cliente") — si no hay coincidencia numérica, solo puede ser ese caso, y
+            # el texto debe demostrarlo (endurecido en #110: antes se asumía n=1 sin comprobar
+            # que la ausencia de cifra viniera realmente de esa variante — cualquier otro texto
+            # sin dígitos habría colado n=1 igual, sin detectarlo).
+            if coincidencia_n:
+                n_clientes = int(coincidencia_n.group(1))
+            else:
+                assert "único cliente" in nota.texto or "principal cliente" in nota.texto, (
+                    f"Sin coincidencia numérica y sin la variante singular esperada: {nota.texto!r}"
+                )
+                n_clientes = 1
             pct = int(re.search(r"(\d+)%", nota.texto).group(1))
             assert rango["clientes"][0] <= n_clientes <= rango["clientes"][1]
             assert rango["pct"][0] <= pct <= rango["pct"][1]
