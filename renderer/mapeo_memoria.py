@@ -122,7 +122,24 @@ def nota_3_aplicacion_resultados(ejercicios, modelo, capital_social_eur):
     return flow
 
 
-def nota_4_normas_registro():
+def _hay_diferido_o_subvencion(ejercicios) -> bool:
+    """Mismo criterio que la Nota 9 (#111, defecto 3): activo o pasivo por impuesto diferido, o
+    subvención de capital, presentes en algún ejercicio 2024/2025 — para que la Nota 4 no
+    contradiga lo que la Nota 9 ya explica en detalle."""
+    return any(
+        ejercicios[a].activos_por_impuesto_diferido_eur != 0
+        or ejercicios[a].pasivos_por_impuesto_diferido_eur != 0
+        or ejercicios[a].subvencion_saldo_130_bruto_eur > 0
+        for a in (2024, 2025)
+    )
+
+
+def nota_4_normas_registro(ejercicios):
+    frase_impuesto = (
+        "salvo las diferencias temporarias descritas en la nota 9"
+        if _hay_diferido_o_subvencion(ejercicios)
+        else "sin diferencias significativas entre resultado contable y base imponible en el ejercicio"
+    )
     texto = (
         "Los criterios contables más significativos aplicados son los siguientes. "
         "<b>Inmovilizado material e intangible</b>: valorado al precio de adquisición, "
@@ -131,8 +148,7 @@ def nota_4_normas_registro():
         "aplicando el criterio de precio medio ponderado. <b>Instrumentos financieros</b>: "
         "los activos y pasivos financieros se valoran inicialmente al valor razonable y "
         "posteriormente al coste amortizado. <b>Impuesto sobre beneficios</b>: el gasto se "
-        "calcula en función del resultado contable antes de impuestos, sin diferencias "
-        "significativas entre resultado contable y base imponible en el ejercicio. "
+        f"calcula en función del resultado contable antes de impuestos, {frase_impuesto}. "
         "<b>Ingresos y gastos</b>: se imputan en función del criterio de devengo."
     )
     return [Paragraph(texto, cuerpo)]
@@ -421,7 +437,7 @@ def generar_memoria(evolucion, ejercicios, modelo, nombre_empresa, sector_nombre
         1: lambda: nota_1_actividad(nombre_empresa, sector_nombre),
         2: lambda: nota_2_bases_presentacion(modelo),
         3: lambda: nota_3_aplicacion_resultados(ejercicios, modelo, capital_social_eur),
-        4: lambda: nota_4_normas_registro(),
+        4: lambda: nota_4_normas_registro(ejercicios),
         5: lambda: nota_5_inmovilizado(evolucion, ejercicios, notas_narrativas),
         6: lambda: nota_6_activos_financieros(ejercicios, modelo),
         7: lambda: nota_7_pasivos_financieros(ejercicios, notas_narrativas),
