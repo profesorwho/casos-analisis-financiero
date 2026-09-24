@@ -224,18 +224,109 @@ def nota_6_activos_financieros(ejercicios, modelo):
     return flow
 
 
-def nota_7_pasivos_financieros(ejercicios, notas_narrativas):
+CATEGORIAS_VENCIMIENTOS_NOTA_7 = (
+    ("entidades_credito", "Deudas con entidades de crédito"),
+    ("obligaciones", "Obligaciones y otros valores negociables"),
+    ("arrendamiento_financiero", "Acreedores por arrendamiento financiero"),
+    ("otros_pasivos_financieros", "Otros pasivos financieros"),
+    ("derivados", "Derivados"),
+    ("acreedores_inmovilizado", "Acreedores por adquisición de inmovilizado"),
+    ("fianzas_deudas_socios", "Fianzas, depósitos y deudas con socios"),
+    ("remanente_otras_deudas", "Otras deudas (remanente)"),
+    ("acreedores_comerciales", "Acreedores comerciales y otras cuentas a pagar"),
+)
+
+CATEGORIAS_MOVIMIENTO_NOTA_7 = (
+    ("entidades_credito", "Deudas con entidades de crédito"),
+    ("obligaciones", "Obligaciones y otros valores negociables"),
+    ("arrendamiento_financiero", "Acreedores por arrendamiento financiero"),
+    ("otros_pasivos_financieros", "Otros pasivos financieros"),
+    ("derivados", "Derivados"),
+)
+
+_celda_vencimientos = ParagraphStyle("CeldaVencimientos", parent=cuerpo, fontSize=6.3, leading=7.2, alignment=4, spaceAfter=0)
+_encabezado_vencimientos = ParagraphStyle("EncabezadoVencimientos", parent=_celda_vencimientos, fontName="Helvetica-Bold")
+
+
+def _fmt_eur_pequeño(valor):
+    return Paragraph(fmt_eur(valor), _celda_vencimientos)
+
+
+def _tabla_vencimientos(calendario, año):
+    anchos = [3.6 * cm] + [2.114 * cm] * 7
+    encabezados = ["Partida", "1 año", "2 años", "3 años", "4 años", "5 años", "Más de 5", "Total"]
+    filas = [[Paragraph(c, _encabezado_vencimientos) for c in encabezados]]
+    totales = [0.0] * 7
+    for clave, nombre in CATEGORIAS_VENCIMIENTOS_NOTA_7:
+        t = calendario.vencimientos_por_año[año][clave]
+        valores = [t.un_año, t.dos, t.tres, t.cuatro, t.cinco, t.mas_de_cinco, t.total]
+        for i, v in enumerate(valores):
+            totales[i] += v
+        filas.append([Paragraph(nombre, _celda_vencimientos)] + [_fmt_eur_pequeño(v) for v in valores])
+    filas.append(
+        [Paragraph("<b>Total</b>", _celda_vencimientos)]
+        + [Paragraph(f"<b>{fmt_eur(v)}</b>", _celda_vencimientos) for v in totales]
+    )
+    t = Table(filas, colWidths=anchos)
+    t.setStyle(TableStyle([
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.grey),
+        ("LINEABOVE", (0, -1), (-1, -1), 0.5, colors.grey),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
+    ]))
+    return t
+
+
+def _tabla_movimiento(calendario, año):
+    anchos = [4.4 * cm, 3.5 * cm, 3.5 * cm, 3.5 * cm, 3.5 * cm]
+    filas = [["Categoría", "Saldo inicial", "(-) Amortizaciones", "(+) Disposiciones", "Saldo final"]]
+    totales = [0.0] * 4
+    for clave, nombre in CATEGORIAS_MOVIMIENTO_NOTA_7:
+        mov = calendario.movimientos_por_año[año][clave]
+        valores = [mov.saldo_inicial_eur, mov.amortizaciones_eur, mov.disposiciones_eur, mov.saldo_final_eur]
+        for i, v in enumerate(valores):
+            totales[i] += v
+        filas.append([nombre] + [fmt_eur(v) for v in valores])
+    filas.append(["Total"] + [fmt_eur(v) for v in totales])
+    return _tabla_simple(filas, anchos=anchos, encabezado=True)
+
+
+def nota_7_pasivos_financieros(evolucion, ejercicios, notas_narrativas):
+    from motor.calendario_deuda import calcular_calendario_deuda
+
+    calendario = calcular_calendario_deuda(evolucion)
     flow = []
-    filas = [["Vencimiento", "2024", "2025"]]
-    for a in (2024, 2025):
-        pass
-    filas.append(["Hasta 1 año"] + [fmt_eur(ejercicios[a].balance_eur["deudas_fin_corto"]) for a in (2024, 2025)])
-    filas.append(["Entre 1 y 5 años"] + [fmt_eur(ejercicios[a].balance_eur["deudas_fin_largo"]) for a in (2024, 2025)])
-    flow.append(_tabla_simple(filas, anchos=[6 * cm, 3.5 * cm, 3.5 * cm]))
     flow.append(Paragraph(
-        "El desglose por plazo de vencimiento es una simplificación (largo plazo agrupado en "
-        "\"entre 1 y 5 años\") — el motor no modela un calendario de vencimientos individual por "
-        "préstamo.", aviso
+        "<b>Clasificación por vencimientos.</b> Importes que vencen en cada uno de los cinco "
+        "años siguientes al cierre y el resto hasta su último vencimiento, para cada partida de "
+        "deudas conforme al modelo de balance (indicación 9.3.2.1.b del modelo Normal / "
+        "apartado 6.a del modelo Abreviado).", cuerpo
+    ))
+    for año in (2023, 2024, 2025):
+        flow.append(Paragraph(f"<b>Ejercicio {año}</b>", cuerpo))
+        flow.append(_tabla_vencimientos(calendario, año))
+        flow.append(Spacer(1, 0.15 * cm))
+
+    flow.append(Paragraph(
+        "<b>Movimiento de la deuda financiera.</b> Variación del saldo de cada categoría de "
+        "deuda financiera con coste, con el detalle de amortizaciones y nuevas disposiciones del "
+        "ejercicio; la suma neta (disposiciones menos amortizaciones) de las categorías con "
+        "coste coincide con la variación neta de deuda financiera mostrada en el Estado de "
+        "Flujos de Efectivo.", cuerpo
+    ))
+    for año in (2024, 2025):
+        flow.append(Paragraph(f"<b>Ejercicio {año}</b>", cuerpo))
+        flow.append(_tabla_movimiento(calendario, año))
+        flow.append(Spacer(1, 0.15 * cm))
+
+    flow.append(Paragraph(
+        "El calendario de vencimientos y el cuadro de movimientos son una DERIVACIÓN a partir de "
+        "parámetros de caso (plazos remanentes típicos por tipo de instrumento), no de un "
+        "calendario contractual real por préstamo — el motor no modela contratos individuales. "
+        "El cuadro de movimientos asume que el saldo a corto plazo del cierre anterior se "
+        "amortiza durante el ejercicio; el resto de la variación del saldo se interpreta como "
+        "nueva disposición (o, si el saldo se reduce más de lo que correspondería a esa "
+        "amortización, como cancelación anticipada).", aviso
     ))
     for n in notas_narrativas:
         if n.arquetipo_id in ("refinanciacion", "riesgo_refinanciacion"):
@@ -440,7 +531,7 @@ def generar_memoria(evolucion, ejercicios, modelo, nombre_empresa, sector_nombre
         4: lambda: nota_4_normas_registro(ejercicios),
         5: lambda: nota_5_inmovilizado(evolucion, ejercicios, notas_narrativas),
         6: lambda: nota_6_activos_financieros(ejercicios, modelo),
-        7: lambda: nota_7_pasivos_financieros(ejercicios, notas_narrativas),
+        7: lambda: nota_7_pasivos_financieros(evolucion, ejercicios, notas_narrativas),
         8: lambda: nota_8_fondos_propios(ejercicios),
         9: lambda: nota_9_situacion_fiscal(ejercicios),
         10: lambda: nota_10_partes_vinculadas(ejercicios, notas_narrativas),
