@@ -18,7 +18,6 @@ titulo_nota = ParagraphStyle("TituloNota", parent=styles["Heading2"], fontSize=1
 cuerpo = ParagraphStyle("CuerpoNota", parent=styles["Normal"], fontSize=9, leading=13, spaceAfter=6, alignment=4)
 aviso = ParagraphStyle("Aviso", parent=cuerpo, fontName="Helvetica-Oblique", textColor=colors.HexColor("#666666"), fontSize=8)
 
-FRACCION_PAGOS_A_CUENTA_IS = 0.54
 RESERVA_LEGAL_PCT = 0.10
 RESERVA_LEGAL_TOPE_PCT_CAPITAL = 0.20
 
@@ -274,47 +273,79 @@ def nota_9_situacion_fiscal(ejercicios):
         bai = ej.pyg_eur["bai"]
         impuesto = ej.pyg_eur["impuesto_beneficios"]
         tipo_efectivo = (impuesto / bai * 100) if bai > 0 else 0.0
-        año_ancla = ejercicios.get(año - 1, ej)
-        pagos_a_cuenta = FRACCION_PAGOS_A_CUENTA_IS * max(0.0, año_ancla.pyg_eur["impuesto_beneficios"] if año > 2023 else impuesto)
-        hacienda_neta = pagos_a_cuenta - impuesto
+        # Hacienda deudora/acreedora se lee del propio Balance (deudores_desglose_eur/
+        # acreedores_desglose_eur, mismas fuentes que mapeo_balance.py) — nunca se recalcula
+        # aparte, para no divergir del techo defensivo que el motor aplica contra el presupuesto
+        # disponible de "clientes"/"proveedores" (ver motor/empresa_base.py y motor/
+        # evolucion_arquetipo.py, bloque "Hacienda Pública, deudora/acreedora"). "Pagos a cuenta"
+        # se deriva por diferencia (cuota − acreedora + deudora), no se sortea aparte.
+        deudora = ej.deudores_desglose_eur.get("hacienda_publica_deudora", 0.0)
+        acreedora = ej.acreedores_desglose_eur.get("hacienda_publica_acreedora", 0.0)
+        pagos_a_cuenta = impuesto - acreedora + deudora
         flow.append(Paragraph(f"<b>Ejercicio {año}</b>", cuerpo))
         filas = [
             ["Resultado antes de impuestos", fmt_eur(bai)],
             ["Tipo impositivo efectivo", f"{tipo_efectivo:.1f}%"],
             ["Cuota del Impuesto sobre Sociedades", fmt_eur(impuesto)],
             ["Pagos a cuenta realizados en el ejercicio", fmt_eur(pagos_a_cuenta)],
-            ["Hacienda Pública, " + ("deudora" if hacienda_neta > 0 else "acreedora") + " por impuesto corriente", fmt_eur(abs(hacienda_neta))],
+            ["Hacienda Pública, " + ("deudora" if deudora > 0 else "acreedora") + " por impuesto corriente",
+             fmt_eur(deudora if deudora > 0 else acreedora)],
         ]
         flow.append(_tabla_simple(filas))
         flow.append(Spacer(1, 0.15 * cm))
+    flow.append(Paragraph(
+        "Los pagos a cuenta del ejercicio se obtienen por diferencia entre la cuota del Impuesto "
+        "sobre Sociedades y la posición neta con la Hacienda Pública por impuesto corriente que "
+        "muestra el Balance (Activos/Pasivos por impuesto corriente).", aviso
+    ))
 
-    piezas = []
-    if any(ejercicios[a].cobertura_saldo_1340_bruto_eur != 0 for a in (2024, 2025)):
-        piezas.append("la cobertura de flujos de efectivo contratada (ver nota 7)")
+    diferido_pasivo = {a: ejercicios[a].pasivos_por_impuesto_diferido_eur for a in (2024, 2025)}
+    diferido_activo = {a: ejercicios[a].activos_por_impuesto_diferido_eur for a in (2024, 2025)}
+    hay_pasivo_diferido = any(v != 0 for v in diferido_pasivo.values())
+    hay_activo_diferido = any(v != 0 for v in diferido_activo.values())
+
+    piezas_pasivo = []
+    if any(ejercicios[a].cobertura_saldo_1340_bruto_eur > 0 for a in (2024, 2025)):
+        piezas_pasivo.append("la cobertura de flujos de efectivo contratada (ver nota 7)")
     if any(ejercicios[a].subvencion_saldo_130_bruto_eur > 0 for a in (2024, 2025)):
-        piezas.append("la subvención de capital concedida (ver nota 8)")
+        piezas_pasivo.append("la subvención de capital concedida (ver nota 8)")
+    piezas_activo = []
+    if any(ejercicios[a].cobertura_saldo_1340_bruto_eur < 0 for a in (2024, 2025)):
+        piezas_activo.append("la cobertura de flujos de efectivo contratada (ver nota 7)")
 
-    if piezas:
-        diferido_24 = ejercicios[2024].pasivos_por_impuesto_diferido_eur
-        diferido_25 = ejercicios[2025].pasivos_por_impuesto_diferido_eur
-        flow.append(Paragraph(
-            f"Existe una diferencia temporaria entre el resultado contable y la base imponible "
-            f"derivada de {' y '.join(piezas)}, registrada directamente en el patrimonio neto "
-            "sin pasar por la cuenta de pérdidas y ganancias. El efecto fiscal asociado, "
-            f"calculado al tipo general del {TIPO_IMPOSITIVO_GENERAL:.0%} (art. 29 de la Ley "
-            "27/2014, del Impuesto sobre Sociedades — no al tipo efectivo de la tabla anterior, "
-            "que solo se aplica al resultado del ejercicio), se reconoce como pasivo por "
-            f"impuesto diferido: {fmt_eur(diferido_24)} (2024) y {fmt_eur(diferido_25)} (2025), "
-            "mostrado en el epígrafe B.IV del Pasivo No Corriente del Balance. Al margen de esta "
-            "diferencia temporaria, no existen otras diferencias significativas entre el "
-            "resultado contable y la base imponible del Impuesto sobre Sociedades en los "
-            "ejercicios presentados.", cuerpo
-        ))
-    else:
+    if not hay_pasivo_diferido and not hay_activo_diferido:
         flow.append(Paragraph(
             "No existen diferencias significativas entre el resultado contable y la base imponible "
             "del Impuesto sobre Sociedades en los ejercicios presentados.", cuerpo
         ))
+        return flow
+
+    tipo_txt = (
+        f"calculado al tipo general del {TIPO_IMPOSITIVO_GENERAL:.0%} (art. 29 de la Ley "
+        "27/2014, del Impuesto sobre Sociedades — no al tipo efectivo de la tabla anterior, "
+        "que solo se aplica al resultado del ejercicio)"
+    )
+    if hay_pasivo_diferido:
+        flow.append(Paragraph(
+            f"Existe una diferencia temporaria entre el resultado contable y la base imponible "
+            f"derivada de {' y '.join(piezas_pasivo)}, registrada directamente en el patrimonio "
+            f"neto sin pasar por la cuenta de pérdidas y ganancias. El efecto fiscal asociado, "
+            f"{tipo_txt}, se reconoce como pasivo por impuesto diferido: "
+            f"{fmt_eur(diferido_pasivo[2024])} (2024) y {fmt_eur(diferido_pasivo[2025])} (2025), "
+            "mostrado en el epígrafe B.IV del Pasivo No Corriente del Balance.", cuerpo
+        ))
+    if hay_activo_diferido:
+        flow.append(Paragraph(
+            f"Existe además una diferencia temporaria derivada de {' y '.join(piezas_activo)} "
+            f"que, por signo contrario a la anterior, se reconoce como activo por impuesto "
+            f"diferido: {fmt_eur(diferido_activo[2024])} (2024) y {fmt_eur(diferido_activo[2025])} "
+            "(2025), mostrado en el epígrafe A.VI del Activo No Corriente del Balance.", cuerpo
+        ))
+    flow.append(Paragraph(
+        "Al margen de estas diferencias temporarias, no existen otras diferencias significativas "
+        "entre el resultado contable y la base imponible del Impuesto sobre Sociedades en los "
+        "ejercicios presentados.", cuerpo
+    ))
     return flow
 
 
