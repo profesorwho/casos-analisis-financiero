@@ -2,7 +2,15 @@
 partir de datos ya generados del caso (`evolucion.plausibilidad`, `balance_eur`/`pyg_eur`,
 `generar_efe`, `motor.calendario_deuda`) — no recalcula ni sortea nada del motor. Ver
 `renderer/generar_solucion_caso.py` para el punto de entrada y `docs/decisiones_plausibilidad.md`
-#113 para la verificación de las 2 piezas de cálculo NUEVAS de este módulo (PMM, DuPont)."""
+#113 para la verificación de las 2 piezas de cálculo NUEVAS de este módulo (PMM, DuPont).
+
+**Refactor del encargo #114 (sin cambiar ni un byte de la salida — ver `tests/test_mapeo_
+solucion.py`/`tests/test_generar_solucion_caso.py`, que siguen en verde sin tocar)**: las
+tablas de cada sección se extrajeron a funciones `tabla_*` independientes de la prosa
+determinista, para que `renderer/mapeo_solucion_narrativo.py` (modo narrado por LLM) pueda
+reutilizarlas EXACTAMENTE — el LLM nunca escribe una tabla, solo la prosa que las acompaña. Las
+funciones `seccion_N_*` de este módulo (modo determinista, sin cambios de comportamiento) ahora
+son delgadas: llaman a la tabla + añaden los mismos párrafos fijos de siempre."""
 from __future__ import annotations
 
 from reportlab.lib import colors
@@ -162,6 +170,10 @@ def calcular_apalancamiento_financiero(balance_eur: dict[str, float]) -> float |
     return pasivo_total / pn if pn else None
 
 
+def calcular_fondo_maniobra(balance_eur: dict[str, float]) -> float:
+    return balance_eur["activo_corriente"] - balance_eur["pasivo_corriente"]
+
+
 def calcular_rf_dupont(roi: float | None, balance_eur: dict[str, float], pyg_eur: dict[str, float]) -> float | None:
     """Descomposición DuPont de la rentabilidad financiera — **fórmula corregida tras el
     protocolo de parada del encargo #113** (ver decisiones_plausibilidad.md #113 para el
@@ -207,6 +219,16 @@ def calcular_rf_dupont(roi: float | None, balance_eur: dict[str, float], pyg_eur
     )
 
 
+def calcular_concentracion_vencimientos_1año(calendario, año: int = 2025) -> float | None:
+    """Fracción de la deuda NO comercial (los 8 tipos del calendario de vencimientos, encargo
+    #112 — excluye `acreedores_comerciales`) que vence en el próximo ejercicio. `None` si el
+    total de deuda de ese año es 0 (caso degenerado)."""
+    tramos = calendario.vencimientos_por_año[año]
+    total_un_año = sum(tramos[c].un_año for c in CATEGORIAS_CALENDARIO_NO_COMERCIALES)
+    total_deuda = sum(tramos[c].total for c in CATEGORIAS_CALENDARIO_NO_COMERCIALES)
+    return total_un_año / total_deuda if total_deuda > 0 else None
+
+
 # --------------------------------------------------------------------------------------------
 # Sección 1 — Resumen ejecutivo
 # --------------------------------------------------------------------------------------------
@@ -225,6 +247,17 @@ def _semaforo(plausibilidad, grupo_ratios: tuple[str, ...]) -> str:
     return "sin desviaciones frente al sector"
 
 
+def estado_semaforo_por_bloque(evolucion) -> dict[str, str]:
+    return {nombre: _semaforo(evolucion.plausibilidad, ratios) for nombre, ratios in GRUPOS_SEMAFORO.items()}
+
+
+def tabla_semaforo(evolucion) -> Table:
+    filas = [["Bloque", "Estado"]]
+    for nombre_grupo, estado in estado_semaforo_por_bloque(evolucion).items():
+        filas.append([nombre_grupo, estado])
+    return _tabla(filas, anchos=[6 * cm, 10 * cm])
+
+
 def seccion_1_resumen_ejecutivo(evolucion, arquetipos_activos: list[tuple[str, str]]) -> list:
     flow = [Paragraph("1. Resumen ejecutivo", titulo_seccion)]
     flow.append(Paragraph(
@@ -238,10 +271,7 @@ def seccion_1_resumen_ejecutivo(evolucion, arquetipos_activos: list[tuple[str, s
         flow.append(Paragraph(f"<b>{arquetipo_id}</b> (intensidad: {intensidad}) — {descripcion}", cuerpo))
 
     flow.append(Paragraph("Semáforo por bloque (frente a los datos reales del sector)", subtitulo_seccion))
-    filas = [["Bloque", "Estado"]]
-    for nombre_grupo, ratios_grupo in GRUPOS_SEMAFORO.items():
-        filas.append([nombre_grupo, _semaforo(evolucion.plausibilidad, ratios_grupo)])
-    flow.append(_tabla(filas, anchos=[6 * cm, 10 * cm]))
+    flow.append(tabla_semaforo(evolucion))
 
     n_señales = len(evolucion.plausibilidad.señales)
     ids_arquetipos = ", ".join(aid for aid, _ in arquetipos_activos)
@@ -272,10 +302,7 @@ def _activo_total(balance_eur: dict) -> float:
     return balance_eur["activo_no_corriente"] + balance_eur["activo_corriente"]
 
 
-def seccion_2_analisis_patrimonial(ejercicios: dict) -> list:
-    flow = [Paragraph("2. Análisis patrimonial", titulo_seccion)]
-
-    flow.append(Paragraph("Porcentajes verticales (cada masa sobre el activo total = PN+Pasivo total)", subtitulo_seccion))
+def tabla_balance_vertical(ejercicios: dict) -> Table:
     filas = [["Masa"] + [str(a) for a in AÑOS]]
     for clave, etiqueta in MASAS_ACTIVO + MASAS_ACTIVO_DETALLE + MASAS_PN_PASIVO:
         fila = [etiqueta]
@@ -283,9 +310,10 @@ def seccion_2_analisis_patrimonial(ejercicios: dict) -> list:
             total = _activo_total(ejercicios[año].balance_eur)
             fila.append(_fmt_pct(ejercicios[año].balance_eur[clave] / total) if total else "n/d")
         filas.append(fila)
-    flow.append(_tabla(filas, anchos=[6.5 * cm, 3.9 * cm, 3.9 * cm, 3.9 * cm]))
+    return _tabla(filas, anchos=[6.5 * cm, 3.9 * cm, 3.9 * cm, 3.9 * cm])
 
-    flow.append(Paragraph("Porcentajes horizontales (variación interanual)", subtitulo_seccion))
+
+def tabla_balance_horizontal(ejercicios: dict) -> Table:
     filas = [["Masa", "2023 → 2024", "2024 → 2025"]]
     for clave, etiqueta in MASAS_ACTIVO + MASAS_ACTIVO_DETALLE + MASAS_PN_PASIVO:
         fila = [etiqueta]
@@ -294,40 +322,50 @@ def seccion_2_analisis_patrimonial(ejercicios: dict) -> list:
             v1 = ejercicios[a1].balance_eur[clave]
             fila.append(_fmt_pct((v1 - v0) / v0) if v0 else "n/d")
         filas.append(fila)
-    flow.append(_tabla(filas, anchos=[6.5 * cm, 5.85 * cm, 5.85 * cm]))
+    return _tabla(filas, anchos=[6.5 * cm, 5.85 * cm, 5.85 * cm])
 
-    flow.append(Paragraph("Fondo de maniobra (Activo corriente − Pasivo corriente)", subtitulo_seccion))
-    fms = {}
+
+def tabla_fondo_maniobra(ejercicios: dict) -> Table:
     filas = [["", *[str(a) for a in AÑOS]]]
     fila = ["Fondo de maniobra (€)"]
     for año in AÑOS:
-        b = ejercicios[año].balance_eur
-        fm = b["activo_corriente"] - b["pasivo_corriente"]
-        fms[año] = fm
-        fila.append(fmt_eur(fm))
+        fila.append(fmt_eur(calcular_fondo_maniobra(ejercicios[año].balance_eur)))
     filas.append(fila)
-    flow.append(_tabla(filas, anchos=[6.5 * cm, 3.9 * cm, 3.9 * cm, 3.9 * cm]))
+    return _tabla(filas, anchos=[6.5 * cm, 3.9 * cm, 3.9 * cm, 3.9 * cm])
 
-    if fms[2025] < 0:
-        interpretacion = (
+
+def interpretacion_fondo_maniobra(ejercicios: dict) -> str:
+    fm_2023 = calcular_fondo_maniobra(ejercicios[2023].balance_eur)
+    fm_2025 = calcular_fondo_maniobra(ejercicios[2025].balance_eur)
+    if fm_2025 < 0:
+        return (
             "El fondo de maniobra es NEGATIVO en 2025: el pasivo corriente supera al activo "
             "corriente — la empresa financia parte de su activo no corriente (o simplemente "
             "arrastra un déficit de circulante) con pasivo exigible a corto plazo, una posición "
             "de riesgo si no hay una renovación fluida de ese pasivo."
         )
-    elif fms[2025] < fms[2023]:
-        interpretacion = (
+    if fm_2025 < fm_2023:
+        return (
             "El fondo de maniobra es positivo en 2025 pero HA DISMINUIDO respecto a 2023 — la "
             "holgura de circulante se ha reducido a lo largo del caso, aunque sin llegar a ser "
             "negativa."
         )
-    else:
-        interpretacion = (
-            "El fondo de maniobra es positivo y se ha mantenido o ampliado a lo largo del caso — "
-            "cobertura financiera del circulante razonable, sin tensión aparente en la "
-            "estructura de plazos del balance."
-        )
-    flow.append(Paragraph(interpretacion, cuerpo))
+    return (
+        "El fondo de maniobra es positivo y se ha mantenido o ampliado a lo largo del caso — "
+        "cobertura financiera del circulante razonable, sin tensión aparente en la "
+        "estructura de plazos del balance."
+    )
+
+
+def seccion_2_analisis_patrimonial(ejercicios: dict) -> list:
+    flow = [Paragraph("2. Análisis patrimonial", titulo_seccion)]
+    flow.append(Paragraph("Porcentajes verticales (cada masa sobre el activo total = PN+Pasivo total)", subtitulo_seccion))
+    flow.append(tabla_balance_vertical(ejercicios))
+    flow.append(Paragraph("Porcentajes horizontales (variación interanual)", subtitulo_seccion))
+    flow.append(tabla_balance_horizontal(ejercicios))
+    flow.append(Paragraph("Fondo de maniobra (Activo corriente − Pasivo corriente)", subtitulo_seccion))
+    flow.append(tabla_fondo_maniobra(ejercicios))
+    flow.append(Paragraph(interpretacion_fondo_maniobra(ejercicios), cuerpo))
     return flow
 
 
@@ -335,17 +373,30 @@ def seccion_2_analisis_patrimonial(ejercicios: dict) -> list:
 # Sección 3 — Liquidez a corto plazo
 # --------------------------------------------------------------------------------------------
 
-def seccion_3_liquidez(evolucion) -> list:
-    flow = [Paragraph("3. Análisis financiero a corto plazo (liquidez)", titulo_seccion)]
+TEXTO_AVISO_PMM = (
+    "El PMM económico es el tiempo que transcurre desde que se invierte en existencias "
+    "hasta que se cobra la venta (plazo de existencias + plazo de cobro). El PMM financiero "
+    "resta el plazo de pago a proveedores: <b>puede ser negativo de forma legítima</b> "
+    "cuando la empresa cobra a sus clientes antes de lo que tarda en pagar a sus "
+    "proveedores — no se trata aquí como una anomalía en sí misma, es un dato informativo "
+    "más sobre la posición de caja del ciclo de explotación. El plazo de pago (`ratios.pago_"
+    "dias`) es un ratio informativo del catálogo (ver aviso más abajo) — su ancla de sector "
+    "está contaminada por un denominador poco fiable en los sectores de servicios, así que "
+    "el PMM financiero debe leerse con esa cautela."
+)
+
+
+def tabla_liquidez(evolucion) -> Table:
     filas = [["Ratio", *[str(a) for a in AÑOS]]]
     for ratio in ("ratios.liquidez", "ratios.tesoreria", "ratios.disponibilidad_ratio"):
         fila = [RATIO_NOMBRE_LEGIBLE[ratio]]
         for año in AÑOS:
             fila.append(_fmt_num(evolucion.plausibilidad.valores_por_año[año].get(ratio)))
         filas.append(fila)
-    flow.append(_tabla(filas, anchos=[7 * cm, 3.8 * cm, 3.8 * cm, 3.8 * cm]))
+    return _tabla(filas, anchos=[7 * cm, 3.8 * cm, 3.8 * cm, 3.8 * cm])
 
-    flow.append(Paragraph("Período medio de maduración (PMM)", subtitulo_seccion))
+
+def tabla_pmm(evolucion) -> Table:
     filas = [["", *[str(a) for a in AÑOS]]]
     fila_eco = ["PMM económico (días)"]
     fila_fin = ["PMM financiero (días)"]
@@ -355,18 +406,15 @@ def seccion_3_liquidez(evolucion) -> list:
         fila_fin.append(_fmt_dias(pmm_fin))
     filas.append(fila_eco)
     filas.append(fila_fin)
-    flow.append(_tabla(filas, anchos=[7 * cm, 3.8 * cm, 3.8 * cm, 3.8 * cm]))
-    flow.append(Paragraph(
-        "El PMM económico es el tiempo que transcurre desde que se invierte en existencias "
-        "hasta que se cobra la venta (plazo de existencias + plazo de cobro). El PMM financiero "
-        "resta el plazo de pago a proveedores: <b>puede ser negativo de forma legítima</b> "
-        "cuando la empresa cobra a sus clientes antes de lo que tarda en pagar a sus "
-        "proveedores — no se trata aquí como una anomalía en sí misma, es un dato informativo "
-        "más sobre la posición de caja del ciclo de explotación. El plazo de pago (`ratios.pago_"
-        "dias`) es un ratio informativo del catálogo (ver aviso más abajo) — su ancla de sector "
-        "está contaminada por un denominador poco fiable en los sectores de servicios, así que "
-        "el PMM financiero debe leerse con esa cautela.", aviso
-    ))
+    return _tabla(filas, anchos=[7 * cm, 3.8 * cm, 3.8 * cm, 3.8 * cm])
+
+
+def seccion_3_liquidez(evolucion) -> list:
+    flow = [Paragraph("3. Análisis financiero a corto plazo (liquidez)", titulo_seccion)]
+    flow.append(tabla_liquidez(evolucion))
+    flow.append(Paragraph("Período medio de maduración (PMM)", subtitulo_seccion))
+    flow.append(tabla_pmm(evolucion))
+    flow.append(Paragraph(TEXTO_AVISO_PMM, aviso))
     return flow
 
 
@@ -379,9 +427,15 @@ CATEGORIAS_CALENDARIO_NO_COMERCIALES = (
     "derivados", "acreedores_inmovilizado", "fianzas_deudas_socios", "remanente_otras_deudas",
 )
 
+TEXTO_AVISO_RATIOS_INFORMATIVOS = (
+    "El coste de la deuda y la cobertura de gastos financieros son ratios INFORMATIVOS: su "
+    "ancla de catálogo está contaminada (mezclan en el denominador partidas ajenas al "
+    "interés real de la deuda) — se muestran por completitud, no como señal dura de "
+    "plausibilidad."
+)
 
-def seccion_4_endeudamiento(evolucion, calendario) -> list:
-    flow = [Paragraph("4. Análisis financiero a largo plazo (endeudamiento y solvencia)", titulo_seccion)]
+
+def tabla_endeudamiento(evolucion) -> Table:
     filas = [["Ratio", *[str(a) for a in AÑOS]]]
     for ratio in ("ratios.endeudamiento", "ratios.calidad_deuda", "ratios.coste_deuda",
                   "ratios.cobertura_gastos_fin", "ratios.capacidad_devolucion"):
@@ -389,20 +443,18 @@ def seccion_4_endeudamiento(evolucion, calendario) -> list:
         for año in AÑOS:
             fila.append(_fmt_num(evolucion.plausibilidad.valores_por_año[año].get(ratio)))
         filas.append(fila)
-    flow.append(_tabla(filas, anchos=[7 * cm, 3.8 * cm, 3.8 * cm, 3.8 * cm]))
-    flow.append(Paragraph(
-        "El coste de la deuda y la cobertura de gastos financieros son ratios INFORMATIVOS: su "
-        "ancla de catálogo está contaminada (mezclan en el denominador partidas ajenas al "
-        "interés real de la deuda) — se muestran por completitud, no como señal dura de "
-        "plausibilidad.", aviso
-    ))
+    return _tabla(filas, anchos=[7 * cm, 3.8 * cm, 3.8 * cm, 3.8 * cm])
 
-    tramos_2025 = calendario.vencimientos_por_año[2025]
-    total_un_año = sum(tramos_2025[c].un_año for c in CATEGORIAS_CALENDARIO_NO_COMERCIALES)
-    total_deuda = sum(tramos_2025[c].total for c in CATEGORIAS_CALENDARIO_NO_COMERCIALES)
-    if total_deuda > 0 and total_un_año / total_deuda > 0.5:
+
+def seccion_4_endeudamiento(evolucion, calendario) -> list:
+    flow = [Paragraph("4. Análisis financiero a largo plazo (endeudamiento y solvencia)", titulo_seccion)]
+    flow.append(tabla_endeudamiento(evolucion))
+    flow.append(Paragraph(TEXTO_AVISO_RATIOS_INFORMATIVOS, aviso))
+
+    concentracion = calcular_concentracion_vencimientos_1año(calendario)
+    if concentracion is not None and concentracion > 0.5:
         flow.append(Paragraph(
-            f"<b>Concentración de vencimientos.</b> El {total_un_año / total_deuda:.0%} de la "
+            f"<b>Concentración de vencimientos.</b> El {concentracion:.0%} de la "
             "deuda no comercial de 2025 vence en el próximo ejercicio (tramo \"1 año\") — "
             "consulta el calendario de vencimientos completo por categoría en la Nota 7 de la "
             "Memoria (encargo #112) para valorar el riesgo de refinanciación.", cuerpo
@@ -422,8 +474,7 @@ PARTIDAS_ESTRUCTURA_GASTOS = (
 )
 
 
-def seccion_5_analisis_economico(ejercicios, evolucion) -> list:
-    flow = [Paragraph("5. Análisis económico (cuenta de resultados)", titulo_seccion)]
+def tabla_economico(ejercicios, evolucion) -> Table:
     filas = [["", *[str(a) for a in AÑOS]]]
     fila_margen = ["Margen bruto / Ingresos explot."]
     fila_baii = ["BAII / Ingresos explot."]
@@ -435,16 +486,24 @@ def seccion_5_analisis_economico(ejercicios, evolucion) -> list:
     filas.append(fila_margen)
     filas.append(fila_baii)
     filas.append(fila_resultado)
-    flow.append(_tabla(filas, anchos=[7 * cm, 3.8 * cm, 3.8 * cm, 3.8 * cm]))
+    return _tabla(filas, anchos=[7 * cm, 3.8 * cm, 3.8 * cm, 3.8 * cm])
 
-    flow.append(Paragraph("Estructura de gastos principales (% sobre ingresos de explotación)", subtitulo_seccion))
+
+def tabla_estructura_gastos(ejercicios) -> Table:
     filas = [["Partida", *[str(a) for a in AÑOS]]]
     for clave, etiqueta in PARTIDAS_ESTRUCTURA_GASTOS:
         fila = [etiqueta]
         for año in AÑOS:
             fila.append(_fmt_pct_ya_100(ejercicios[año].pyg_pct[clave]))
         filas.append(fila)
-    flow.append(_tabla(filas, anchos=[7 * cm, 3.8 * cm, 3.8 * cm, 3.8 * cm]))
+    return _tabla(filas, anchos=[7 * cm, 3.8 * cm, 3.8 * cm, 3.8 * cm])
+
+
+def seccion_5_analisis_economico(ejercicios, evolucion) -> list:
+    flow = [Paragraph("5. Análisis económico (cuenta de resultados)", titulo_seccion)]
+    flow.append(tabla_economico(ejercicios, evolucion))
+    flow.append(Paragraph("Estructura de gastos principales (% sobre ingresos de explotación)", subtitulo_seccion))
+    flow.append(tabla_estructura_gastos(ejercicios))
     return flow
 
 
@@ -452,24 +511,26 @@ def seccion_5_analisis_economico(ejercicios, evolucion) -> list:
 # Sección 6 — Rentabilidad (ROI/ROE + descomposición DuPont)
 # --------------------------------------------------------------------------------------------
 
-def seccion_6_rentabilidad(evolucion, ejercicios) -> list:
-    flow = [Paragraph("6. Análisis de la rentabilidad", titulo_seccion)]
+TEXTO_EXPLICACION_DUPONT = (
+    "RF = ROI × (1 + Pasivo total/PN) + Ingresos financieros/PN − Gastos financieros/PN − "
+    "Impuesto sobre beneficios/PN. Es una identidad algebraica exacta (verificado en 6.480 "
+    "comprobaciones, desviación máxima 1,7e-13 — ver decisiones_plausibilidad.md #113): la "
+    "columna \"RF calculada\" coincide con la \"Rentabilidad financiera (ROE)\" de la tabla "
+    "anterior en todo ejercicio con patrimonio neto distinto de cero."
+)
+
+
+def tabla_rentabilidad(evolucion) -> Table:
     filas = [["Ratio", *[str(a) for a in AÑOS]]]
     for ratio in ("ratios.roi", "ratios.roe"):
         fila = [RATIO_NOMBRE_LEGIBLE[ratio]]
         for año in AÑOS:
             fila.append(_fmt_pct(evolucion.plausibilidad.valores_por_año[año].get(ratio)))
         filas.append(fila)
-    flow.append(_tabla(filas, anchos=[7 * cm, 3.8 * cm, 3.8 * cm, 3.8 * cm]))
+    return _tabla(filas, anchos=[7 * cm, 3.8 * cm, 3.8 * cm, 3.8 * cm])
 
-    flow.append(Paragraph("Descomposición DuPont de la rentabilidad financiera", subtitulo_seccion))
-    flow.append(Paragraph(
-        "RF = ROI × (1 + Pasivo total/PN) + Ingresos financieros/PN − Gastos financieros/PN − "
-        "Impuesto sobre beneficios/PN. Es una identidad algebraica exacta (verificado en 6.480 "
-        "comprobaciones, desviación máxima 1,7e-13 — ver decisiones_plausibilidad.md #113): la "
-        "columna \"RF calculada\" coincide con la \"Rentabilidad financiera (ROE)\" de la tabla "
-        "anterior en todo ejercicio con patrimonio neto distinto de cero.", cuerpo
-    ))
+
+def tabla_dupont(evolucion, ejercicios) -> Table:
     filas = [["", *[str(a) for a in AÑOS]]]
     fila_apal = ["Apalancamiento (Pasivo total/PN)"]
     fila_rf = ["RF calculada (DuPont)"]
@@ -481,7 +542,15 @@ def seccion_6_rentabilidad(evolucion, ejercicios) -> list:
         fila_rf.append(_fmt_pct(rf))
     filas.append(fila_apal)
     filas.append(fila_rf)
-    flow.append(_tabla(filas, anchos=[7 * cm, 3.8 * cm, 3.8 * cm, 3.8 * cm]))
+    return _tabla(filas, anchos=[7 * cm, 3.8 * cm, 3.8 * cm, 3.8 * cm])
+
+
+def seccion_6_rentabilidad(evolucion, ejercicios) -> list:
+    flow = [Paragraph("6. Análisis de la rentabilidad", titulo_seccion)]
+    flow.append(tabla_rentabilidad(evolucion))
+    flow.append(Paragraph("Descomposición DuPont de la rentabilidad financiera", subtitulo_seccion))
+    flow.append(Paragraph(TEXTO_EXPLICACION_DUPONT, cuerpo))
+    flow.append(tabla_dupont(evolucion, ejercicios))
     return flow
 
 
@@ -502,8 +571,7 @@ def _patron_efe(efe) -> str:
     return "Patrón mixto, sin un caso típico claro — revisa los 3 importes de la tabla directamente."
 
 
-def seccion_7_efe(efes: dict) -> list:
-    flow = [Paragraph("7. Análisis del Estado de Flujos de Efectivo", titulo_seccion)]
+def tabla_efe(efes: dict) -> Table:
     filas = [["", "2024", "2025"]]
     for etiqueta, campo in [
         ("A.5) Flujo de explotación", "a5_flujo_explotacion"),
@@ -512,7 +580,12 @@ def seccion_7_efe(efes: dict) -> list:
         ("Variación neta del efectivo", "e_variacion_neta_efectivo"),
     ]:
         filas.append([etiqueta] + [fmt_eur(getattr(efes[a], campo)) for a in (2024, 2025)])
-    flow.append(_tabla(filas, anchos=[7.5 * cm, 5.45 * cm, 5.45 * cm]))
+    return _tabla(filas, anchos=[7.5 * cm, 5.45 * cm, 5.45 * cm])
+
+
+def seccion_7_efe(efes: dict) -> list:
+    flow = [Paragraph("7. Análisis del Estado de Flujos de Efectivo", titulo_seccion)]
+    flow.append(tabla_efe(efes))
     for año in (2024, 2025):
         flow.append(Paragraph(f"<b>{año}:</b> {_patron_efe(efes[año])}", cuerpo))
     return flow
@@ -532,15 +605,10 @@ def _texto_señal(señal) -> str:
     )
 
 
-def seccion_8_señales(evolucion) -> list:
-    flow = [Paragraph("8. Señales de alerta (banderas rojas)", titulo_seccion)]
+def tabla_señales(evolucion) -> Table | None:
     señales = evolucion.plausibilidad.señales
     if not señales:
-        flow.append(Paragraph(
-            "Sin desviaciones significativas frente al sector en el barrido de ratios de los 3 "
-            "ejercicios.", cuerpo
-        ))
-        return flow
+        return None
     filas = [["Ratio", "Año", "Valor del caso", "Típico del sector", "Desviaciones", "Dirección"]]
     for señal in sorted(señales, key=lambda s: (s.año, s.ratio)):
         filas.append([
@@ -549,7 +617,20 @@ def seccion_8_señales(evolucion) -> list:
             "∞" if señal.desviaciones in (float("inf"), float("-inf")) else _fmt_num(señal.desviaciones, 1),
             "por encima" if señal.direccion == "por_encima" else "por debajo",
         ])
-    flow.append(_tabla(filas, anchos=[5.2 * cm, 1.6 * cm, 2.7 * cm, 2.7 * cm, 2.7 * cm, 2.7 * cm]))
+    return _tabla(filas, anchos=[5.2 * cm, 1.6 * cm, 2.7 * cm, 2.7 * cm, 2.7 * cm, 2.7 * cm])
+
+
+def seccion_8_señales(evolucion) -> list:
+    flow = [Paragraph("8. Señales de alerta (banderas rojas)", titulo_seccion)]
+    señales = evolucion.plausibilidad.señales
+    tabla = tabla_señales(evolucion)
+    if tabla is None:
+        flow.append(Paragraph(
+            "Sin desviaciones significativas frente al sector en el barrido de ratios de los 3 "
+            "ejercicios.", cuerpo
+        ))
+        return flow
+    flow.append(tabla)
     for señal in sorted(señales, key=lambda s: (s.año, s.ratio)):
         flow.append(Paragraph(f"- {_texto_señal(señal)}", cuerpo))
     return flow
