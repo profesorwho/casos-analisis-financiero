@@ -1,7 +1,7 @@
 """Cliente de la API de Anthropic, verificador numérico y caché — encargo #114 (modo narrativo
 del documento de solución). Módulo agnóstico del caso concreto: no importa nada de `motor/` ni
-de `mapeo_solucion.py`, solo trabaja con el "paquete de verdad" (un dict serializable) que le
-pasa `renderer/mapeo_solucion_narrativo.py`.
+de `mapeo_solucion.py`, solo trabaja con "bancos de verdad" (conjuntos de floats) que le pasa
+`renderer/mapeo_solucion_narrativo.py`.
 
 **Qué NO es esta verificación (documentado explícitamente, sin venderla como más de lo que es)**:
 es una criba de errores GRUESOS — números inventados, de otro caso, o de un orden de magnitud
@@ -9,7 +9,20 @@ distinto al que corresponde. NO es una prueba de exactitud perfecta del lenguaje
 que redondea razonablemente ("ronda el 70%", "supera el millón de euros") debe pasar; un LLM que
 inventa una cifra, cita una cifra de otro ejercicio/caso, o se equivoca de orden de magnitud, debe
 fallar. La tolerancia (ver `TOLERANCIA_RELATIVA` abajo) está calibrada para eso, no para detectar
-errores de precisión de un decimal."""
+errores de precisión de un decimal.
+
+**Verificación POR SECCIÓN, no contra un banco global (arreglo posterior al diseño original del
+#114, ver decisiones_plausibilidad.md #115-fix)**: con el paquete de verdad completo de un caso
+real (~278 valores), un banco global deja pasar por COLISIÓN cifras inventadas que nada tienen
+que ver con lo que el texto describe — medido en el diseño original: 92 de 101 porcentajes
+arbitrarios (0-100%) pasaban la verificación contra un caso real, porque siempre chocaban con
+ALGÚN valor no relacionado del banco completo (p. ej. un ROE inventado del 35% colaba por
+coincidir con un "Activo no corriente = 35,6%" de otra sección/año, con el ROE real en 11,4%).
+Este módulo ya no construye un banco único: quien orquesta la narrativa (`mapeo_solucion_
+narrativo.construir_bancos_de_verdad_por_seccion`) construye un banco MÁS PEQUEÑO por cada una de
+las 9 secciones, usando solo los datos que esa sección puede citar legítimamente (más los
+recuentos/años globales de `meta`) — `generar_narrativa_con_verificacion` recibe ya ese dict
+`{seccion: banco}` en vez de un `paquete_verdad` completo."""
 from __future__ import annotations
 
 import hashlib
@@ -318,17 +331,19 @@ class ResultadoNarrativa:
 
 
 def generar_narrativa_con_verificacion(
-    prompt_inicial: str, paquete_verdad: dict, modelo: str | None = None,
+    prompt_inicial: str, bancos_por_seccion: dict[str, set[float]], modelo: str | None = None,
 ) -> ResultadoNarrativa:
+    """`bancos_por_seccion` debe traer una clave por cada una de `NOMBRES_SECCIONES` (ver
+    `mapeo_solucion_narrativo.construir_bancos_de_verdad_por_seccion`, que construye un banco
+    MÁS PEQUEÑO por sección en vez de uno global — ver docstring del módulo para por qué)."""
     modelo_resuelto = modelo or os.environ.get("NARRATIVA_MODELO", MODELO_POR_DEFECTO)
-    banco = construir_banco_de_verdad(paquete_verdad)
 
     mensajes = [{"role": "user", "content": prompt_inicial}]
     cifras_no_verificadas_por_seccion: dict[str, list[float]] = {}
     for intento in range(1, MAX_INTENTOS + 1):
         secciones = llamar_llm(mensajes, modelo=modelo_resuelto)
         cifras_no_verificadas_por_seccion = {
-            seccion: verificar_cifras(texto, banco) for seccion, texto in secciones.items()
+            seccion: verificar_cifras(texto, bancos_por_seccion[seccion]) for seccion, texto in secciones.items()
         }
         if not any(cifras_no_verificadas_por_seccion.values()):
             return ResultadoNarrativa(secciones=secciones, intentos=intento, modelo=modelo_resuelto)

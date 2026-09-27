@@ -386,9 +386,12 @@ TEXTO_AVISO_PMM = (
 )
 
 
+RATIOS_LIQUIDEZ = ("ratios.liquidez", "ratios.tesoreria", "ratios.disponibilidad_ratio")
+
+
 def tabla_liquidez(evolucion) -> Table:
     filas = [["Ratio", *[str(a) for a in AÑOS]]]
-    for ratio in ("ratios.liquidez", "ratios.tesoreria", "ratios.disponibilidad_ratio"):
+    for ratio in RATIOS_LIQUIDEZ:
         fila = [RATIO_NOMBRE_LEGIBLE[ratio]]
         for año in AÑOS:
             fila.append(_fmt_num(evolucion.plausibilidad.valores_por_año[año].get(ratio)))
@@ -435,10 +438,15 @@ TEXTO_AVISO_RATIOS_INFORMATIVOS = (
 )
 
 
+RATIOS_ENDEUDAMIENTO = (
+    "ratios.endeudamiento", "ratios.calidad_deuda", "ratios.coste_deuda",
+    "ratios.cobertura_gastos_fin", "ratios.capacidad_devolucion",
+)
+
+
 def tabla_endeudamiento(evolucion) -> Table:
     filas = [["Ratio", *[str(a) for a in AÑOS]]]
-    for ratio in ("ratios.endeudamiento", "ratios.calidad_deuda", "ratios.coste_deuda",
-                  "ratios.cobertura_gastos_fin", "ratios.capacidad_devolucion"):
+    for ratio in RATIOS_ENDEUDAMIENTO:
         fila = [RATIO_NOMBRE_LEGIBLE[ratio]]
         for año in AÑOS:
             fila.append(_fmt_num(evolucion.plausibilidad.valores_por_año[año].get(ratio)))
@@ -474,14 +482,17 @@ PARTIDAS_ESTRUCTURA_GASTOS = (
 )
 
 
+RATIOS_ECONOMICO = ("pyg.margen_bruto_pct", "pyg.baii_pct")
+
+
 def tabla_economico(ejercicios, evolucion) -> Table:
     filas = [["", *[str(a) for a in AÑOS]]]
     fila_margen = ["Margen bruto / Ingresos explot."]
     fila_baii = ["BAII / Ingresos explot."]
     fila_resultado = ["Resultado del ejercicio (€)"]
     for año in AÑOS:
-        fila_margen.append(_fmt_pct_ya_100(evolucion.plausibilidad.valores_por_año[año].get("pyg.margen_bruto_pct")))
-        fila_baii.append(_fmt_pct_ya_100(evolucion.plausibilidad.valores_por_año[año].get("pyg.baii_pct")))
+        fila_margen.append(_fmt_pct_ya_100(evolucion.plausibilidad.valores_por_año[año].get(RATIOS_ECONOMICO[0])))
+        fila_baii.append(_fmt_pct_ya_100(evolucion.plausibilidad.valores_por_año[año].get(RATIOS_ECONOMICO[1])))
         fila_resultado.append(fmt_eur(ejercicios[año].pyg_eur["resultado_ejercicio"]))
     filas.append(fila_margen)
     filas.append(fila_baii)
@@ -520,9 +531,12 @@ TEXTO_EXPLICACION_DUPONT = (
 )
 
 
+RATIOS_RENTABILIDAD = ("ratios.roi", "ratios.roe")
+
+
 def tabla_rentabilidad(evolucion) -> Table:
     filas = [["Ratio", *[str(a) for a in AÑOS]]]
-    for ratio in ("ratios.roi", "ratios.roe"):
+    for ratio in RATIOS_RENTABILIDAD:
         fila = [RATIO_NOMBRE_LEGIBLE[ratio]]
         for año in AÑOS:
             fila.append(_fmt_pct(evolucion.plausibilidad.valores_por_año[año].get(ratio)))
@@ -571,14 +585,17 @@ def _patron_efe(efe) -> str:
     return "Patrón mixto, sin un caso típico claro — revisa los 3 importes de la tabla directamente."
 
 
+CAMPOS_EFE_ETIQUETAS = (
+    ("A.5) Flujo de explotación", "a5_flujo_explotacion"),
+    ("B.8) Flujo de inversión", "b8_flujo_inversion"),
+    ("C.12) Flujo de financiación", "c12_flujo_financiacion"),
+    ("Variación neta del efectivo", "e_variacion_neta_efectivo"),
+)
+
+
 def tabla_efe(efes: dict) -> Table:
     filas = [["", "2024", "2025"]]
-    for etiqueta, campo in [
-        ("A.5) Flujo de explotación", "a5_flujo_explotacion"),
-        ("B.8) Flujo de inversión", "b8_flujo_inversion"),
-        ("C.12) Flujo de financiación", "c12_flujo_financiacion"),
-        ("Variación neta del efectivo", "e_variacion_neta_efectivo"),
-    ]:
+    for etiqueta, campo in CAMPOS_EFE_ETIQUETAS:
         filas.append([etiqueta] + [fmt_eur(getattr(efes[a], campo)) for a in (2024, 2025)])
     return _tabla(filas, anchos=[7.5 * cm, 5.45 * cm, 5.45 * cm])
 

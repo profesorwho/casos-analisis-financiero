@@ -16,6 +16,10 @@ from mapeo_solucion import (
     AÑOS,
     ARQUETIPO_RATIOS_RELACIONADOS,
     RATIO_NOMBRE_LEGIBLE,
+    RATIOS_ECONOMICO,
+    RATIOS_ENDEUDAMIENTO,
+    RATIOS_LIQUIDEZ,
+    RATIOS_RENTABILIDAD,
     calcular_apalancamiento_financiero,
     calcular_concentracion_vencimientos_1año,
     calcular_fondo_maniobra,
@@ -248,6 +252,82 @@ No incluyas nada fuera de ese objeto JSON."""
 
 
 # --------------------------------------------------------------------------------------------
+# Bancos de verdad POR SECCIÓN (encargo #115-fix, ver docstring de `narrativa_llm.py`) — un banco
+# global contra los ~278 valores del paquete de verdad completo dejaba pasar por COLISIÓN cifras
+# inventadas sin relación con la sección citada (92/101 porcentajes arbitrarios colaban contra un
+# caso real). Cada sección solo puede verificarse contra los datos que esa sección puede citar
+# legítimamente — las listas de claves de ratios son las MISMAS que usan las funciones `tabla_*`
+# de `mapeo_solucion.py` (importadas arriba, no duplicadas), para que tabla y verificador nunca
+# diverjan silenciosamente.
+# --------------------------------------------------------------------------------------------
+
+def _ratios_filtrados_por_año(ratios_por_año: dict, claves: tuple[str, ...]) -> dict:
+    return {año: {clave: ratios_por_año[año].get(clave) for clave in claves} for año in ratios_por_año}
+
+
+def construir_bancos_de_verdad_por_seccion(paquete_verdad: dict) -> dict[str, set[float]]:
+    """Un banco de verdad MÁS PEQUEÑO por cada una de las 9 secciones — `meta` (recuentos, años,
+    sector/semilla) es global a todas (son datos que cualquier sección puede citar), el resto es
+    EXCLUSIVO de la sección que legítimamente lo usa. La sección 9 (diagnóstico integrado) es un
+    caso especial: su banco es la UNIÓN de lo ya disponible en las secciones 1-8 de esta misma
+    generación (no un subconjunto nuevo del paquete completo — el diagnóstico integrado conecta
+    arquetipos con señales de CUALQUIER sección anterior, así que no tiene un subconjunto propio
+    de datos)."""
+    banco_meta = construir_banco_de_verdad(paquete_verdad["meta"])
+
+    banco_seccion_1 = banco_meta
+
+    banco_seccion_2 = banco_meta | construir_banco_de_verdad({
+        "balance_pct_vertical_por_año": paquete_verdad["balance_pct_vertical_por_año"],
+        "balance_pct_horizontal": paquete_verdad["balance_pct_horizontal"],
+        "fondo_maniobra_eur_por_año": paquete_verdad["fondo_maniobra_eur_por_año"],
+    })
+
+    banco_seccion_3 = banco_meta | construir_banco_de_verdad({
+        "ratios": _ratios_filtrados_por_año(paquete_verdad["ratios_por_año"], RATIOS_LIQUIDEZ),
+        "pmm_por_año": paquete_verdad["pmm_por_año"],
+        # Cruce explícito permitido con la sección 2 (fondo de maniobra), ver docstring del módulo.
+        "fondo_maniobra_eur_por_año": paquete_verdad["fondo_maniobra_eur_por_año"],
+    })
+
+    banco_seccion_4 = banco_meta | construir_banco_de_verdad({
+        "ratios": _ratios_filtrados_por_año(paquete_verdad["ratios_por_año"], RATIOS_ENDEUDAMIENTO),
+        "concentracion_vencimientos_2025_pct": paquete_verdad["concentracion_vencimientos_2025_pct"],
+    })
+
+    banco_seccion_5 = banco_meta | construir_banco_de_verdad({
+        "ratios": _ratios_filtrados_por_año(paquete_verdad["ratios_por_año"], RATIOS_ECONOMICO),
+        "pyg_por_año": paquete_verdad["pyg_por_año"],
+    })
+
+    banco_seccion_6 = banco_meta | construir_banco_de_verdad({
+        "ratios": _ratios_filtrados_por_año(paquete_verdad["ratios_por_año"], RATIOS_RENTABILIDAD),
+        "dupont_por_año": paquete_verdad["dupont_por_año"],
+    })
+
+    banco_seccion_7 = banco_meta | construir_banco_de_verdad({"efe_por_año": paquete_verdad["efe_por_año"]})
+
+    banco_seccion_8 = banco_meta | construir_banco_de_verdad({"señales": paquete_verdad["señales"]})
+
+    banco_seccion_9 = (
+        banco_seccion_1 | banco_seccion_2 | banco_seccion_3 | banco_seccion_4 | banco_seccion_5
+        | banco_seccion_6 | banco_seccion_7 | banco_seccion_8
+    )
+
+    return {
+        "seccion_1": banco_seccion_1,
+        "seccion_2": banco_seccion_2,
+        "seccion_3": banco_seccion_3,
+        "seccion_4": banco_seccion_4,
+        "seccion_5": banco_seccion_5,
+        "seccion_6": banco_seccion_6,
+        "seccion_7": banco_seccion_7,
+        "seccion_8": banco_seccion_8,
+        "seccion_9": banco_seccion_9,
+    }
+
+
+# --------------------------------------------------------------------------------------------
 # Ensamblado del documento — intercala las tablas del #113 (sin tocarlas) con la prosa del LLM.
 # --------------------------------------------------------------------------------------------
 
@@ -297,6 +377,7 @@ def obtener_narrativa(
             return cacheado["secciones"], {"clave": clave, "desde_cache": True, "intentos": cacheado["intentos"], "modelo": cacheado["modelo"]}
 
     prompt = construir_prompt(paquete_verdad)
-    resultado = generar_narrativa_con_verificacion(prompt, paquete_verdad, modelo=modelo)
+    bancos_por_seccion = construir_bancos_de_verdad_por_seccion(paquete_verdad)
+    resultado = generar_narrativa_con_verificacion(prompt, bancos_por_seccion, modelo=modelo)
     escribir_cache(clave, resultado.secciones, resultado.modelo, resultado.intentos)
     return resultado.secciones, {"clave": clave, "desde_cache": False, "intentos": resultado.intentos, "modelo": resultado.modelo}
