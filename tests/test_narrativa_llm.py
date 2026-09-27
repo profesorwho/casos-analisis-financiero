@@ -113,6 +113,79 @@ def test_extraer_numeros_no_confunde_900_mil_con_decimal():
     assert extraer_numeros_del_texto("Supera los 900.000 euros.") == [900_000.0]
 
 
+# --- Guion de RANGO vs. signo menos — regresión del cierre #115 (verificación 4, los 3 casos de
+# referencia pegados a mano): "73-77%"/"2023-2024"/etc. en prosa real de un LLM producían un
+# "-77"/"-2024" espurio (el guion de rango leído como signo menos del segundo número), sin
+# contrapartida en el banco — 10 de las 14 cifras "sin respaldo" de ese cierre eran esto, no
+# invenciones reales. Los 11 primeros son los rangos EXACTOS que aparecieron en los 3 casos
+# (`respuesta_normal.txt`/`respuesta_abreviado.txt`/`respuesta_coberturas.txt`); los 2 últimos son
+# el control de que un signo menos REAL (precedido de espacio o paréntesis, nunca de un dígito)
+# sigue detectándose con normalidad. --------------------------------------------------------
+
+CASOS_GUION_DE_RANGO = [
+    # (texto, valores esperados — ambos positivos, el guion es un separador de rango)
+    ("30-36%", [30.0, 36.0]),
+    ("73-77%", [73.0, 77.0]),
+    ("42-43%", [42.0, 43.0]),
+    ("20-21%", [20.0, 21.0]),
+    ("2,5-2,7%", [2.5, 2.7]),
+    ("48-49%", [48.0, 49.0]),
+    ("51-52%", [51.0, 52.0]),
+    ("27,7-28,0%", [27.7, 28.0]),
+    ("2,4-2,9%", [2.4, 2.9]),
+    ("14,9-15,1%", [14.9, 15.1]),
+    ("2023-2024", [2023.0, 2024.0]),
+]
+
+
+@pytest.mark.parametrize("texto,esperado", CASOS_GUION_DE_RANGO)
+def test_extraer_numeros_guion_de_rango_da_dos_positivos(texto, esperado):
+    assert extraer_numeros_del_texto(texto) == esperado
+
+
+def test_extraer_numeros_negativo_real_tras_parentesis_sigue_funcionando():
+    """Control: un signo menos REAL, precedido de un paréntesis (no de un dígito), debe seguir
+    detectándose — no es un guion de rango."""
+    assert extraer_numeros_del_texto("(-997.196€)") == [-997196.0]
+
+
+def test_extraer_numeros_negativo_real_tras_espacio_sigue_funcionando():
+    """Control: un signo menos REAL, precedido de un espacio (no de un dígito), debe seguir
+    detectándose — no es un guion de rango."""
+    assert extraer_numeros_del_texto("cae -14,19") == [-14.19]
+
+
+# --- Comparación por valor absoluto — regresión del cierre #115 (verificación 4): el lenguaje
+# natural expresa una caída/reducción con la magnitud en positivo ("cae un 100%", "se reduce en
+# 1.737.106€"), mientras el dato real guardado en el banco es la variación CON SIGNO (negativa).
+# Los 6 casos exactos (deduplicados) de ese cierre — ver docstring de `_dentro_de_tolerancia`
+# para la debilidad que esto introduce, documentada explícitamente. -----------------------------
+
+CASOS_VALOR_ABSOLUTO = [
+    # (texto con la magnitud en positivo, referencia real CON signo en el banco — el banco de
+    # producción también añade el duplicado ×100 para fracciones pequeñas, ver
+    # `construir_banco_de_verdad`; se replica aquí para las 2 en porcentaje)
+    ("El disponible cae un 100%.", {-1.0, -100.0}),
+    ("Una caída del 39,7%.", {-0.397364, -39.7364}),
+    ("El efectivo se reduce en 1.737.106€.", {-1737106.34}),
+    ("El efectivo cae en 1.079.789€.", {-1079788.81}),
+    ("El efectivo se reduce en 479.528€.", {-479528.29}),
+    ("Una nueva caída del efectivo de 727.244€.", {-727243.86}),
+]
+
+
+@pytest.mark.parametrize("texto,banco", CASOS_VALOR_ABSOLUTO)
+def test_verificar_cifras_acepta_magnitud_positiva_de_una_caida_real(texto, banco):
+    assert verificar_cifras(texto, banco) == []
+
+
+def test_dentro_de_tolerancia_sigue_rechazando_una_magnitud_sin_relacion():
+    """La comparación por valor absoluto no debe volverse tan permisiva que acepte cualquier
+    cifra grande — solo la MISMA magnitud con el signo invertido, no una magnitud distinta."""
+    banco = {-1737106.34}
+    assert verificar_cifras("El efectivo se reduce en 5.000.000€.", banco) == [5_000_000.0]
+
+
 # --- (2) Caché: la clave cambia si cambia el paquete de verdad, no si cambia algo irrelevante ---
 
 def test_clave_cache_estable_con_los_mismos_datos():
