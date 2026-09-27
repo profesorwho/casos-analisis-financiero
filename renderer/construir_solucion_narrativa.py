@@ -1,7 +1,7 @@
 """Paso 2 del flujo MANUAL de narrativa (encargo #115) — lee la respuesta que la persona pegó
 de claude.ai (o el asistente que use), extrae el JSON de forma robusta (una respuesta de chat
 normal trae prosa alrededor, probablemente un bloque ```json ... ```), la verifica con el MISMO
-verificador del #114/#115-fix (`narrativa_llm.verificar_cifras` + los bancos por sección de
+verificador del #114/#115-fix (`narrativa_llm.verificar_secciones` + los bancos por sección de
 `mapeo_solucion_narrativo.construir_bancos_de_verdad_por_seccion`, sin tocar ninguno de los dos)
 y, si todo cuadra, construye el PDF reutilizando `mapeo_solucion_narrativo.ensamblar_documento_
 narrativo` (también sin tocarlo). Si algo no cuadra, no construye ningún PDF: escribe un fichero
@@ -41,7 +41,7 @@ from mapeo_solucion_narrativo import (
 from narrativa_llm import (
     NOMBRES_SECCIONES,
     escribir_cache,
-    verificar_cifras,
+    verificar_secciones,
 )
 
 MODELO_ETIQUETA_MANUAL = "manual (respuesta pegada de claude.ai)"
@@ -197,9 +197,7 @@ def importar_respuesta(ruta_respuesta_pegada, ruta_meta, ruta_salida_pdf, nombre
     secciones = extraer_json_de_respuesta_pegada(texto_respuesta)
 
     bancos_por_seccion = construir_bancos_de_verdad_por_seccion(paquete_verdad_guardado)
-    cifras_no_verificadas_por_seccion = {
-        seccion: verificar_cifras(texto, bancos_por_seccion[seccion]) for seccion, texto in secciones.items()
-    }
+    cifras_no_verificadas_por_seccion = verificar_secciones(secciones, bancos_por_seccion)
     if any(cifras_no_verificadas_por_seccion.values()):
         ruta_correccion = _escribir_correccion(ruta_respuesta_pegada, cifras_no_verificadas_por_seccion)
         return {"verificado": False, "ruta_correccion": str(ruta_correccion), "cifras_no_verificadas_por_seccion": cifras_no_verificadas_por_seccion}

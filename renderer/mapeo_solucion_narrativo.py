@@ -266,13 +266,18 @@ def _ratios_filtrados_por_año(ratios_por_año: dict, claves: tuple[str, ...]) -
 
 
 def construir_bancos_de_verdad_por_seccion(paquete_verdad: dict) -> dict[str, set[float]]:
-    """Un banco de verdad MÁS PEQUEÑO por cada una de las 9 secciones — `meta` (recuentos, años,
-    sector/semilla) es global a todas (son datos que cualquier sección puede citar), el resto es
-    EXCLUSIVO de la sección que legítimamente lo usa. La sección 9 (diagnóstico integrado) es un
-    caso especial: su banco es la UNIÓN de lo ya disponible en las secciones 1-8 de esta misma
-    generación (no un subconjunto nuevo del paquete completo — el diagnóstico integrado conecta
-    arquetipos con señales de CUALQUIER sección anterior, así que no tiene un subconjunto propio
-    de datos)."""
+    """Un banco de verdad MÁS PEQUEÑO por cada una de las secciones 1-8 — `meta` (recuentos,
+    años, sector/semilla) es global a todas (son datos que cualquier sección puede citar), el
+    resto es EXCLUSIVO de la sección que legítimamente lo usa.
+
+    La sección 9 (diagnóstico integrado) NO tiene entrada aquí — a diferencia del primer diseño
+    del #115-fix, que le daba la UNIÓN ESTÁTICA de los bancos de 1-8 (seguía dejando pasar ~90%
+    de un barrido de porcentajes arbitrarios: la unión incluye TODO lo que esas 8 secciones
+    PODRÍAN citar, no solo lo que de verdad citaron), su banco se construye DINÁMICAMENTE, por
+    ejecución, en `narrativa_llm.verificar_secciones` — acumulando las cifras que REALMENTE
+    aparecieron en el texto generado de las secciones 1-8 de esa misma generación y pasaron su
+    propia verificación. Este módulo no puede anticipar eso (no ve ningún texto todavía, solo el
+    paquete de verdad), así que no intenta construir un banco de referencia para la sección 9."""
     banco_meta = construir_banco_de_verdad(paquete_verdad["meta"])
 
     banco_seccion_1 = banco_meta
@@ -309,11 +314,6 @@ def construir_bancos_de_verdad_por_seccion(paquete_verdad: dict) -> dict[str, se
 
     banco_seccion_8 = banco_meta | construir_banco_de_verdad({"señales": paquete_verdad["señales"]})
 
-    banco_seccion_9 = (
-        banco_seccion_1 | banco_seccion_2 | banco_seccion_3 | banco_seccion_4 | banco_seccion_5
-        | banco_seccion_6 | banco_seccion_7 | banco_seccion_8
-    )
-
     return {
         "seccion_1": banco_seccion_1,
         "seccion_2": banco_seccion_2,
@@ -323,7 +323,6 @@ def construir_bancos_de_verdad_por_seccion(paquete_verdad: dict) -> dict[str, se
         "seccion_6": banco_seccion_6,
         "seccion_7": banco_seccion_7,
         "seccion_8": banco_seccion_8,
-        "seccion_9": banco_seccion_9,
     }
 
 

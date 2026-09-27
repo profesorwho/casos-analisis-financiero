@@ -20,9 +20,17 @@ ALGÚN valor no relacionado del banco completo (p. ej. un ROE inventado del 35% 
 coincidir con un "Activo no corriente = 35,6%" de otra sección/año, con el ROE real en 11,4%).
 Este módulo ya no construye un banco único: quien orquesta la narrativa (`mapeo_solucion_
 narrativo.construir_bancos_de_verdad_por_seccion`) construye un banco MÁS PEQUEÑO por cada una de
-las 9 secciones, usando solo los datos que esa sección puede citar legítimamente (más los
-recuentos/años globales de `meta`) — `generar_narrativa_con_verificacion` recibe ya ese dict
-`{seccion: banco}` en vez de un `paquete_verdad` completo."""
+las secciones 1-8, usando solo los datos que esa sección puede citar legítimamente (más los
+recuentos/años globales de `meta`) — `generar_narrativa_con_verificacion`/`verificar_secciones`
+reciben ya ese dict `{seccion: banco}` en vez de un `paquete_verdad` completo.
+
+**Sección 9 (diagnóstico integrado) NO tiene un banco de referencia propio, ni siquiera la unión
+estática de los de 1-8** — corrección posterior al primer diseño del #115-fix, que sí usaba esa
+unión y seguía dejando pasar ~90% de un barrido de porcentajes arbitrarios (la unión incluye TODO
+lo que las secciones 1-8 PODRÍAN citar, no solo lo que de verdad citaron). `verificar_secciones`
+construye el banco de la sección 9 DINÁMICAMENTE, por ejecución: acumula las cifras que
+REALMENTE aparecieron en el texto de las secciones 1-8 de esa misma generación y pasaron su
+propia verificación — nunca las que solo estaban disponibles para citar."""
 from __future__ import annotations
 
 import hashlib
@@ -205,6 +213,30 @@ def verificar_cifras(texto: str, banco: set[float]) -> list[float]:
     return sin_respaldo
 
 
+def verificar_secciones(secciones: dict[str, str], bancos_por_seccion: dict[str, set[float]]) -> dict[str, list[float]]:
+    """Verifica las 9 secciones EN ORDEN (1 a 9, nunca el orden de iteración de `secciones`, que
+    no está garantizado). La sección 9 es un caso especial (ver `mapeo_solucion_narrativo.
+    construir_bancos_de_verdad_por_seccion`, que ya NO calcula ningún banco de referencia para
+    ella): se verifica contra las cifras que REALMENTE aparecieron en el texto de las secciones
+    1-8 de ESTA MISMA generación y pasaron su propia verificación — dinámico, por ejecución, no
+    la unión estática de los bancos de referencia de esas 8 secciones (eso era una aproximación
+    incorrecta corregida tras el #115-fix: la unión estática seguía dejando pasar ~90% de un
+    barrido de porcentajes arbitrarios, porque incluía TODO lo que esas secciones PODRÍAN citar,
+    no solo lo que de verdad citaron). `bancos_por_seccion["seccion_9"]`, si viene, se ignora."""
+    resultado: dict[str, list[float]] = {}
+    cifras_verificadas_acumuladas: set[float] = set()
+    for seccion in NOMBRES_SECCIONES:
+        texto = secciones[seccion]
+        banco = cifras_verificadas_acumuladas if seccion == "seccion_9" else bancos_por_seccion[seccion]
+        numeros = extraer_numeros_del_texto(texto)
+        fallos = verificar_cifras(texto, banco)
+        resultado[seccion] = fallos
+        if seccion != "seccion_9":
+            fallos_set = set(fallos)
+            cifras_verificadas_acumuladas.update(n for n in numeros if n not in fallos_set)
+    return resultado
+
+
 # --------------------------------------------------------------------------------------------
 # Caché — clave = hash(parámetros del caso) + hash(paquete de verdad serializado de forma
 # determinista). Si el motor cambia y las cifras de un caso ya cacheado cambian, la clave
@@ -333,18 +365,18 @@ class ResultadoNarrativa:
 def generar_narrativa_con_verificacion(
     prompt_inicial: str, bancos_por_seccion: dict[str, set[float]], modelo: str | None = None,
 ) -> ResultadoNarrativa:
-    """`bancos_por_seccion` debe traer una clave por cada una de `NOMBRES_SECCIONES` (ver
+    """`bancos_por_seccion` debe traer una clave por cada una de las secciones 1-8 (ver
     `mapeo_solucion_narrativo.construir_bancos_de_verdad_por_seccion`, que construye un banco
-    MÁS PEQUEÑO por sección en vez de uno global — ver docstring del módulo para por qué)."""
+    MÁS PEQUEÑO por sección en vez de uno global — ver docstring del módulo para por qué). La
+    sección 9 no necesita entrada — se verifica dinámicamente contra lo que de verdad se citó en
+    las secciones 1-8 de esta generación, ver `verificar_secciones`."""
     modelo_resuelto = modelo or os.environ.get("NARRATIVA_MODELO", MODELO_POR_DEFECTO)
 
     mensajes = [{"role": "user", "content": prompt_inicial}]
     cifras_no_verificadas_por_seccion: dict[str, list[float]] = {}
     for intento in range(1, MAX_INTENTOS + 1):
         secciones = llamar_llm(mensajes, modelo=modelo_resuelto)
-        cifras_no_verificadas_por_seccion = {
-            seccion: verificar_cifras(texto, bancos_por_seccion[seccion]) for seccion, texto in secciones.items()
-        }
+        cifras_no_verificadas_por_seccion = verificar_secciones(secciones, bancos_por_seccion)
         if not any(cifras_no_verificadas_por_seccion.values()):
             return ResultadoNarrativa(secciones=secciones, intentos=intento, modelo=modelo_resuelto)
 
