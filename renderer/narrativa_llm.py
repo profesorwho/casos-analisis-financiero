@@ -144,8 +144,21 @@ def construir_banco_de_verdad(paquete_verdad: dict) -> set[float]:
 # extractor acepta los dos en vez de asumir uno solo.
 # --------------------------------------------------------------------------------------------
 
+# El signo menos SOLO cuenta si NO está pegado a un dígito anterior — así "30-36%" (rango) se
+# lee como DOS números positivos (30 y 36), nunca como "30" y "-36" (el guion de rango no es un
+# signo menos). Un menos real (precedido de espacio, paréntesis, inicio de frase, etc. — nunca de
+# un dígito) SÍ se seudo-detecta con normalidad: "(-997.196€)", "cae -14,19" siguen negativos.
+# Bug real detectado en el encargo #115 (verificación 4, casos de referencia pegados a mano):
+# "73-77%"/"2023-2024"/etc. en la prosa del LLM producían un "-77"/"-2024" espurio sin
+# contrapartida en el banco — 10 de las 14 cifras "sin respaldo" de esos 3 casos eran esto, no
+# invenciones reales. Ver decisiones_plausibilidad.md para el detalle completo.
+_MENOS = r"(?:(?<!\d)-)?"
+
 _PATRON_NUMERO = re.compile(
-    r"(?P<num>-?\d{1,3}(?:\.\d{3})+(?:,\d+)?|-?\d+,\d+|-?\d+\.\d+|-?\d+)"
+    r"(?P<num>" + _MENOS + r"\d{1,3}(?:\.\d{3})+(?:,\d+)?|"
+    + _MENOS + r"\d+,\d+|"
+    + _MENOS + r"\d+\.\d+|"
+    + _MENOS + r"\d+)"
     r"\s*(?P<mult>mill(?:ón|on|ones)?\.?|mil\b|k€|k\b|M€)?",
     re.IGNORECASE,
 )
@@ -195,9 +208,24 @@ def extraer_numeros_del_texto(texto: str) -> list[float]:
 
 
 def _dentro_de_tolerancia(valor: float, banco: set[float]) -> bool:
+    """Compara TAMBIÉN por valor absoluto (además de la comparación con signo de siempre) —
+    arreglo del encargo #115 (verificación 4, casos de referencia pegados a mano): el lenguaje
+    natural expresa una caída/reducción con la magnitud en positivo ("el disponible cae un 100%",
+    "el efectivo se reduce en 1.737.106€"), mientras el dato real guardado en el banco es la
+    variación CON SIGNO (negativa). Sin esto, una cifra real y correctamente citada se rechazaba
+    solo por ese fraseo idiomático (6 de las 14 cifras "sin respaldo" del cierre #115 eran esto).
+
+    **DEBILIDAD que esto introduce, documentada explícitamente, no oculta**: al comparar también
+    por valor absoluto, el verificador YA NO protege contra una cifra con la MAGNITUD correcta
+    pero la DIRECCIÓN invertida — p. ej. si el dato real es una pérdida de -1.737.106€, un texto
+    que dijera (incorrectamente) "un beneficio de 1.737.106€" pasaría igual, porque solo se
+    compara el tamaño del número, nunca si el signo tiene sentido en su frase. Esto es un
+    trade-off deliberado (menos falsos positivos de fraseo idiomático a cambio de menos
+    protección frente a una inversión de signo), no un descuido — ver decisiones_plausibilidad.md
+    para la cifra exacta del hallazgo que lo motivó."""
     for referencia in banco:
         limite = max(TOLERANCIA_RELATIVA * abs(referencia), TOLERANCIA_ABSOLUTA)
-        if abs(valor - referencia) <= limite:
+        if abs(valor - referencia) <= limite or abs(abs(valor) - abs(referencia)) <= limite:
             return True
     return False
 

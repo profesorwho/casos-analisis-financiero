@@ -280,7 +280,16 @@ def construir_bancos_de_verdad_por_seccion(paquete_verdad: dict) -> dict[str, se
     paquete de verdad), así que no intenta construir un banco de referencia para la sección 9."""
     banco_meta = construir_banco_de_verdad(paquete_verdad["meta"])
 
-    banco_seccion_1 = banco_meta
+    # Sección 1 (resumen ejecutivo) — AMPLIACIÓN ACOTADA sobre `meta`, no el banco global (arreglo
+    # del encargo #115, verificación 4): el prompt no prohíbe que el resumen ejecutivo adelante la
+    # cifra clave de rentabilidad del caso —estilo habitual de un resumen ejecutivo real—, y los 3
+    # casos de referencia lo hicieron (ROE en 2 de ellos, BAII% en el tercero). Se añaden SOLO
+    # ROI/ROE (`RATIOS_RENTABILIDAD`) y BAII%/margen bruto (`RATIOS_ECONOMICO`) — los 2 pares de
+    # cifras que de verdad aparecieron en esos 3 casos — no los 25 ratios del paquete completo:
+    # sigue siendo un banco pequeño y con criterio, no un banco global bajo otro nombre.
+    banco_seccion_1 = banco_meta | construir_banco_de_verdad({
+        "ratios": _ratios_filtrados_por_año(paquete_verdad["ratios_por_año"], RATIOS_RENTABILIDAD + RATIOS_ECONOMICO),
+    })
 
     banco_seccion_2 = banco_meta | construir_banco_de_verdad({
         "balance_pct_vertical_por_año": paquete_verdad["balance_pct_vertical_por_año"],
