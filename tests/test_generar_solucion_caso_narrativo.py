@@ -19,6 +19,7 @@ from motor.efe import generar_efe
 from motor.calendario_deuda import calcular_calendario_deuda
 from motor.memoria import generar_caso_combinado
 
+import narrativa_llm
 from mapeo_solucion_narrativo import construir_paquete_verdad, construir_prompt
 from generar_solucion_caso_narrativo import generar_solucion_caso_narrativo
 
@@ -77,11 +78,15 @@ def test_prompt_declara_explicitamente_los_arquetipos_sin_efecto_claro(catalogo,
     assert "sin efecto claro" in prompt
 
 
-def test_fallback_determinista_no_desborda_el_margen(tmp_path, catalogo, arquetipos):
+def test_fallback_determinista_no_desborda_el_margen(tmp_path, catalogo, arquetipos, monkeypatch):
     """No requiere API — fuerza el fallback (sin ANTHROPIC_API_KEY en este entorno de test, si
-    no está definida) y comprueba el PDF resultante como en encargos anteriores."""
+    no está definida) y comprueba el PDF resultante como en encargos anteriores. Caché aislada en
+    `tmp_path` (nunca la real, `renderer/narrativa_cache/`) — este caso comparte parámetros con
+    uno de los 3 de referencia del #115, así que una narrativa YA verificada y cacheada de verdad
+    haría que este test encontrara un hit de caché en vez de forzar el fallback."""
     if os.environ.get("ANTHROPIC_API_KEY"):
         pytest.skip("Este test comprueba específicamente el PDF de fallback sin clave de API.")
+    monkeypatch.setattr(narrativa_llm, "DIRECTORIO_CACHE", tmp_path / "narrativa_cache_aislada")
     ruta = tmp_path / "fallback.pdf"
     modelo, modo = generar_solucion_caso_narrativo(
         "28", "grandes_medianas", 15_000_000.0, 15,
