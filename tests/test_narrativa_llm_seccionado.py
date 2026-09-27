@@ -31,7 +31,15 @@ from motor.calendario_deuda import calcular_calendario_deuda
 from motor.memoria import generar_caso_combinado
 
 from mapeo_solucion_narrativo import construir_bancos_de_verdad_por_seccion, construir_paquete_verdad
-from narrativa_llm import NOMBRES_SECCIONES, construir_banco_de_verdad, verificar_cifras
+from narrativa_llm import (
+    NOMBRES_SECCIONES,
+    construir_banco_de_verdad,
+    extraer_numeros_del_texto,
+    verificar_cifras,
+    verificar_secciones,
+)
+
+SECCIONES_CON_BANCO_PROPIO = NOMBRES_SECCIONES[:-1]  # 1-8 — la 9 no tiene banco de referencia, ver abajo
 
 
 @pytest.fixture(scope="module")
@@ -143,11 +151,12 @@ TASAS_ESPERADAS_POR_SECCION = {
     "seccion_6": (24, 0, 61, 51),
     "seccion_7": (7, 3, 28, 21),
     "seccion_8": (34, 0, 70, 55),
-    "seccion_9": (90, 27, 270, 97),  # UNIÓN de 1-8 por diseño — ver decisiones #115-fix
+    # seccion_9 NO tiene banco de referencia — su tasa depende de lo que se cite de verdad en el
+    # texto de 1-8, no de un banco fijo. Ver el bloque "(4) Sección 9 — banco DINÁMICO" más abajo.
 }
 
 
-@pytest.mark.parametrize("seccion", NOMBRES_SECCIONES)
+@pytest.mark.parametrize("seccion", SECCIONES_CON_BANCO_PROPIO)
 def test_tasa_falsos_positivos_por_seccion_pinneada(paquete_verdad_real, seccion):
     paquete_verdad, _ = paquete_verdad_real
     bancos = construir_bancos_de_verdad_por_seccion(paquete_verdad)
@@ -180,7 +189,144 @@ def test_porcentajes_y_euros_mejoran_claramente_frente_al_banco_global_en_toda_s
     pasan_global_pct = _tasa_pasan(_barrido_porcentajes(), banco_global) / 101
     pasan_global_eur = _tasa_pasan(_barrido_euros(), banco_global) / 100
     for seccion, (pct, eur, _dias, _dec) in TASAS_ESPERADAS_POR_SECCION.items():
-        if seccion == "seccion_9":
-            continue  # unión deliberada de 1-8, no se espera mejora frente al global
         assert pct / 101 <= pasan_global_pct, f"{seccion}: porcentajes no mejoró frente al banco global"
         assert eur / 100 <= pasan_global_eur, f"{seccion}: euros no mejoró frente al banco global"
+
+
+# --------------------------------------------------------------------------------------------
+# (4) Sección 9 — banco DINÁMICO, no la unión estática de 1-8 (corrección sobre el primer diseño
+# del #115-fix, que sí usaba esa unión: con ella, sección 9 seguía en 89,1%/89,1%/... falsos
+# positivos —esencialmente el mismo nivel que el banco GLOBAL original— porque la unión de bancos
+# de REFERENCIA incluye TODO lo que 1-8 podrían citar, no lo que realmente citaron. La corrección
+# usa `narrativa_llm.verificar_secciones`, que verifica las secciones 1-8 en orden y acumula solo
+# las cifras que aparecieron en su texto Y pasaron su propia verificación; esa acumulación —no
+# ningún banco de referencia— es lo que se usa para verificar la sección 9. Ver decisiones_
+# plausibilidad.md (entrada de este arreglo puntual sobre la fila #115-fix) para el detalle.
+# --------------------------------------------------------------------------------------------
+
+def _respuesta_bien_formada(paquete_verdad: dict) -> dict[str, str]:
+    """Simula una narrativa razonable (no perfecta, no exhaustiva) citando un puñado de cifras
+    REALES por sección — el mismo tipo de densidad de citas que un LLM bien comportado produciría,
+    no todo lo que la sección podría citar. `seccion_9` se deja vacía aquí — el barrido la rellena."""
+    r2025 = paquete_verdad["ratios_por_año"]["2025"]
+    liquidez = r2025["ratios.liquidez"]
+    endeudamiento_pct = round(r2025["ratios.endeudamiento"] * 100)
+    roe_pct = round(r2025["ratios.roe"] * 100)
+    roi_pct = round(r2025["ratios.roi"] * 100)
+    resultado = paquete_verdad["pyg_por_año"]["2025"]["resultado_ejercicio_eur"]
+    fm = paquete_verdad["fondo_maniobra_eur_por_año"]["2025"]
+    meta = paquete_verdad["meta"]
+    return {
+        "seccion_1": f"El caso incorpora {meta['n_arquetipos']} arquetipos y presenta {meta['n_señales']} señales de alerta en 2025.",
+        "seccion_2": f"El fondo de maniobra alcanza aproximadamente {fm / 1e6:.2f} millones de euros en 2025.",
+        "seccion_3": f"La liquidez general se sitúa en torno a {liquidez:.1f} en 2025.",
+        "seccion_4": f"El endeudamiento ronda el {endeudamiento_pct}% en 2025.",
+        "seccion_5": f"El resultado del ejercicio ascendió a {resultado:,.0f} euros en 2025.".replace(",", "."),
+        "seccion_6": f"La rentabilidad financiera (ROE) ronda el {roe_pct}% y la económica (ROI) el {roi_pct}% en 2025.",
+        "seccion_7": "El flujo de explotación de 2025 es positivo.",
+        "seccion_8": f"Se detectan {meta['n_señales']} señales de alerta en el caso.",
+        "seccion_9": "",
+    }
+
+
+def _banco_dinamico_seccion_9(paquete_verdad: dict, bancos_1_a_8: dict[str, set[float]]) -> set[float]:
+    """Reproduce, fuera de `verificar_secciones`, el banco acumulado que le tocaría a la sección
+    9 para una respuesta bien formada dada — usado para el barrido (que necesita probar textos de
+    sección 9 DISTINTOS del de la respuesta real, uno por cada valor del barrido)."""
+    secciones = _respuesta_bien_formada(paquete_verdad)
+    acumuladas: set[float] = set()
+    for seccion in SECCIONES_CON_BANCO_PROPIO:
+        texto = secciones[seccion]
+        banco = bancos_1_a_8[seccion]
+        numeros = extraer_numeros_del_texto(texto)
+        fallos_set = set(verificar_cifras(texto, banco))
+        acumuladas.update(n for n in numeros if n not in fallos_set)
+    return acumuladas
+
+
+def test_seccion_9_no_tiene_banco_de_referencia_en_construir_bancos_de_verdad_por_seccion(paquete_verdad_real):
+    paquete_verdad, _ = paquete_verdad_real
+    bancos = construir_bancos_de_verdad_por_seccion(paquete_verdad)
+    assert set(bancos) == set(SECCIONES_CON_BANCO_PROPIO)
+    assert "seccion_9" not in bancos
+
+
+def test_banco_dinamico_de_seccion_9_es_exactamente_lo_citado_en_1_a_8(paquete_verdad_real):
+    paquete_verdad, _ = paquete_verdad_real
+    bancos = construir_bancos_de_verdad_por_seccion(paquete_verdad)
+    acumuladas = _banco_dinamico_seccion_9(paquete_verdad, bancos)
+    # 9 cifras citadas en la respuesta bien formada: 2 (arquetipos), 6 (señales), 5.07 (fondo de
+    # maniobra en millones, aunque el texto usa 5,07 -> se guarda 5070000.0 el número LITERAL del
+    # texto, no el original en euros), 1.8 (liquidez), 52 (endeudamiento%), 11 y 7 (ROE/ROI%),
+    # 921926 (resultado), 2025 (año, estructural) — pinneado como regresión.
+    assert acumuladas == {2.0, 6.0, 1.8, 52.0, 11.0, 7.0, 921926.0, 5070000.0, 2025.0}
+
+
+def test_verificar_secciones_acumula_lo_mismo_que_el_calculo_manual(paquete_verdad_real):
+    """`narrativa_llm.verificar_secciones` (la función real de producción) debe dar el MISMO
+    resultado que el cálculo manual de arriba para la sección 9, sobre la MISMA respuesta bien
+    formada (con la 9 rellena con una cifra real, que debe pasar)."""
+    paquete_verdad, _ = paquete_verdad_real
+    bancos = construir_bancos_de_verdad_por_seccion(paquete_verdad)
+    secciones = _respuesta_bien_formada(paquete_verdad)
+    secciones["seccion_9"] = "El diagnóstico conecta el ROE del 11% con las 6 señales detectadas."
+    resultado = verificar_secciones(secciones, bancos)
+    assert all(fallos == [] for fallos in resultado.values()), resultado
+
+
+def test_seccion_9_rechaza_una_cifra_que_nunca_se_citaron_en_1_a_8(paquete_verdad_real):
+    """Una cifra REAL del caso (existe en el paquete de verdad, un ratio de otra sección que no
+    se citó en la respuesta) debe seguir RECHAZÁNDOSE en la sección 9 si nadie la citó antes —
+    "ya se verificó" significa que apareció en el texto, no que "está en el caso"."""
+    paquete_verdad, _ = paquete_verdad_real
+    bancos = construir_bancos_de_verdad_por_seccion(paquete_verdad)
+    secciones = _respuesta_bien_formada(paquete_verdad)
+    # tesorería no se cita en ninguna de las 8 secciones bien formadas — real, pero no citada.
+    tesoreria_pct = round(paquete_verdad["ratios_por_año"]["2025"]["ratios.tesoreria"] * 100)
+    secciones["seccion_9"] = f"La tesorería del {tesoreria_pct}% respalda el diagnóstico."
+    resultado = verificar_secciones(secciones, bancos)
+    assert resultado["seccion_9"] == [float(tesoreria_pct)]
+
+
+def test_seccion_9_tasa_de_falsos_positivos_dinamica_pinneada(paquete_verdad_real):
+    """Repite el barrido de las 4 unidades SOLO para la sección 9, con el banco dinámico de la
+    respuesta bien formada — objetivo del arreglo: un rango comparable al 7%-40% del resto de
+    secciones, no el ~90% que daba la unión estática anterior."""
+    paquete_verdad, _ = paquete_verdad_real
+    bancos = construir_bancos_de_verdad_por_seccion(paquete_verdad)
+    acumuladas = _banco_dinamico_seccion_9(paquete_verdad, bancos)
+
+    observado = (
+        _tasa_pasan(_barrido_porcentajes(), acumuladas),
+        _tasa_pasan(_barrido_euros(), acumuladas),
+        _tasa_pasan(_barrido_dias(), acumuladas),
+        _tasa_pasan(_barrido_decimales_ratio(), acumuladas),
+    )
+    esperado = (9, 5, 9, 25)  # de 101, 100, 366, 100 respectivamente
+    assert observado == esperado, f"seccion_9 (dinámico): observado {observado} != esperado {esperado}"
+
+    # las 4 tasas deben quedar dentro (o por debajo) del rango 7%-40% que tienen el resto de
+    # secciones — el objetivo explícito de este arreglo puntual.
+    totales = (101, 100, 366, 100)
+    for pasan, total in zip(observado, totales):
+        assert pasan / total <= 0.40, f"seccion_9 (dinámico): {pasan}/{total} supera el 40% objetivo"
+
+
+def test_seccion_9_dinamica_mejora_frente_a_la_union_estatica_anterior(paquete_verdad_real):
+    """Regresión histórica: la unión ESTÁTICA que tenía el primer diseño del #115-fix (ya
+    eliminada del código, `construir_bancos_de_verdad_por_seccion` ya no la calcula) daba
+    90/101, 27/100, 270/366, 97/100 — prácticamente el mismo nivel que el banco global original.
+    El banco DINÁMICO debe mejorar claramente en las 4 unidades."""
+    paquete_verdad, _ = paquete_verdad_real
+    bancos = construir_bancos_de_verdad_por_seccion(paquete_verdad)
+    acumuladas = _banco_dinamico_seccion_9(paquete_verdad, bancos)
+
+    tasa_union_estatica_historica = (90 / 101, 27 / 100, 270 / 366, 97 / 100)
+    observado = (
+        _tasa_pasan(_barrido_porcentajes(), acumuladas) / 101,
+        _tasa_pasan(_barrido_euros(), acumuladas) / 100,
+        _tasa_pasan(_barrido_dias(), acumuladas) / 366,
+        _tasa_pasan(_barrido_decimales_ratio(), acumuladas) / 100,
+    )
+    for obs, antes in zip(observado, tasa_union_estatica_historica):
+        assert obs < antes, f"seccion_9 dinámica ({obs:.1%}) no mejoró frente a la unión estática histórica ({antes:.1%})"
