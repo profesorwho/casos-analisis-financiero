@@ -160,8 +160,10 @@ def test_generar_narrativa_falla_tras_reintentos_con_cliente_que_siempre_inventa
         return _respuesta_json_con_cifra_inventada()
 
     monkeypatch.setattr(narrativa_llm, "llamar_llm", _llamar_llm_falso)
+    banco = construir_banco_de_verdad(PAQUETE_EJEMPLO)
+    bancos_por_seccion = {seccion: banco for seccion in NOMBRES_SECCIONES}
     with pytest.raises(VerificacionNumericaError) as exc_info:
-        generar_narrativa_con_verificacion("prompt de prueba", PAQUETE_EJEMPLO)
+        generar_narrativa_con_verificacion("prompt de prueba", bancos_por_seccion)
     assert llamadas["n"] == narrativa_llm.MAX_INTENTOS
     assert all(cifras for cifras in exc_info.value.cifras_no_verificadas_por_seccion.values())
 
