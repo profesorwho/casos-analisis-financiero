@@ -62,3 +62,22 @@ def test_nombre_sector_de_los_27_sectores_no_cae_en_el_fallback():
         assert not re.search(r"sector \d", nombre) and not re.search(r"\(.*\)", nombre) and nombre.strip()
     assert nombre_sector("28", catalogo) == "Fabricación de maquinaria y equipo"
     assert nombre_sector("46", catalogo) == "Comercio al por mayor"
+
+
+def test_ecpn_documento_b_lleva_el_aviso_de_no_exigido_solo_en_abreviado(tmp_path):
+    """#120-B — art. 257.3 LSC vigente (Ley 22/2015): con balance abreviado ni el ECPN ni el EFE
+    son obligatorios; el aviso debe cubrir los dos documentos del ECPN (A y B)."""
+    aviso = "Incluido con fines didácticos, no exigido en Abreviado"
+    casos = {
+        "abreviado": ("46", "pequeñas", 5e6, 1447, {"aumento_clientes": "fuerte"}),
+        "normal": ("28", "grandes_medianas", 28e6, 238, {"crecimiento_destruccion_caja": "leve"}),
+    }
+    for modelo, (sector, seg, ventas, semilla, arqs) in casos.items():
+        ruta = tmp_path / f"{modelo}.pdf"
+        assert generar_caso_completo(sector, seg, ventas, semilla, arqs, "E, S.L.", str(ruta)) == modelo
+        texto = _texto_pdf(ruta)
+        # Subtítulo de la tabla que sigue a cada título de documento
+        for titulo in ("ECPN — Documento A", "ECPN — Documento B"):
+            i = texto.index(titulo)
+            cabecera = " ".join(texto[i:i + 400].split("\n")[:4])
+            assert (aviso in cabecera) == (modelo == "abreviado"), (modelo, titulo, cabecera)

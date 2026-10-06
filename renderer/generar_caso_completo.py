@@ -118,7 +118,7 @@ def generar_caso_completo(sector, segmento, ventas_objetivo, semilla, arquetipos
                        f"Modelo {modelo.capitalize()} · Importes en euros{nota_no_exigido}",
                        mapear_eigr(eigrs), columnas_2, etq_2))
     secciones.append(construir_ecpn_documento_b("ECPN — Documento B: Estado Total de Cambios en el Patrimonio Neto",
-                       f"Modelo {modelo.capitalize()} · Importes en euros", mapear_ecpn_documento_b(ecpns)))
+                       f"Modelo {modelo.capitalize()} · Importes en euros{nota_no_exigido}", mapear_ecpn_documento_b(ecpns)))
     secciones.append(generar_memoria(evolucion, ejercicios, modelo, nombre_empresa,
                        nombre_sector(sector, catalogo), plantilla_estimada))
 

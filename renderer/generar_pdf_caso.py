@@ -81,7 +81,8 @@ def generar_caso_pdf(sector, segmento, ventas_objetivo, semilla, intensidad, arq
                        (" · Incluido con fines didácticos, no exigido en Abreviado" if modelo == "abreviado" else ""),
                        lineas_eigr, columnas_2, etq_2))
     secciones.append(construir_ecpn_documento_b("ECPN — Documento B: Estado Total de Cambios en el Patrimonio Neto",
-                       f"Modelo {modelo.capitalize()} · Importes en euros", tabla_ecpn_b))
+                       f"Modelo {modelo.capitalize()} · Importes en euros" +
+                       (" · Incluido con fines didácticos, no exigido en Abreviado" if modelo == "abreviado" else ""), tabla_ecpn_b))
 
     generar_pdf(ruta_salida, nombre_empresa, sector, modelo, secciones)
     return modelo
