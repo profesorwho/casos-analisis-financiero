@@ -507,7 +507,7 @@ def nota_11_otra_informacion(ejercicios, plantilla_estimada, notas_narrativas):
     flow = [Paragraph(f"Número medio de empleados del ejercicio: {round(plantilla_estimada)}.", cuerpo)]
     flow.append(Paragraph("No se han producido hechos posteriores al cierre que deban mencionarse.", cuerpo))
     for n in notas_narrativas:
-        if n.arquetipo_id in ("dependencia_pocos_clientes", "activo_mantenido_venta", "informacion_relevante", "coberturas"):
+        if n.arquetipo_id in ("dependencia_pocos_clientes", "activo_mantenido_venta", "informacion_relevante_memoria", "coberturas", "mejora_ebitda"):
             flow.append(Paragraph(n.texto, cuerpo))
     return flow
 

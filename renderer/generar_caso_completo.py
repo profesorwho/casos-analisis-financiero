@@ -1,3 +1,4 @@
+import re
 import sys
 import warnings
 from pathlib import Path
@@ -8,6 +9,7 @@ sys.path.insert(0, str(_RENDERER_DIR))  # renderer/, para los módulos hermanos 
 
 from motor.arquetipos import cargar_arquetipos
 from motor.catalogo import cargar_y_validar_catalogo
+from motor.empresa_base import _mapa_codigo_sector
 from motor.memoria import generar_caso_combinado
 from motor.efe import generar_efe
 from motor.ecpn import generar_ecpn, generar_eigr
@@ -22,7 +24,11 @@ from mapeo_memoria import generar_memoria
 from invariantes import InvarianteSubtotalWarning, verificar_invariantes_lineas
 from render_pdf import construir_tabla_estado, construir_ecpn_documento_b, generar_pdf
 
-SECTOR_NOMBRES = {"28": "Fabricación de maquinaria y equipo"}
+
+def nombre_sector(sector: str, catalogo) -> str:
+    """Nombre legible del sector derivado del propio catálogo ("Comercio al por mayor (46)" ->
+    "Comercio al por mayor"), sin diccionario manual (#120-D)."""
+    return re.sub(r"\s*\([^()]*\)\s*$", "", _mapa_codigo_sector(catalogo)[sector])
 
 
 def _verificar_invariantes_o_avisar(bloques_balance_pyg, sector, segmento, semilla, estricto):
@@ -114,7 +120,7 @@ def generar_caso_completo(sector, segmento, ventas_objetivo, semilla, arquetipos
     secciones.append(construir_ecpn_documento_b("ECPN — Documento B: Estado Total de Cambios en el Patrimonio Neto",
                        f"Modelo {modelo.capitalize()} · Importes en euros", mapear_ecpn_documento_b(ecpns)))
     secciones.append(generar_memoria(evolucion, ejercicios, modelo, nombre_empresa,
-                       SECTOR_NOMBRES.get(sector, f"sector {sector}"), plantilla_estimada))
+                       nombre_sector(sector, catalogo), plantilla_estimada))
 
     generar_pdf(ruta_salida, nombre_empresa, sector, modelo, secciones)
     return modelo
