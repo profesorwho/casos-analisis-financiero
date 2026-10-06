@@ -208,6 +208,7 @@ sectores, 4 semillas, 2024 y 2025), 0 descuadres en ambos** — ver decisiones #
   `deudas_fin_largo` en vez de `otras_deudas_largo` (aproximación anterior, donde SÍ se excluía
   de `a3f`); mismo tratamiento de siempre (sin flujo de caja propio), solo cambió qué línea lo
   excluye — ver sección "Deudas financieras — cuarto lote" más abajo.
+- **A.4.d en caja real (#118)**: `a4d = −impuesto devengado + Δ Hacienda acreedora − Δ Hacienda deudora`; esa variación se saca de `a3d`/`a3b` (reclasificación pura, `a3b+a3d+a4d` y A.5 sin cambio). Coherente con "pagos a cuenta" de la Nota 9.
 - **Amortización (A.2.a) — ACTIVADA desde decisiones_plausibilidad.md #98 (cierra #26/#94/#96),
   ya NO siempre 0,0.** En años evolucionados (2024/2025 — el año base 2023 no cambia),
   `activo_no_corriente` YA se neta de la amortización real de la colección de

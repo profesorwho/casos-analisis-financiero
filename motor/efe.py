@@ -176,7 +176,17 @@ def generar_efe(anterior: EjercicioEmpresa, actual: EjercicioEmpresa, obligatori
     a4a = -actual.pyg_eur["gastos_financieros"]
     a4b = 0.0
     a4c = actual.pyg_eur["ingresos_financieros"]
-    a4d = -actual.pyg_eur["impuesto_beneficios"]
+    # A.4.d en CAJA REAL (#118, cierra #106.6): cuota devengada ajustada por la variación de la
+    # Hacienda Pública acreedora/deudora por impuesto sobre beneficios. Esa variación vivía mezclada
+    # dentro de a3d/a3b (viene de carve-outs de acreedores_comerciales/realizable); se saca de ahí
+    # y se reubica en a4d — reclasificación pura entre líneas de A: a3b+a3d+a4d no cambia.
+    delta_hacienda_acreedora = (actual.acreedores_desglose_eur.get("hacienda_publica_acreedora", 0.0)
+                                - anterior.acreedores_desglose_eur.get("hacienda_publica_acreedora", 0.0))
+    delta_hacienda_deudora = (actual.deudores_desglose_eur.get("hacienda_publica_deudora", 0.0)
+                              - anterior.deudores_desglose_eur.get("hacienda_publica_deudora", 0.0))
+    a4d = -actual.pyg_eur["impuesto_beneficios"] + delta_hacienda_acreedora - delta_hacienda_deudora
+    a3d -= delta_hacienda_acreedora
+    a3b += delta_hacienda_deudora
     a4e = 0.0
 
     a5 = a1 + a2a + a2e + a2g + a2h + a2k + a3a + a3b + a3c + a3d + a3e + a3f + a4a + a4b + a4c + a4d + a4e

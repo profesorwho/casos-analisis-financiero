@@ -522,7 +522,11 @@ def test_efe_cuadra_sin_lineas_nuevas(catalogo, arquetipos):
                 actual = evolucion.ejercicios[año]
                 efe = generar_efe(anterior, actual, obligatorio=True)
                 assert efe.cuadra, f"{codigo} semilla={semilla} año={año}: descuadre={efe.descuadre_eur}"
-                esperado_a3b = -(actual.balance_eur["realizable"] - anterior.balance_eur["realizable"])
+                # Desde #118 la variación de Hacienda deudora sale de a3b y va a a4d.
+                esperado_a3b = -(actual.balance_eur["realizable"] - anterior.balance_eur["realizable"]) + (
+                    actual.deudores_desglose_eur.get("hacienda_publica_deudora", 0.0)
+                    - anterior.deudores_desglose_eur.get("hacienda_publica_deudora", 0.0)
+                )
                 assert efe.a3b_deudores == pytest.approx(esperado_a3b, abs=0.01)
                 comprobados += 1
     assert comprobados > 0
