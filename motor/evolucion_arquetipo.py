@@ -2673,18 +2673,18 @@ def _evolucionar_un_año(
         diferencia_cuadre = activo_total_eur - pn_pasivo_total_eur
         ajuste_cuadre_eur = 0.0
         if abs(diferencia_cuadre) > TOLERANCIA_CUADRE_EUR:
+            # PROTOTIPO #119: la caja es la partida residual del cuadre (no otras_deudas_corto).
             ajuste_cuadre_eur = diferencia_cuadre
-            otras_deudas_corto_ajustado = balance["otras_deudas_corto"] + diferencia_cuadre
-            if otras_deudas_corto_ajustado < 0:
-                # El cuadre pediría dejar "otras deudas a corto" en negativo (valor absurdo):
-                # el exceso de patrimonio neto + pasivo sobre el activo se trata como caja de
-                # más en vez de como una deuda negativa. Red de seguridad barata.
-                remanente = -otras_deudas_corto_ajustado
-                balance["otras_deudas_corto"] = 0.0
-                balance["disponible"] += remanente
-                balance["activo_corriente"] += remanente
+            disponible_ajustado = balance["disponible"] - diferencia_cuadre
+            if disponible_ajustado < 0:
+                # caja negativa imposible: el faltante vuelve a deuda a corto (comportamiento antiguo)
+                balance["activo_corriente"] -= balance["disponible"]
+                balance["otras_deudas_corto"] += -disponible_ajustado
+                balance["disponible"] = 0.0
+                CONTADOR_PROTO["caja_negativa"] += 1
             else:
-                balance["otras_deudas_corto"] = otras_deudas_corto_ajustado
+                balance["activo_corriente"] -= diferencia_cuadre
+                balance["disponible"] = disponible_ajustado
             balance["pasivo_corriente"] = (
                 balance["acreedores_comerciales"] + balance["deudas_fin_corto"] + balance["otras_deudas_corto"]
             )
@@ -3452,6 +3452,9 @@ def _fusionar_masa_circulante(efectos_activos: tuple[EfectoActivo, ...]) -> tupl
             )
         )
     return tuple(resto) + tuple(fusionados)
+
+
+CONTADOR_PROTO = {'caja_negativa': 0}
 
 
 def generar_evolucion_combinada(
